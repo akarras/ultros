@@ -57,7 +57,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_editor_link_needs_no_preview_flag() {
+    fn the_editor_link_opens_the_device_list() {
         let summary = LocalListSummary {
             id: "device:abc".into(),
             name: "Raid supplies".into(),

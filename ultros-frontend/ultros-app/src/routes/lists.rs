@@ -147,11 +147,7 @@ pub(crate) const LIST_CARD_CLASS: &str =
 pub(crate) const LIST_CARD_TITLE: &str =
     "text-lg font-semibold hover:underline break-words min-w-0";
 
-#[cfg(any(feature = "hydrate", test))]
-fn list_card_href(id: i32) -> String {
-    format!("/list/{id}")
-}
-
+// The directory loads device and account cards together after hydration.
 #[cfg(feature = "hydrate")]
 #[component]
 pub(crate) fn ListCard(
@@ -274,7 +270,7 @@ pub(crate) fn ListCard(
                         <>
                             <div class="flex justify-between items-start gap-2">
                                 <div class="flex min-w-0 flex-col gap-1 overflow-hidden">
-                                    <a href=move || list_card_href(list.id) class=LIST_CARD_TITLE>
+                                    <a href=move || format!("/list/{}", list.id) class=LIST_CARD_TITLE>
                                         {move || name()}
                                     </a>
                                     <div class="text-sm text-[color:var(--color-text-muted)] flex items-center gap-2 flex-wrap">
@@ -319,7 +315,7 @@ pub(crate) fn ListCard(
                                 </div>
                             </div>
                             <div class="mt-2 flex justify-start">
-                                <a href=move || list_card_href(list.id) class="btn-secondary min-h-11">
+                                <a href=move || format!("/list/{}", list.id) class="btn-secondary min-h-11">
                                     {t!(i18n, view_items)} <Icon icon=i::AiArrowRightOutlined attr:class="ml-1"/>
                                 </a>
                             </div>
@@ -385,14 +381,4 @@ pub fn Lists() -> impl IntoView {
         </div>
     }
     .into_any()
-}
-
-#[cfg(test)]
-mod design_tests {
-    use super::list_card_href;
-
-    #[test]
-    fn online_card_navigation_uses_the_default_workspace() {
-        assert_eq!(list_card_href(30), "/list/30");
-    }
 }

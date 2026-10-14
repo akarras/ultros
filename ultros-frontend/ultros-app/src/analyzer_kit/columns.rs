@@ -73,7 +73,6 @@ pub enum ColumnKind {
     /// sell world's own map: the sell-side counterpart of Hop gain, and a
     /// reference read rather than a place to go.
     ScopeVsHome,
-    Actions,
 }
 
 /// Where a column sits in the grouped Columns picker. Declaration order is

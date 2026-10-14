@@ -49,7 +49,7 @@ mod browser {
     use super::*;
     use crate::components::app_link::use_query_map_or_default;
     use crate::components::cart::ListCart;
-    use crate::components::list::filter_row::SortSpec;
+    use crate::components::list::sort::SortSpec;
     use crate::list_doc::{
         adapter::{self, Edit},
         guest::GuestListHandle,

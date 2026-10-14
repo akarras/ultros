@@ -15,6 +15,11 @@ async function main() {
   page.setDefaultNavigationTimeout(Number(process.env.NAVIGATION_TIMEOUT_MS || 120000));
   await page.setViewport({ width: 1280, height: 900 });
   const errors = [];
+  page.on("console", message => {
+    if (message.type() === "error" && /panicked|hydrat|marker/i.test(message.text())) {
+      console.error("Hydration diagnostic:", message.text());
+    }
+  });
   page.on("pageerror", error => {
     if (!String(error.stack).includes("googlesyndication.com")) errors.push(String(error.stack || error));
   });
@@ -37,7 +42,7 @@ async function main() {
     return `[data-row-id="${row.dataset.rowId}"]`;
   }, quality);
   const saved = () => page.waitForFunction(() =>
-    document.querySelector('[data-testid="account-list-save-state"]')?.textContent.includes("Saved on this device"));
+    document.querySelector('[data-testid="account-list-save-state"]')?.textContent.includes("Local copy saved"));
   const button = column => `button[aria-label="Sort by ${column}"]`;
   const activate = async (column, key) => {
     await page.focus(button(column));
@@ -68,7 +73,7 @@ async function main() {
     assert(login.ok(), "test-auth must be enabled");
     const worlds = await api("GET", "/api/v1/world_data");
     const world = worlds.regions[0].datacenters[0].worlds[0];
-    await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["HOME_WORLD", world.name], ["i18n_pref_locale", "en"]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
+    await page.setCookie(...[["HIDE_ADS", "true"], ["HOME_WORLD", world.name], ["i18n_pref_locale", "en"]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
     const name = `Sort semantics ${Date.now()}`;
     await api("POST", "/api/v1/list/create", { name, wdr_filter: { World: world.id } });
     listId = (await api("GET", "/api/v1/list")).find(entry => entry.list.name === name).list.id;

@@ -39,6 +39,7 @@ async function runShopAvailability(page, { url, listId, readProjection }) {
     await page.waitForFunction(() => document.querySelector('[data-testid="guest-shop-mode"]')?.getAttribute("aria-pressed") === "true");
     await page.waitForSelector((tid("shop-route-option") + '[data-route-cheapest="true"]'), { visible: true });
     await page.locator((tid("shop-route-option") + '[data-route-cheapest="true"]')).click();
+    if (await page.$('[data-testid="shop-confirm-route"]')) await page.click('[data-testid="shop-confirm-route"]');
     await page.waitForSelector(tid("shop-stack-bought"));
     assert(await page.$$eval(tid("shop-stack-bought"), buttons => buttons.some(button => !button.disabled)), "live account must offer a real purchase before compatibility loss");
     console.log("Shop availability: purchasable frozen trip ready");

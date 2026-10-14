@@ -1,5 +1,11 @@
-//! The Build cart for account and device lists.
-//! Document, authorization and storage lifecycles belong to the route.
+//! The Build cart shared by account and device lists.
+//!
+//! Presentation only: the [`ListWorkspaceSource`] it consumes carries the
+//! rows, capabilities and edit callbacks, and the route that built the
+//! source keeps the document, sync, authorization and guest storage
+//! lifecycles. Each part of the cart lives in its own file so the follow-on
+//! tickets can change rows, summary, details, selection and feedback
+//! independently.
 
 pub mod details;
 pub mod estimate;
@@ -14,10 +20,10 @@ use leptos_i18n::I18nContext;
 use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
 
-use crate::components::list::filter_row::{SortKey, SortSpec};
+use crate::components::list::sort::{SortKey, SortSpec};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
-use crate::routes::list_view::remaining_quantity;
+use crate::routes::list_common::remaining_quantity;
 use crate::routes::list_view_sync::{InlineListAdd, ListWorkspaceSource};
 
 use feedback::{CartFeedback, Removal, focus_after_removal};

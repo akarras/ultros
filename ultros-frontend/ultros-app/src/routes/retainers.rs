@@ -100,7 +100,7 @@ impl From<&ActiveListing> for ItemSortKey {
 struct RetainerRow {
     /// The listing's own id, so two otherwise identical listings on one
     /// retainer stay two rows.
-    listing_id: i32,
+    listing_id: i64,
     hq: bool,
     item_id: i32,
     price_per_unit: i32,
@@ -954,7 +954,7 @@ mod test {
         use chrono::NaiveDateTime;
         use std::collections::HashSet;
         use ultros_api_types::ActiveListing;
-        let listing = |id: i32, price_per_unit: i32| ActiveListing {
+        let listing = |id: i64, price_per_unit: i32| ActiveListing {
             id,
             world_id: 34,
             item_id: 30842,

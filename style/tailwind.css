@@ -2198,9 +2198,7 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 
 /* Collapsed sidebar: hide labels and section headers (desktop only). */
 @media (min-width: 1024px) {
-    .app-shell-collapsed .side-nav-label,
-    .app-shell-collapsed .side-nav-section-header,
-    .app-shell-collapsed .side-nav-brand-text {
+    .app-shell-collapsed .side-nav-section-header {
         display: none;
     }
     /* The whole footer goes, not just the version hash: 56px minus the row's
@@ -2667,25 +2665,6 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         /* The header is a normal control row — don't inherit the sheet's
            tap-to-close pointer cursor. */
         cursor: auto;
-    }
-    /* On a phone the explicit close button crowded the input row and put a
-       second X right next to the input's own clear-X (#1067). Tapping the
-       sheet's empty space closes the overlay instead, so collapse the button
-       to a screen-reader-only control: still in the accessibility tree and
-       keyboard-focusable (tap-off is a bare div and Escape needs a hardware
-       keyboard), and it pops back into the row when keyboard-focused so
-       sighted keyboard users at narrow widths aren't tabbed onto an
-       invisible control. */
-    .search-overlay-close:not(:focus-visible) {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        margin: -1px;
-        padding: 0;
-        overflow: hidden;
-        clip-path: inset(50%);
-        border: 0;
-        white-space: nowrap;
     }
 }
 
@@ -3570,3 +3549,44 @@ dialog.panel { color: var(--color-text); margin: auto; }
 .recipe-breakdown-caveat { font-size: 12px; color: var(--color-text-muted); margin: 4px 0; }
 .recipe-breakdown-subcrafts { padding: 8px 4px 0; font-size: 12px; color: var(--color-text-muted); }
 .recipe-breakdown-subcrafts ul { list-style: disc; padding-left: 20px; margin-top: 2px; }
+
+/* Keep rail names in the accessibility tree even when the text is clipped. */
+@media (min-width: 1024px) {
+  .app-shell-collapsed .side-nav-label,
+  .app-shell-collapsed .side-nav-brand-text {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+}
+.skip-content { position: fixed; left: 1rem; top: 1rem; z-index: 200; transform: translateY(-200%); padding: .75rem 1rem; background: var(--color-background); color: var(--color-text); }
+.skip-content:focus { transform: none; }
+dialog.task-dialog, dialog.search-overlay { width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; background: transparent; color: var(--color-text); }
+dialog::backdrop { background: rgb(0 0 0 / .6); }
+.search-overlay-close { width: auto; min-width: 2.75rem; padding: 0 .5rem; }
+.reorder-actions { display: flex; gap: .5rem; margin-bottom: .5rem; }
+.reorder-actions button { min-height: 2.75rem; padding: .4rem .75rem; }
+:root { --status-success: #86efac; --status-warning: #fde047; --status-error: #fca5a5; }
+[data-theme="light"] { --status-success: #166534; --status-warning: #854d0e; --status-error: #991b1b; }
+.toast-success { color: var(--status-success); }
+.toast-warning { color: var(--status-warning); }
+.toast-error { color: var(--status-error); }
+.toast-success, .toast-warning, .toast-error { background: var(--color-background-elevated); border-color: currentColor; }
+
+.mobile-grid-field { display: grid; grid-template-columns: minmax(0, 1fr); gap: .25rem; margin-bottom: .75rem; overflow-wrap: anywhere; }
+.mobile-grid-field > div { min-width: 0; }
+.chart-data-table { width: 100%; border-collapse: collapse; }
+.chart-data-table th, .chart-data-table td { padding: .5rem; text-align: left; border-bottom: 1px solid var(--color-outline); }
+
+
+/* Mobile navigation uses the same native focus boundary as task dialogs. */
+@media (max-width: 1023px) { .app-shell > .side-nav { display: none; } }
+dialog.nav-dialog { position: fixed; inset: 0 auto 0 0; margin: 0; padding: 0; border: 0; width: min(320px, 95vw); height: 100dvh; max-height: 100dvh; background: var(--color-background); color: var(--color-text); overflow-y: auto; }
+.nav-dialog .side-nav { min-height: 0; }
+/* Reveal the existing label on focus/hover without removing its accessible name. */
+@media (min-width: 1024px) {
+ .app-shell-collapsed .side-nav-item:focus-visible .side-nav-label,
+ .app-shell-collapsed .side-nav-item:hover .side-nav-label {
+  clip-path: none; width: max-content; height: auto; margin: 0; padding: .5rem; overflow: visible;
+  position: fixed; left: 56px; background: var(--color-background); color: var(--color-text); border: 1px solid var(--color-outline); z-index: 100;
+ }
+}

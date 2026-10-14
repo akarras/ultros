@@ -84,3 +84,13 @@ Use `select_nth_unstable_by_key(N)` followed by `.truncate(N)` and sorting only 
 ## 2026-09-12 - Batch O(N) searches inside Leptos For components into a single Memo
 **Learning:** In `<For>` components, creating multiple `Memo::new` blocks that each perform an `O(N)` search on a large collection (e.g., finding an item by ID in a `Vec`) can severely degrade performance, resulting in `O(M * C * N)` complexity where `M` is the number of rendered items, `C` is the number of columns/memos, and `N` is the total list size.
 **Action:** Batch the `O(N)` search into a single `Memo::new` that extracts all necessary data into a tuple. Then, use `Signal::derive` to cheaply project the individual fields from that tuple. This reduces the search complexity to `O(M * N)` and avoids creating multiple `Memo` reactive nodes.
+
+## 2026-09-27 - O(N) interpolating quantiles
+**Learning:**
+In `ultros-frontend/ultros-charts/src/data/stats.rs`, the `quantile` function used to fully sort the `Vec<f64>` just to linearly interpolate a single value using two neighbors. Because full sorting is `O(N log N)`, it incurs unnecessary overhead. The two target neighbors can instead be found efficiently in `O(N)` by using `select_nth_unstable_by` to partition around the upper index, and then using `.iter().max_by(...)` on the lower slice to find the preceding adjacent element if they aren't the same.
+**Action:**
+When fetching single quantile or median values from an array, use `select_nth_unstable_by` rather than fully sorting it.
+## 2026-10-05 - Use select_nth_unstable_by_key instead of take(n).collect()
+**Learning:**
+In `ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs`'s `fixture_recipes`, the vector was being fully sorted and then `.into_iter().take(300).collect()` was called to retrieve only the top 300 entries. This results in $O(N \log N)$ sorting behavior across a large dataset when only the top 300 are needed, and performs a secondary allocation step to gather them.
+**Action:** Use `.select_nth_unstable_by_key(300)` instead to partition the array in $O(N)$ time. Afterwards, use `.truncate(300)` in-place, and then perform the more expensive $O(N \log N)$ sort purely on the remaining 300 items without an extra allocation layer.

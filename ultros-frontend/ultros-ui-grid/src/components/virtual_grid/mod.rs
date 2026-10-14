@@ -159,6 +159,9 @@ pub fn VirtualGrid<T, K, KF, H, F, M>(
     on_change: Callback<GridChange>,
     #[prop(into)] reset_scroll: Signal<String>,
     #[prop(optional)] visible_range: Option<RwSignal<(usize, usize)>>,
+    /// Opt in for analyzer result cards; editable grids retain their table interaction.
+    #[prop(optional)]
+    mobile_cards: bool,
     #[prop(default = 40.0)] row_height: f64,
     /// Data-row index to scroll into view and make active when it changes.
     /// Emitted by pages that deep-link to a row (`?item=`); the grid does
@@ -185,6 +188,13 @@ where
     M: Fn(&T, &'static str) -> (String, f64) + Send + Sync + 'static,
 {
     let i18n = use_i18n();
+    let compact = RwSignal::new(true);
+    let card_limit = RwSignal::new(20usize);
+    #[cfg(feature = "hydrate")]
+    let narrow = leptos_use::use_media_query("(max-width: 639px)");
+    #[cfg(not(feature = "hydrate"))]
+    let narrow = Signal::derive(|| false);
+    let cards = Signal::derive(move || mobile_cards && narrow.get() && compact.get());
     let location = crate::components::app_link::use_location_or_default();
     let filter_query = location.query;
     let filter_registry = use_context::<registry::FilterRegistry>();
@@ -322,7 +332,13 @@ where
         placed.with(|p| column_range(p, x, w))
     });
     if let Some(range) = visible_range {
-        Effect::new(move |_| range.set(rows.get()));
+        Effect::new(move |_| {
+            range.set(if cards.get() {
+                (0, card_limit.get().min(count.get()))
+            } else {
+                rows.get()
+            })
+        });
     }
     let commit = move |visibility| {
         on_change.run(GridChange {
@@ -918,7 +934,41 @@ where
     };
     view! {
         <div class="virtual-grid-shell">
-            <div class="virtual-grid" node_ref=port role="grid" tabindex="0" aria-label=label
+            <Show when=move || mobile_cards && narrow.get()>
+                <button type="button" class="btn-secondary mb-2" on:click=move |_| compact.update(|value| *value = !*value)>
+                    {move || if compact.get() { t_string!(i18n, a11y_full_table).to_string() } else { t_string!(i18n, a11y_compact_results).to_string() }}
+                </button>
+            </Show>
+            <Show when=move || cards.get()>
+                <div class="mobile-grid-cards">
+                    <Show when=move || count.get() == 0><p role="status" class="p-3">{t!(i18n, search_no_results)}</p></Show>
+                    <For each=move || each.with(|rows| rows.iter().take(card_limit.get()).cloned().collect::<Vec<_>>())
+                        key=move |row| key.with_value(|key| key(row)) children=move |row| {
+                            let details = RwSignal::new(false);
+                            let row_key = StoredValue::new(key.with_value(|key| key(&row)));
+                            let row = Signal::derive(move || each.with(|rows| rows.iter().find(|row| key.with_value(|key| key(row)) == row_key.get_value()).cloned()));
+                            view! { <article class="panel p-3 rounded-lg mb-3">
+                                <For each=move || placed.with(|cols| cols.iter().enumerate().filter(|(i,c)| *i < 2 || matches!(c.column.id, "confidence" | "daily-sales" | "sales_per_day" | "velocity")).map(|(_,c)| c.column.clone()).collect::<Vec<_>>())
+                                    key=|column| column.id children=move |column| {
+                                        view! { <div class="mobile-grid-field"><span class="text-sm text-[color:var(--color-text-muted)]">{column.label}</span>
+                                            <div>{move || view.with_value(|render| row.get().map(|row| render(row, column.id)))}</div>
+                                        </div> }
+                                    }/>
+                                <button type="button" class="btn-secondary" aria-expanded=move || details.get().to_string() on:click=move |_| details.update(|open| *open = !*open)>{t!(i18n, a11y_result_details)}</button>
+                                <Show when=move || details.get()>
+                                    <For each=move || placed.with(|cols| cols.iter().enumerate().filter(|(i,c)| *i >= 2 && !matches!(c.column.id, "confidence" | "daily-sales" | "sales_per_day" | "velocity")).map(|(_,c)| c.column.clone()).collect::<Vec<_>>())
+                                        key=|column| column.id children=move |column| {
+                                            view! { <div class="mobile-grid-field"><span class="text-sm text-[color:var(--color-text-muted)]">{column.label}</span><div>{move || view.with_value(|render| row.get().map(|row| render(row, column.id)))}</div></div> }
+                                        }/>
+                                </Show>
+                            </article> }
+                        }/>
+                    <Show when=move || card_limit.get() < count.get()>
+                        <button type="button" class="btn-secondary" on:click=move |_| card_limit.update(|n| *n += 20)>{t!(i18n, a11y_more_results)}</button>
+                    </Show>
+                </div>
+            </Show>
+            <div class="virtual-grid" class:hidden=move || cards.get() node_ref=port role="grid" tabindex="0" aria-label=label
                 data-auto-fitted=move || auto_applied.get()
                 aria-activedescendant=move || { let (r,c)=active.get(); format!("{}-r{r}-c{c}",grid_id.get_value()) }
                 aria-rowcount=move || count.get() + 1 aria-colcount=move || placed.with(Vec::len)

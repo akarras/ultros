@@ -28,7 +28,6 @@ async function main() {
   page.setDefaultTimeout(timeout);
   await page.setViewport({ width: 1280, height: 900 });
   await page.setCookie(
-    { name: "LABS", value: "lists-sync", url: base, path: "/" },
     { name: "HIDE_ADS", value: "true", url: base, path: "/" },
     { name: "i18n_pref_locale", value: "en", url: base, path: "/" },
   );

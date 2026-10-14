@@ -1,13 +1,12 @@
-//! Shared list data helpers and activity feed. The legacy REST page is retired.
+//! Shared list query types, filtering and collaboration history.
+
 use crate::components::{
     listing_filters::filter_active_listings,
     skeleton::{SkeletonCell, SkeletonColumn},
 };
 use crate::i18n::*;
 use leptos::prelude::*;
-use std::collections::HashSet;
-use std::fmt;
-use std::str::FromStr;
+use std::{collections::HashSet, fmt, str::FromStr};
 use ultros_api_types::{
     ActiveListing,
     list::{ListActivity, ListItem, ListWithPermission},
@@ -20,11 +19,7 @@ pub(crate) type ListViewResult =
     Result<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>), crate::error::AppError>;
 
 /// Drop every listing whose world *or* datacenter is excluded, for every
-/// item. This is the one place exclusion is applied to the list view's data —
-/// the table rows, summary, price sort, and buying view all consume its
-/// output, so a DC exclusion can't be honored by one surface and ignored by
-/// another (the pre-redesign bug: only `BuyingView` and `PriceViewer` looked
-/// at `excluded-datacenters`, so the sort order and row listings never did).
+/// item. Build estimates, row details and Shop all consume this filtered data.
 pub(crate) fn filter_excluded(
     items: &[(ListItem, Vec<ActiveListing>)],
     excluded_worlds: &HashSet<i32>,
@@ -119,11 +114,6 @@ pub(crate) fn remaining_quantity(item: &ListItem) -> i32 {
     quantity.saturating_sub(item.acquired.unwrap_or(0).clamp(0, quantity))
 }
 
-/// Skeleton columns for the list-item table, in the same order as
-/// HQ, item, quantity, price, options — so the
-/// loading state has the real table's rhythm. The select column is left out:
-/// it only shows in bulk-edit mode, which nobody is in while a list is still
-/// loading.
 pub(crate) fn list_item_table_skeleton_columns() -> Vec<SkeletonColumn> {
     vec![
         SkeletonColumn::new("w-16 px-3 py-3", SkeletonCell::Badge),
@@ -213,7 +203,7 @@ mod tests {
         }
     }
 
-    fn listing(id: i32, world_id: i32) -> ActiveListing {
+    fn listing(id: i64, world_id: i32) -> ActiveListing {
         ActiveListing {
             id,
             world_id,

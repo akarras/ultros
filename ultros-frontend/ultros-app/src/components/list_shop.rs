@@ -78,7 +78,7 @@ impl Trip {
 }
 
 /// Stacks already recorded against physical listings, keyed by listing id.
-type Receipts = BTreeMap<i32, (String, i64)>;
+type Receipts = BTreeMap<i64, (String, i64)>;
 
 /// A refreshed trip the player has not adopted yet. The active trip keeps
 /// rendering unchanged until the player accepts this one or dismisses it.
@@ -90,7 +90,7 @@ struct Review {
     mode: usize,
     frontier: Vec<ShoppingPlan>,
     policy: TravelPolicy,
-    unavailable: BTreeSet<i32>,
+    unavailable: BTreeSet<i64>,
 }
 
 /// A review authorizes exactly the cart and settings it displays. Purchases,
@@ -99,7 +99,7 @@ fn review_is_current(
     review: &Review,
     live: &ShopInput,
     policy: &TravelPolicy,
-    unavailable: &BTreeSet<i32>,
+    unavailable: &BTreeSet<i64>,
 ) -> bool {
     review.policy == *policy
         && review.unavailable == *unavailable
@@ -147,7 +147,7 @@ impl CartDrift {
     }
 }
 
-fn listing_shape(listing: &ActiveListing) -> (i32, i32, bool, i32, i32) {
+fn listing_shape(listing: &ActiveListing) -> (i64, i32, bool, i32, i32) {
     (
         listing.id,
         listing.world_id,
@@ -226,7 +226,7 @@ fn trip_totals(plan: &ShoppingPlan) -> TripTotals {
 // stacks to Any-quality rows. Each physical listing can appear at most once.
 // This allocation is conservative; all route choices are labelled best-found.
 #[cfg(test)]
-fn candidates(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<ShoppingPlan> {
+fn candidates(input: &ShopInput, unavailable: &BTreeSet<i64>) -> Vec<ShoppingPlan> {
     let frontier = candidate_frontier(input, unavailable);
     quick_candidates(&frontier)
 }
@@ -293,7 +293,7 @@ fn refreshed_mode(
 /// Keep the planner's complete frontier for marginal route comparisons.
 /// Input listings have already been narrowed by the editor's travel policy;
 /// neither this search nor its separate home allocation may expand that scope.
-fn candidate_frontier(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<ShoppingPlan> {
+fn candidate_frontier(input: &ShopInput, unavailable: &BTreeSet<i64>) -> Vec<ShoppingPlan> {
     let plans = scoped_frontier(input, unavailable);
     let mut home = input.clone();
     for row in &mut home.rows {
@@ -313,7 +313,7 @@ fn candidate_frontier(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<Sho
     )
 }
 
-fn scoped_frontier(input: &ShopInput, unavailable: &BTreeSet<i32>) -> Vec<ShoppingPlan> {
+fn scoped_frontier(input: &ShopInput, unavailable: &BTreeSet<i64>) -> Vec<ShoppingPlan> {
     let mut materials = Vec::new();
     let mut market = BTreeMap::new();
     let mut used = BTreeSet::new();
@@ -404,7 +404,7 @@ struct CompanionRow {
 fn replan(
     previous: Option<&Trip>,
     source: &ShopInput,
-    unavailable: &BTreeSet<i32>,
+    unavailable: &BTreeSet<i64>,
     consumed: &Receipts,
 ) -> (Receipts, Vec<ShoppingPlan>, Vec<ShoppingPlan>) {
     let mut receipts = consumed.clone();
@@ -569,10 +569,14 @@ pub fn ListShop(
         && use_context::<crate::global_state::LocalWorldData>().is_some())
     .then(use_home_world);
     let trip = RwSignal::new(None::<Trip>);
+    let route_confirmed = RwSignal::new(false);
+    let can_edit = Signal::derive(move || can_edit.get() && route_confirmed.get());
     if let Some(on_trip_active) = on_trip_active {
-        Effect::new(move |_| on_trip_active.run(trip.with(|trip| trip.is_some())));
+        Effect::new(move |_| {
+            on_trip_active.run(route_confirmed.get() && trip.with(|trip| trip.is_some()))
+        });
     }
-    let unavailable = RwSignal::new(BTreeSet::<i32>::new());
+    let unavailable = RwSignal::new(BTreeSet::<i64>::new());
     let consumed = RwSignal::new(Receipts::new());
     let review = RwSignal::new(None::<Review>);
     let stop = RwSignal::new(0_usize);
@@ -604,7 +608,7 @@ pub fn ListShop(
             policy: adopted_policy,
         }));
         review.set(None);
-        routes_open.set(false);
+        routes_open.set(!route_confirmed.get_untracked());
         // Choosing a route hides its card; keep keyboard focus on a visible
         // control after the new trip has mounted.
         #[cfg(feature = "hydrate")]
@@ -621,7 +625,10 @@ pub fn ListShop(
                         current.tag_name() == "BODY" || before.as_ref() == Some(&current)
                     })
                 });
-                if restore && let Some(button) = change_route.get_untracked() {
+                if restore
+                    && route_confirmed.get_untracked()
+                    && let Some(button) = change_route.get_untracked()
+                {
                     let _ = button.focus();
                 }
             });
@@ -629,10 +636,8 @@ pub fn ListShop(
         stop.set(0);
         notice.set(String::new());
     };
-    // The first choice starts a trip. Once a stack has been recorded, any
-    // replacement, including a different shortcut or frontier card, is
-    // reviewed before changing the active trip; before that the player is
-    // previewing options and the choice simply replaces the trip.
+    // Cards preview a trip; confirmation starts it. Recorded purchases still
+    // require review before replacing the current route.
     let choose = Callback::new(move |mode: usize| {
         let source = input.get_untracked();
         let (receipts, plans, frontier) = trip.with_untracked(|previous| {
@@ -662,6 +667,7 @@ pub fn ListShop(
                 unavailable: unavailable.get_untracked(),
             }));
         } else {
+            route_confirmed.set(false);
             adopt(source, receipts, plans, frontier, next_policy, mode);
         }
     });
@@ -727,6 +733,7 @@ pub fn ListShop(
                 notice.set(t_string!(i18n, list_travel_review_updated).to_string());
                 return;
             }
+            route_confirmed.set(true);
             adopt(
                 pending.source,
                 pending.receipts,
@@ -1052,13 +1059,13 @@ pub fn ListShop(
                 }}</p>
                 <p role="status" class="text-sm" data-testid="shop-no-prices" class:hidden=move || input.with(|input| input.rows.iter().any(|row| !row.listings.is_empty()))>{move || t_string!(i18n, list_shop_no_prices)}</p>
             </div>
-            <Show when=move || trip.with(|trip| trip.is_some())>
+            <Show when=move || route_confirmed.get() && trip.with(|trip| trip.is_some())>
                 <div class="flex flex-wrap items-center justify-between gap-2">
                     <h2 class="text-xl font-semibold">{t_string!(i18n, lists_shop_current_route)}</h2>
                     <button node_ref=change_route type="button" class="btn-secondary" data-testid="shop-change-route" aria-expanded=move || routes_open.get().to_string() aria-controls="shop-route-picker" on:click=move |_| routes_open.update(|open| *open = !*open)>{t_string!(i18n, lists_shop_change_route)}</button>
                 </div>
             </Show>
-            <div id="shop-route-picker" class="rounded-xl border border-[color:var(--color-outline)] p-4 space-y-3" class:hidden=move || trip.with(|trip| trip.is_some()) && !routes_open.get() data-testid="shop-route-picker">
+            <div id="shop-route-picker" class="rounded-xl border border-[color:var(--color-outline)] p-4 space-y-3" class:hidden=move || route_confirmed.get() && !routes_open.get() data-testid="shop-route-picker">
                 <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
                     <div class="min-w-0">
                         <h2 class="text-xl font-semibold">{move || t_string!(i18n, recipe_planner_route_heading)}</h2>
@@ -1145,6 +1152,18 @@ pub fn ListShop(
                         }).collect_view()
                     }}
                 </div>
+                <Show when=move || trip.with(|trip| trip.is_some()) && !route_confirmed.get()>
+                    <button type="button" class="btn-primary w-full min-h-14 px-6 py-4 text-lg font-semibold" data-testid="shop-confirm-route" on:click=move |_| {
+                        route_confirmed.set(true);
+                        routes_open.set(false);
+                        #[cfg(feature = "hydrate")]
+                        leptos::leptos_dom::helpers::request_animation_frame(move || {
+                            if let Some(button) = change_route.get_untracked() {
+                                let _ = button.focus();
+                            }
+                        });
+                    }>{t_string!(i18n, lists_shop_confirm_route)}</button>
+                </Show>
                 <p class="text-xs text-[color:var(--color-text-muted)]">{move || t_string!(i18n, list_travel_comparison_note)}</p>
                 <p class="text-xs text-[color:var(--color-text-muted)]">{move || {
                     let feed = trip.with(|active| active.as_ref().map(|active| active.source.price_feed)).unwrap_or_else(|| input.get().price_feed);
@@ -1304,7 +1323,7 @@ mod tests {
             }));
     }
 
-    fn listing(id: i32, world: i32, quantity: i32, price: i32, hq: bool) -> ActiveListing {
+    fn listing(id: i64, world: i32, quantity: i32, price: i32, hq: bool) -> ActiveListing {
         ActiveListing {
             id,
             world_id: world,

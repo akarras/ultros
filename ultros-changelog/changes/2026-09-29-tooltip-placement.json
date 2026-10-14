@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Clearer tooltips and item cards",
+  "blurb": "Only one tooltip or item hover card appears at a time, and popups choose a position that avoids covering nearby hover targets."
+}

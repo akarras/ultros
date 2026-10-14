@@ -6,7 +6,7 @@ use crate::{
     components::list_travel_controls::ListTravelControls,
     global_state::{home_world::use_home_world, use_world_helper},
     query_defaults::filter_query_signal,
-    routes::list_view::{IdList, NameList},
+    routes::list_common::{IdList, NameList},
 };
 use leptos::prelude::*;
 #[cfg(any(feature = "hydrate", test))]
@@ -191,7 +191,6 @@ mod tests {
         source.replace("excluded-worlds", "1,9".to_string());
         source.replace("excluded-datacenters", "Other & DC".to_string());
         source.replace("recovery", "1".to_string());
-        source.replace("labs", "lists-sync".to_string());
         source.replace("make_online", "1".to_string());
         let href = online_href(42, true, &source);
         assert!(href.starts_with("/list/42?"));
@@ -204,7 +203,6 @@ mod tests {
             "DC names remain one encoded query value"
         );
         assert!(!href.contains("recovery"));
-        assert!(!href.contains("labs="));
         assert!(!has_param(&href, "make_online", ""));
         assert!(!online_href(42, false, &source).contains("buy="));
         let continuation = device_continue_href("local-id", true, &source);

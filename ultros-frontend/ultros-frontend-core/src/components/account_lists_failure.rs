@@ -4,7 +4,7 @@
 //! lists that [`LocalListTargets`](super::local_list_targets::LocalListTargets)
 //! renders right below, so their `NotAuthenticated` is nothing to warn about
 //! — the modal simply offers what they can add to. Every other failure, and a
-//! signed-out visitor outside the lab, still gets the message.
+//! visitor without the browser storage runtime, still gets the message.
 use leptos::prelude::*;
 use ultros_api_types::result::ApiError;
 

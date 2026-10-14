@@ -44,11 +44,12 @@ async function main() {
         await page.waitForFunction((tool, world, picker) =>
           decodeURIComponent(location.pathname) === `/${tool}/${world}` &&
           !new URL(location.href).searchParams.has('world') &&
-          document.querySelector(picker)?.textContent.includes(world), {}, tool, world, PICKER);
+          document.querySelector(`${picker} input[role="combobox"]`)?.value === world, {}, tool, world, PICKER);
         if (checkProbe) {
           assert.equal(new URL(page.url()).searchParams.get('probe'), PROBE);
           assert.equal(new URL(page.url()).hash, '#scope');
         }
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       }
       async function open(path, world) {
         console.log(`CHECK ${tool}: open ${world}`);
@@ -63,6 +64,7 @@ async function main() {
         const previousRegion = {Gilgamesh: 'North-America', Goblin: 'North-America', Cerberus: 'Europe', '红玉海': '中国'}[previous] || 'North-America';
         requests.length = 0;
         await page.click(`${PICKER} input[role="combobox"]`);
+        await page.keyboard.down('Control'); await page.keyboard.press('A'); await page.keyboard.up('Control');
         await page.type(`${PICKER} input[role="combobox"]`, world);
         await page.waitForFunction(world => [...document.querySelectorAll('[role="option"]')].some(e => e.textContent.trim() === world), {}, world);
         await page.evaluate(world => [...document.querySelectorAll('[role="option"]')].find(e => e.textContent.trim() === world).click(), world);
@@ -91,7 +93,7 @@ async function main() {
       const ssr = await browser.newPage();
       await ssr.setJavaScriptEnabled(false);
       await ssr.goto(`${BASE}/${tool}/Gilgamesh?world=Goblin&${query()}`, {waitUntil: 'domcontentloaded'});
-      assert((await ssr.$eval(PICKER, e => e.textContent)).includes('Gilgamesh'), `${tool}: SSR path precedence`);
+      assert.equal(await ssr.$eval(`${PICKER} input[role="combobox"]`, e => e.value), 'Gilgamesh', `${tool}: SSR path precedence`);
       assert((await ssr.$eval('meta[property="og:image"]', e => e.content)).includes(`/tool/${tool}`), `${tool}: world route keeps its social card`);
       await ssr.close();
       await open(`${tool}/Gilgamesh?world=Goblin&${query()}`, 'Gilgamesh');

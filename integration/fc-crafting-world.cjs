@@ -43,18 +43,20 @@ async function main() {
       await page.waitForFunction(() => window.__hydrated, {timeout: 90000});
       await page.waitForFunction((selector, world, region) =>
         decodeURIComponent(location.pathname) === `/fc-crafting-analyzer/${world}` &&
-        document.querySelector(selector)?.textContent.includes(world) &&
+        document.querySelector(`${selector} input[role="combobox"]`)?.value === world &&
         document.querySelector('[data-testid="analyzer-price-scope"]')?.textContent.includes(region),
       {timeout: 90000}, PICKER, world, region);
       const url = new URL(page.url());
       assert.equal(decodeURIComponent(url.pathname), `/fc-crafting-analyzer/${world}`);
       assert.equal(url.searchParams.get('probe'), 'ore & crystals=1 + HQ/材料');
       assert.equal(url.hash, '#scope');
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     }
     async function choose(world, region) {
       requests.length = 0;
       const input = await page.$(`${PICKER} input[role="combobox"]`);
       await input.click();
+      await page.keyboard.down('Control'); await page.keyboard.press('A'); await page.keyboard.up('Control');
       await input.type(world);
       await page.waitForFunction(world => [...document.querySelectorAll('[role="option"]')].some(el => el.textContent.trim() === world), {}, world);
       await page.evaluate(world => [...document.querySelectorAll('[role="option"]')].find(el => el.textContent.trim() === world).click(), world);
@@ -73,7 +75,7 @@ async function main() {
     const ssr = await browser.newPage();
     await ssr.setJavaScriptEnabled(false);
     await ssr.goto(`${BASE}/fc-crafting-analyzer/Gilgamesh${QUERY}`, {waitUntil: 'domcontentloaded', timeout: 90000});
-    assert((await ssr.$eval(PICKER, el => el.textContent)).includes('Gilgamesh'));
+    assert.equal(await ssr.$eval(`${PICKER} input[role="combobox"]`, el => el.value), 'Gilgamesh');
     assert((await ssr.$eval('[data-testid="analyzer-price-scope"]', el => el.textContent)).includes('North-America'));
     await ssr.close();
     await page.goto(`${BASE}/fc-crafting-analyzer/Gilgamesh${QUERY}`, {waitUntil: 'domcontentloaded', timeout: 90000});

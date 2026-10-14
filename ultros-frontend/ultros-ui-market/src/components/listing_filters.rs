@@ -112,7 +112,7 @@ mod tests {
 
     fn listing(id: i32, world_id: i32) -> ActiveListing {
         ActiveListing {
-            id,
+            id: id.into(),
             world_id,
             item_id: 1,
             retainer_id: 1,

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const puppeteer = require('puppeteer');
+const checkHoverCardDismissal = require('./hover-card-dismissal.cjs');
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -91,6 +92,7 @@ async function main() {
     assert(await width('c00') > 350, 'columns auto-fit their content by default');
     assert(Math.abs(await width('c01')-120) > 2, 'every visible column is measured, not left at its fallback');
     assert(!new URL(page.url()).searchParams.has('l'), 'automatic widths stay out of the URL');
+    await checkHoverCardDismissal(page);
     const fitCount = () => page.$eval('.virtual-grid', e => Number(e.dataset.autoFitted));
     const waitForFit = previous => page.waitForFunction(
       n => Number(document.querySelector('.virtual-grid')?.dataset.autoFitted) > n,

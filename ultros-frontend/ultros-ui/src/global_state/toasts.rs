@@ -49,7 +49,11 @@ impl Toasts {
             let toasts = *self;
             set_timeout(
                 move || {
-                    toasts.remove(id);
+                    if toasts.0.with_untracked(|items| {
+                        items.iter().any(|t| t.id == id && t.duration.is_some())
+                    }) {
+                        toasts.remove(id);
+                    }
                 },
                 std::time::Duration::from_millis(duration),
             );
@@ -59,6 +63,14 @@ impl Toasts {
                 let _ = duration;
             }
         }
+    }
+
+    pub fn persist(&self, id: Uuid) {
+        self.0.update(|items| {
+            if let Some(toast) = items.iter_mut().find(|t| t.id == id) {
+                toast.duration = None;
+            }
+        });
     }
 
     pub fn remove(&self, id: Uuid) {
@@ -80,10 +92,10 @@ impl Toasts {
 
     #[allow(dead_code)]
     pub fn warning(&self, message: impl Into<String>) {
-        self.add(message, ToastLevel::Warning, Some(5000));
+        self.add(message, ToastLevel::Warning, None);
     }
 
     pub fn error(&self, message: impl Into<String>) {
-        self.add(message, ToastLevel::Error, Some(5000));
+        self.add(message, ToastLevel::Error, None);
     }
 }

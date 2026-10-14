@@ -136,6 +136,7 @@ module.exports = async function permissionLatency({ ownerPage, editorPage, baseU
     await editorPage.click('[data-testid="guest-shop-mode"]');
     await editorPage.waitForSelector('[data-testid="shop-route-option"][data-route-cheapest="true"]', { visible: true });
     await editorPage.click('[data-testid="shop-route-option"][data-route-cheapest="true"]');
+    if (await editorPage.$('[data-testid="shop-confirm-route"]')) await editorPage.click('[data-testid="shop-confirm-route"]');
     await editorPage.waitForSelector('[data-testid="open-shopping-companion"]', { visible: true });
     const opened = new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Permission probe companion did not open")), timeout);

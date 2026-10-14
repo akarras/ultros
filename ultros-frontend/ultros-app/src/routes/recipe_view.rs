@@ -649,7 +649,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
     // Ticked itinerary lines are committed purchases. Each carries its own
     // listing snapshot, so it survives re-planning and a price refresh; it is
     // dropped only when its item is no longer something to buy.
-    let locks = RwSignal::new(BTreeMap::<(i32, i32), Offer>::new());
+    let locks = RwSignal::new(BTreeMap::<(i32, i64), Offer>::new());
     let locked_quality = StoredValue::new((
         hq.get_untracked().unwrap_or(false),
         output_hq.get_untracked().unwrap_or(false),

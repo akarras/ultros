@@ -343,9 +343,7 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     };
     let metrics = columns
         .iter()
-        .filter(|col| {
-            (col.lab.is_none() || lab_columns) && !matches!(col.spec.kind, ColumnKind::Actions)
-        })
+        .filter(|col| col.lab.is_none() || lab_columns)
         .map(|col| {
             let custom_value = custom_value.clone();
             let value = move |(_, row): &(usize, T)| match (col.cell)(row, &ctx.get()) {
@@ -475,7 +473,7 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     });
     let subject_of = Arc::new(move |(_, row): &(usize, T)| subject(row));
     view! {
-        <MarketGrid id label metrics show_saved_views market subject=subject_of
+        <MarketGrid mobile_cards=true id label metrics show_saved_views market subject=subject_of
             measure_version=measure_version
             on_rows=on_rows.unwrap_or_else(||Callback::new(|_|{}))
             each=rows columns=defs row_height=row_height visible_range=visible_range.unwrap_or_else(|| RwSignal::new((0,0)))
@@ -536,8 +534,7 @@ fn column_unit(kind: ColumnKind) -> Unit {
         | ColumnKind::Trend
         | ColumnKind::ListingWorld
         | ColumnKind::ListingDc
-        | ColumnKind::HopWorlds
-        | ColumnKind::Actions => Unit::Plain,
+        | ColumnKind::HopWorlds => Unit::Plain,
     }
 }
 
@@ -628,7 +625,6 @@ fn grid_id<T, M>(col: &ToolColumnMeta<T, M>) -> &'static str {
         ColumnKind::CostSlot => "cost",
         ColumnKind::RevenueSlot => "price",
         ColumnKind::SalesPerDay7 => "daily-sales",
-        ColumnKind::Actions => "actions",
         _ => col.sort_id,
     }
 }

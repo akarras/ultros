@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Copy and save items directly from analyzers",
+  "blurb": "Copy item names and add items to lists beside their names across analyzers. Recipe ingredients have a labeled shortcut, and list additions retain the item's quality and turn-in or trade quantity.",
+  "link": "/recipe-analyzer"
+}

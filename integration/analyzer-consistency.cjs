@@ -64,8 +64,9 @@ async function main() {
     await page.waitForFunction(() => Number(document.querySelector('.virtual-grid')?.getAttribute('aria-rowcount')) > 1);
   }
   async function clickText(selector, text) {
+    await page.waitForSelector(selector);
     for (const element of await page.$$(selector)) {
-      if ((await element.evaluate(el => el.textContent.trim())) === text) { await element.click(); return; }
+      if ((await element.evaluate(el => el.getAttribute('aria-label') || el.textContent.trim())) === text) { await element.click(); return; }
     }
     assert.fail(`Missing ${text}`);
   }

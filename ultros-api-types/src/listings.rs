@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// See [ultros-db::active_listing::Entity]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveListing {
-    pub id: i32,
+    pub id: i64,
     pub world_id: i32,
     pub item_id: i32,
     pub retainer_id: i32,

@@ -128,6 +128,13 @@ async function main(){
        await page.setViewport({width:393,height:850,isMobile:true,hasTouch:true});
        await page.waitForFunction(()=>window.__hydrated);
        await page.waitForSelector('.virtual-grid');
+       // These assertions exercise spreadsheet geometry. Compact cards have their
+       // own accessibility suite, so explicitly choose Full table on mobile.
+       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+       if (await page.$eval('.virtual-grid', grid => getComputedStyle(grid).display === 'none')) {
+         await page.click('.virtual-grid-shell > button');
+         await page.waitForSelector('.virtual-grid', {visible: true});
+       }
        await page.$eval('.virtual-grid',e=>e.scrollIntoView({block:'start'}));
        assert(await page.evaluate(()=>document.querySelector('.sticky-bar').getBoundingClientRect().bottom<=document.querySelector('.virtual-grid').getBoundingClientRect().top+1),'the page toolbar must not cover the grid headings');
       const grid=await page.$('.virtual-grid');const bounds=await grid.boundingBox();

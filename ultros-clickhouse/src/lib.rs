@@ -64,7 +64,8 @@ pub enum ClickHouseErrorKind {
     /// ceiling allows. Usually a capacity problem (container limit, thread
     /// count, missing spill-to-disk) rather than a bug in the query.
     MemoryLimitExceeded,
-    /// The request did not complete in time.
+    /// The request did not complete in time — either the client gave up, or
+    /// the server enforced the query's `max_execution_time` (`Code: 159`).
     Timeout,
     /// The server could not be reached at all.
     Unavailable,
@@ -141,7 +142,7 @@ fn error_chain_text(error: &(dyn std::error::Error + 'static)) -> String {
 /// error's `Display` — several of the substrings below only ever appear on a
 /// nested cause.
 fn classify_client_error(text: &str) -> ClickHouseErrorKind {
-    if text.contains("Code: 241") || text.contains("MEMORY_LIMIT_EXCEEDED") {
+    if has_error_code(text, 241) || text.contains("MEMORY_LIMIT_EXCEEDED") {
         ClickHouseErrorKind::MemoryLimitExceeded
     } else if text.contains("Connection refused")
         || text.contains("tcp connect error")
@@ -160,11 +161,31 @@ fn classify_client_error(text: &str) -> ClickHouseErrorKind {
         || text.contains("TimedOut")
         // `clickhouse::error::Error::TimedOut`'s own `Display`.
         || text.contains("timeout expired")
+        // Server-side `Code: 159`: the query ran past its own
+        // `max_execution_time`. ClickHouse words it "Timeout exceeded".
+        || has_error_code(text, 159)
+        || text.contains("TIMEOUT_EXCEEDED")
     {
         ClickHouseErrorKind::Timeout
     } else {
         ClickHouseErrorKind::Other
     }
+}
+
+/// Whether `text` carries ClickHouse server error `Code: {code}`, as a whole
+/// number. When the exception arrives mid-stream (headers already sent with a
+/// 200) the client keeps only the head of the body, so the message can end
+/// right after the digits — `"bad response: Code: 159"`, no trailing `.` and no
+/// `TIMEOUT_EXCEEDED` name. The digit check stops `Code: 15` from claiming
+/// `Code: 159`.
+fn has_error_code(text: &str, code: u32) -> bool {
+    let needle = format!("Code: {code}");
+    text.match_indices(&needle).any(|(at, _)| {
+        !text[at + needle.len()..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit())
+    })
 }
 
 #[cfg(test)]
@@ -286,6 +307,57 @@ mod error_kind_tests {
     fn client_timeout_is_a_timeout() {
         let err = ClickHouseError::Client(clickhouse::error::Error::TimedOut);
         assert_eq!(err.kind(), ClickHouseErrorKind::Timeout);
+    }
+
+    /// Verbatim from the 2026-10 `undercut_pressure` / `floor_history` reports:
+    /// the server enforcing a query's own `max_execution_time`. ClickHouse
+    /// spells it "Timeout exceeded", which matched none of the client-side
+    /// wordings, so a slow-query incident was filed as `other`.
+    #[test]
+    fn server_side_timeout_exceeded_is_a_timeout() {
+        assert_eq!(
+            classify_client_error(
+                "bad response: Code: 159. DB::Exception: Timeout exceeded: elapsed \
+                 10358.24619 ms, maximum: 10000 ms. (TIMEOUT_EXCEEDED) (version 25.4.13.22 \
+                 (official build))"
+            ),
+            ClickHouseErrorKind::Timeout
+        );
+        // The tracker sometimes keeps only the head of the message.
+        assert_eq!(
+            classify_client_error("bad response: Code: 159. DB::Exception: Timeout exceeded"),
+            ClickHouseErrorKind::Timeout
+        );
+    }
+
+    /// Verbatim from the 2026-10-04 `floor_history` reports that kept landing
+    /// on `other` after the fix above: when the timeout fires mid-stream the
+    /// body is cut right after the code, so neither `"Code: 159."` nor
+    /// `TIMEOUT_EXCEEDED` is in the text.
+    #[test]
+    fn truncated_code_159_is_a_timeout() {
+        assert_eq!(
+            classify_client_error("bad response: Code: 159"),
+            ClickHouseErrorKind::Timeout
+        );
+        assert_eq!(
+            classify_client_error("bad response: Code: 241"),
+            ClickHouseErrorKind::MemoryLimitExceeded
+        );
+    }
+
+    /// The bare-code match must not swallow a longer code that merely starts
+    /// with the same digits.
+    #[test]
+    fn code_match_is_whole_number() {
+        assert_eq!(
+            classify_client_error("bad response: Code: 1590"),
+            ClickHouseErrorKind::Other
+        );
+        assert_eq!(
+            classify_client_error("bad response: Code: 2410. DB::Exception: x"),
+            ClickHouseErrorKind::Other
+        );
     }
 
     /// A connect that gave up waiting is a reachability problem, not a slow

@@ -98,7 +98,7 @@ async fn cleanup(ch: &ClickHouseClient) {
 fn added(
     item_id: i32,
     listing_id: &str,
-    pg_listing_id: i32,
+    pg_listing_id: i64,
     retainer_id: i32,
     price: u32,
     quantity: u16,

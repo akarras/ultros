@@ -47,6 +47,7 @@ pub fn AddSetToList(
     #[prop(into)] modal_title: Signal<String>,
     #[prop(into)] subject: Signal<String>,
     #[prop(into)] entries: Signal<Vec<(ItemId, i32)>>,
+    #[prop(optional)] compact: bool,
 ) -> impl IntoView {
     let (modal_visible, set_modal_visible) = signal(false);
     // The trigger can retain focus beneath the modal. Hide its floating
@@ -63,8 +64,8 @@ pub fn AddSetToList(
             <Tooltip tooltip_text=active_tooltip>
                 <button
                     type="button"
-                    class="btn-primary"
-                    attr:aria-label=move || tooltip.get()
+                    class=if compact { "inline-flex items-center gap-1 text-xs rounded hover:underline focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)]" } else { "btn-primary" }
+                    aria-label=move || tooltip.get()
                     on:click=move |_| {
                         set_modal_visible(!modal_visible());
                     }
@@ -170,7 +171,7 @@ fn AddSetToListModal(
             <div class="panel p-6 rounded-xl space-y-4 max-w-2xl">
                 <div class="flex items-start gap-3">
                     <div class="min-w-0 flex-1">
-                        <div class="text-xl font-extrabold text-[color:var(--brand-fg)]">
+                        <div data-dialog-title="" class="text-xl font-extrabold text-[color:var(--brand-fg)]">
                             {move || modal_title.get()}
                         </div>
                         <div class="text-[color:var(--color-text-muted)] truncate">

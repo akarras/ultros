@@ -306,7 +306,7 @@ fn EndpointCreateForm(#[prop(into)] on_created: Callback<()>) -> impl IntoView {
         <div class="p-3 border rounded space-y-3">
             <div class="space-y-1">
                 <label class="text-sm font-semibold" for="endpoint-name">{t!(i18n, endpoints_name_label)}</label>
-                <input id="endpoint-name" class="input w-full" prop:value=name
+                <input aria-describedby=move || error.get().is_some().then_some("endpoint-form-error") id="endpoint-name" class="input w-full" prop:value=name
                     on:input=move |e| set_name.set(event_target_value(&e)) />
             </div>
             <div class="space-y-1">
@@ -423,12 +423,12 @@ fn EndpointCreateForm(#[prop(into)] on_created: Callback<()>) -> impl IntoView {
             <Show when=move || method_kind.get() == "webhook">
                 <div class="space-y-1">
                     <label class="text-sm font-semibold" for="endpoint-webhook-url">{t!(i18n, alert_drawer_webhook_url_label)}</label>
-                    <input id="endpoint-webhook-url" class="input w-full" prop:value=webhook_url
+                    <input aria-describedby=move || error.get().is_some().then_some("endpoint-form-error") id="endpoint-webhook-url" class="input w-full" prop:value=webhook_url
                         on:input=move |e| set_webhook_url.set(event_target_value(&e)) />
                 </div>
             </Show>
             <Show when=move || error.get().is_some()>
-                <div class="text-sm text-red-500">{move || error.get().unwrap_or_default()}</div>
+                <div id="endpoint-form-error" role="alert" class="text-sm text-negative">{move || error.get().unwrap_or_default()}</div>
             </Show>
             <div class="flex justify-end">
                 <button class="btn" on:click=submit>{t!(i18n, endpoints_create_button)}</button>

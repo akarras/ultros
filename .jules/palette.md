@@ -33,3 +33,9 @@
 ## 2026-09-12 - Add type="button" and disabled prop to MakePlaceImporter button
 **Learning:** Some buttons handling component state logic (like adding items from a textarea list) missed a reactive disabled state, letting the user accidentally click them repeatedly or when there is an invalid input string.
 **Action:** Always add `type="button"` for interactive buttons that execute JS and provide a `prop:disabled` state for better user feedback and interaction blocking.
+## 2026-09-15 - Adding type="button" to UI close buttons
+**Learning:** The close buttons in `Modal` and `ToastItem` lacked an explicit `type="button"` attribute. Since the default type for HTML buttons is `submit`, omitting it can cause unintentional form submissions and page reloads when these components are rendered within or near a `<form>`.
+**Action:** Always explicitly set `type="button"` for interactive UI control buttons (like 'Close', 'Dismiss', or 'Cancel') that trigger JavaScript actions to prevent unintended form submissions.
+## 2024-10-06 - Modal Close Button Missing Focus Style
+**Learning:** Found that the modal component's close button has some hardcoded focus styling `focus:ring-2 focus:ring-[color:var(--brand-ring)]`, but some other components like `Clipboard` use `focus-visible:` for their focus states. It's better to use `focus-visible:` so mouse users don't get the focus ring when they click, but keyboard users do.
+**Action:** Let's find places using `focus:ring` on buttons and change them to `focus-visible:ring`.

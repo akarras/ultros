@@ -44,7 +44,7 @@ function main() {
     results.push({ suite, passed, exit: result.status, error: result.error?.message || null });
   }
   const report = { build: process.env.LISTS_ACCEPTANCE_BUILD, baseUrl: process.env.BASE_URL,
-    startedAt, labs: "lists-sync", mode: "required-priced-acceptance", results };
+    startedAt, mode: "required-priced-acceptance", results };
   fs.writeFileSync(path.join(artifacts, "results.json"), JSON.stringify(report, null, 2));
   assert(results.every(result => result.passed), "Lists acceptance failed; inspect per-suite logs and results.json. Other smoke runs do not override failed/missing priced assertions.");
   console.log("PASS: required Lists acceptance suites completed (local test build; not production soak or physical FFXIV evidence).");

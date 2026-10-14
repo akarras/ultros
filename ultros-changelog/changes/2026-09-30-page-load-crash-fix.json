@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Link previews stay correct after loading",
+  "blurb": "Pages no longer mix up their link-preview title and description while loading, a mix-up that could also stop some pages from loading."
+}

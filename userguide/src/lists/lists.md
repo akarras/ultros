@@ -1,31 +1,40 @@
 # Lists
 
-Lists in Ultros allow you to track items, recipes, or materials for various purposes, such as crafting projects, market monitoring, or shopping lists.
+Lists help you gather items for crafting projects and plan market-board shopping.
+Use **Build** to edit what you need and **Shop** to choose a shopping trip.
 
-## Creating a List
+## Creating a list
 
-1.  Navigate to the **Lists** page (`/list`).
-2.  Click the **+ (Plus)** button to create a new list.
-3.  Enter a **Name** for your list.
-4.  Select a **World, Datacenter, or Region** filter. This filter determines the pricing data shown for items in this list.
-5.  Click the **Save** button.
+1. Open **Lists** (/list) and choose **New list**.
+2. Give the list a name.
+3. Choose an online list when signed in, or save it **On this device**.
 
-## Managing Lists
+Device lists work without an account and stay in this browser. Use the list's
+backup controls to export a copy before clearing browser data. Choose **Make
+online** to connect a device list to your account and use it on other devices.
 
-On the **Edit Lists** page (`/lists`), you can:
+## Building a list
 
-*   **Filter** your lists by name.
-*   **Edit** a list's name or world filter by clicking the pencil icon.
-*   **Delete** a list by clicking the trash icon.
+Search for items directly in the list and add the quantity and quality you need.
+Switch the composer to **Recipes** to preview finished items or ingredients.
+You can also use **Add to List** from an item page or other tools.
 
-## Adding Items to a List
+Edit **Needed** and **Quality** in each row. Open **Details** to change **Owned**
+or a target price. Select rows for bulk changes, and use **Undo** or **Redo** to
+correct edits. The Build estimate prices the remaining units in your chosen
+world, datacenter, or region and calls out incomplete price coverage.
 
-You can add items to a list from any item page or search result that displays the "Add to List" button (list icon with a plus).
+## Shopping
 
-1.  Click the **Add to List** button on an item.
-2.  In the modal that appears, select the **Quantity** and whether you want the **High Quality (HQ)** version.
-3.  Click the **Add** button next to the list you want to add the item to.
+Switch to **Shop** to compare trips that buy whole market-board stacks. Choose
+your travel limit and route, track purchases, and optionally open the compact
+shopping companion. Whole stacks may leave surplus, so the trip total can
+differ from the Build estimate.
 
-## Viewing a List
+## Managing and sharing
 
-Clicking on a list name takes you to the list view, where you can see the items in that list, their quantities, and market data based on the list's configured filter.
+Rename a list at the top of its editor, or edit its card in the Lists directory.
+Online list owners can use **Access** to share with friends or groups and create
+invite links. Viewers can browse and plan; editors can change the shared list.
+The **More options** menu includes backups for device lists and deletion or
+leaving a shared online list.

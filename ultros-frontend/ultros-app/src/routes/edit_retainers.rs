@@ -209,6 +209,8 @@ pub fn EditRetainers() -> impl IntoView {
 
                                                                             <div class="flex flex-col gap-2">
                                                                                 <ReorderableList
+                                                                                    key_fn=move |(owned, _): &(OwnedRetainer, Retainer)| owned.id
+                                                                                    item_label=move |(_, retainer): &(OwnedRetainer, Retainer)| retainer.name.clone()
                                                                                     items=retainers
                                                                                     item_view=move |(owned, retainer): (OwnedRetainer, Retainer)| {
                                                                                         let owned_id = owned.id;
@@ -227,11 +229,13 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                                     </div>
 
                                                                                                     <div class="flex flex-col gap-1 min-w-[200px]">
-                                                                                                        <label class="text-xs opacity-60 ml-1">
+                                                                                                        <label for=format!("retainer-character-{owned_id}") class="text-xs opacity-60 ml-1">
                                                                                                             {t!(i18n, retainers_assign_character)}
                                                                                                         </label>
                                                                                                         <select
+                                                                                                            id=format!("retainer-character-{owned_id}")
                                                                                                             class="select input-sm w-full"
+                                                                                                            aria-label=move || t_string!(i18n, retainers_assign_character).to_string()
                                                                                                             class:opacity-50=move || {
                                                                                                                 assign_character.pending().get() &&
                                                                                                                 assign_character.input().get().map(|(id, _)| id == owned_id).unwrap_or_default()

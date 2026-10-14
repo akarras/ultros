@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Faster first visits",
+  "blurb": "Game data now downloads alongside the app, so pages can become interactive sooner on your first visit or after a game-data update."
+}

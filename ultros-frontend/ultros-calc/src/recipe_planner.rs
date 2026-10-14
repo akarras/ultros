@@ -134,7 +134,7 @@ pub fn expand(
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Offer {
-    pub id: i32,
+    pub id: i64,
     pub world: i32,
     pub quantity: i64,
     pub price: i64,
@@ -482,7 +482,7 @@ fn purchase_with_locked(
 /// Per-item purchase results keyed by the exact listings the knapsack could
 /// see, so route search does not re-solve an item whose visible offers did
 /// not change between two world sets.
-type PurchaseCache = BTreeMap<(i32, Vec<i32>), Purchase>;
+type PurchaseCache = BTreeMap<(i32, Vec<i64>), Purchase>;
 
 fn shop_cached(
     materials: &[Material],
@@ -499,7 +499,7 @@ fn shop_cached(
         .filter(|m| m.recipe.is_none() && m.remaining() > 0)
     {
         let locked = ctx.locked.get(&m.item).map(Vec::as_slice).unwrap_or(&[]);
-        let locked_ids: BTreeSet<i32> = locked.iter().map(|o| o.id).collect();
+        let locked_ids: BTreeSet<i64> = locked.iter().map(|o| o.id).collect();
         let offers: Vec<_> = market
             .get(&m.item)
             .into_iter()
@@ -750,7 +750,7 @@ mod tests {
     }
     fn offer(id: i32, world: i32, quantity: i64, price: i64) -> Offer {
         Offer {
-            id,
+            id: id.into(),
             world,
             quantity,
             price,

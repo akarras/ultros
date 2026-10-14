@@ -9,6 +9,7 @@ const dialog = '[role="dialog"]';
 async function main() {
   const browser = await puppeteer.launch({ headless: true });
   const page = await browser.newPage();
+  await page.setViewport({ width: 1280, height: 900 });
   const errors = [];
   let listId;
   page.setDefaultTimeout(30000);
@@ -70,12 +71,12 @@ async function main() {
     console.log(`[ok] ${id}: keyboard open, forward/backward containment, Escape, restoration`);
   }
   try {
-    await page.setCookie(...[['LABS', 'lists-sync'], ['HIDE_ADS', 'true'], ['i18n_pref_locale', 'en']]
+    await page.setCookie(...[['HIDE_ADS', 'true'], ['i18n_pref_locale', 'en']]
       .map(([name, value]) => ({ name, value, url: base, path: '/' })));
-    await load('/list?labs=lists-sync');
+    await load('/list');
     await cycle('list-new', 'New list');
     await cycle('list-restore-open', 'Restore backup');
-    await load('/test/login?user_id=990000001509&username=ModalKeyboardQA&redirect=/list?labs=lists-sync');
+    await load('/test/login?user_id=990000001509&username=ModalKeyboardQA&redirect=/list');
     await cycle('list-join-open', 'Redeem invite');
 
     // Exercise two actual component instances together. Opening the second
@@ -98,15 +99,15 @@ async function main() {
     const name = `Modal keyboard ${Date.now()}`;
     await api('POST', '/api/v1/list/create', { name, wdr_filter: { World: world.id } });
     listId = (await api('GET', '/api/v1/list')).find(entry => entry.list.name === name).list.id;
-    await load(`/list/${listId}?labs=lists-sync`);
+    await load(`/list/${listId}`);
     await page.deleteCookie({ name: 'LABS', url: base });
-    await load('/list?labs=lists-sync');
+    await load('/list');
     const cardLink = 'a[href="/list/' + listId + '"]';
     await page.waitForSelector(cardLink, { visible: true });
-    assert.equal(new URL(await page.$eval(cardLink, node => node.href)).searchParams.get('labs'), null, 'online card uses the default route');
+    assert.equal(new URL(await page.$eval(cardLink, node => node.href)).searchParams.get('labs'), null, 'online card uses the standard list URL');
     await page.click(cardLink);
     await page.waitForSelector(tid('list-name-input'), { visible: true });
-    assert.equal(new URL(page.url()).searchParams.get('labs'), null, 'opening an online card needs no Labs flag');
+    assert.equal(new URL(page.url()).searchParams.get('labs'), null, 'opening an online card needs no Labs override');
     await cycle('list-access-btn', 'Manage access');
 
     await cycle('list-settings-btn', 'More options');
@@ -137,7 +138,7 @@ async function main() {
     // sits in the page's price row), so the nested dropdown-then-modal Escape
     // check that used to run against the settings drawer has no subject here.
 
-    await load('/list?labs=lists-sync');
+    await load('/list');
     await open('list-new');
     await page.$eval(tid('list-new'), button => button.remove());
     await page.keyboard.press('Escape');

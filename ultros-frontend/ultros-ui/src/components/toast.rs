@@ -10,9 +10,9 @@ pub fn toast_color_class(level: &ToastLevel) -> &'static str {
         ToastLevel::Info => {
             "bg-[color:var(--color-background-elevated)] border-[color:var(--color-outline)] text-[color:var(--color-text)]"
         }
-        ToastLevel::Success => "bg-green-500/10 border-green-500/20 text-green-400",
-        ToastLevel::Warning => "bg-yellow-500/10 border-yellow-500/20 text-yellow-400",
-        ToastLevel::Error => "bg-red-500/10 border-red-500/20 text-negative",
+        ToastLevel::Success => "toast-success",
+        ToastLevel::Warning => "toast-warning",
+        ToastLevel::Error => "toast-error",
     }
 }
 
@@ -45,11 +45,15 @@ pub fn ToastItem(toast: Toast) -> impl IntoView {
             class=("slide-out-to-right", move || is_exiting())
             class=("fade-out", move || is_exiting())
             class=("duration-300", move || is_exiting())
-            role="alert"
+            role=if toast.level == ToastLevel::Error { "alert" } else { "status" }
+            aria-atomic="true"
+            on:mouseenter=move |_| toasts.persist(id)
+            on:focusin=move |_| toasts.persist(id)
         >
             <Icon icon width="1.2em" height="1.2em" aria_hidden=true />
             <div class="flex-1">{message}</div>
             <button
+                type="button"
                 class="opacity-70 hover:opacity-100 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)] rounded"
                 aria-label=t_string!(i18n, close)
                 on:click=move |_| {
@@ -91,9 +95,9 @@ mod tests {
     #[test]
     fn test_toast_color_class() {
         assert!(toast_color_class(&ToastLevel::Info).contains("var(--color-background-elevated)"));
-        assert!(toast_color_class(&ToastLevel::Success).contains("green"));
-        assert!(toast_color_class(&ToastLevel::Warning).contains("yellow"));
-        assert!(toast_color_class(&ToastLevel::Error).contains("red"));
+        assert!(toast_color_class(&ToastLevel::Success).contains("success"));
+        assert!(toast_color_class(&ToastLevel::Warning).contains("warning"));
+        assert!(toast_color_class(&ToastLevel::Error).contains("error"));
     }
 
     #[test]

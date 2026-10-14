@@ -18,6 +18,7 @@
 //! page — it answers "what's hot right now" at a glance; the grid below
 //! is the deep-dive.
 
+use crate::components::item_actions::ItemActions;
 use std::sync::Arc;
 
 use crate::analyzer_kit::{
@@ -52,8 +53,6 @@ use crate::components::virtual_grid::{
 use crate::{
     api::get_trends_v2,
     components::{
-        add_to_list::AddToList,
-        clipboard::Clipboard,
         confidence_badge::ConfidenceBadge,
         control_bar::ControlBar,
         gil::Gil,
@@ -643,8 +642,7 @@ fn TrendsGrid(
                             </div>
                             {name.clone()}
                         </a>
-                        <AddToList item_id />
-                        <Clipboard clipboard_text=name />
+                        <ItemActions item_id item_name=name hq=row.hq />
                     </div>
                 }
                 .into_any()

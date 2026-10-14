@@ -1,8 +1,7 @@
 //! The "On this device" section of the add-to-list modals.
 //!
-//! Renders nothing unless [`use_local_lists`] resolves a bridge, so the modals
-//! that embed it look exactly as before for everyone outside the lab. Inside
-//! it, the section lists the device lists with an add button each, and ends
+//! Renders when [`use_local_lists`] resolves a browser storage bridge. The
+//! section lists the device lists with an add button each, and ends
 //! with a name field that creates a new device list and adds to it in one go
 //! — the modal is the one place a player decides they need a list they
 //! don't have yet.

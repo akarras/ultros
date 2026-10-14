@@ -26,7 +26,7 @@ use crate::components::list_workspace_shell::ListWorkspaceShell;
 use crate::components::{
     cart::ListCart,
     item_icon::*,
-    list::{auto_mark_purchases::AutoMarkPurchases, filter_row::SortSpec},
+    list::{auto_mark_purchases::AutoMarkPurchases, sort::SortSpec},
     list_subscribe_drawer::ListSubscribeDrawer,
     loading::*,
     make_place_importer::*,
@@ -39,7 +39,7 @@ use crate::i18n::*;
 use crate::list_doc::adapter::Edit;
 use crate::list_doc::handle::{ListDocHandle, RecoveryState, SaveState};
 use crate::query_defaults::filter_query_signal;
-use crate::routes::list_view::{
+use crate::routes::list_common::{
     ActivityFeed, IdList, ListViewResult, NameList, filter_excluded,
     list_item_table_skeleton_columns,
 };
@@ -123,8 +123,7 @@ where
 /// Inline composer shared by account and device lists. One panel, two modes:
 /// the Items mode searches the catalog, the Recipes mode previews a recipe's
 /// finished items or ingredients. The mode is the source's `recipe_open`
-/// signal, so the legacy toolbar button and the guest follow guard keep
-/// their meaning.
+/// signal, shared with the guest follow guard.
 #[component]
 pub fn InlineListAdd(
     list_id: Signal<i32>,
@@ -642,7 +641,7 @@ fn note_fetch(prices: PriceStatus, outcome: Option<FetchedPrices<'_>>) {
 
 /// How long a burst of relayed list broadcasts is allowed to coalesce into
 /// a single revalidation. Every row edit on a shared list comes back to us
-/// as a `ListItem` broadcast, and the workspace already has those rows from
+/// as a `ListItem` broadcast, and the editor already has those rows from
 /// its document — the revalidation exists only so a *permission* change
 /// (Global Constraint 2) is noticed by an idle page, so paying one REST
 /// fetch per remote keystroke would be pure waste.
@@ -1180,8 +1179,8 @@ pub fn ListViewSync() -> impl IntoView {
     // never be built on the SSR half (repo issue #1332), and its browser
     // storage is scoped to the signed-in user — so it can only open on the
     // client, once `get_login` has resolved. Until then, and forever for an
-    // anonymous visitor, this stays `None` and the page uses its
-    // read-only server projection.
+    // anonymous visitor, this stays `None` and the page renders read-only
+    // data from REST.
     let handle: RwSignal<Option<ListDocHandle>> = RwSignal::new(None);
     provide_context(handle);
 
@@ -1225,7 +1224,7 @@ pub fn ListViewSync() -> impl IntoView {
 
     let edit_item = Action::new(move |item: &ListItem| {
         // `Edit::Edit` finds the row by the id it was rendered with, so the
-        // item arrives exactly as `ListItemRow` hands it back — original id
+        // item arrives exactly as `CartRow` hands it back — original id
         // included, even when the edit changes its quality.
         let edit = Edit::Edit(item.clone());
         async move { apply_edit(handle, edit) }
@@ -1742,8 +1741,7 @@ pub fn ListViewSync() -> impl IntoView {
         view_caps.set(next);
     });
 
-    // The cart sorts its own rows (so an active editor can pin its row);
-    // only the legacy grid still expects them pre-sorted.
+    // The cart sorts its own rows so an active editor can pin its row.
     let build_rows = Signal::derive(move || {
         let snapshot = list_view
             .get()
@@ -2287,7 +2285,7 @@ pub fn ListViewSync() -> impl IntoView {
     }.into_any()
 }
 
-/// Builds a fresh document for each list, without rebuilding while the route leaves.
+/// Rebuild the editor when the list ID changes, but never while leaving the route.
 #[component]
 pub fn ListRoute() -> impl IntoView {
     let params = use_params_map();

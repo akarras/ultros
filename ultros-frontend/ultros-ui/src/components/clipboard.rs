@@ -53,7 +53,7 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
     view! {
         <button
             type="button"
-            class="clipboard cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)] rounded"
+            class="clipboard inline-flex h-8 w-8 shrink-0 items-center justify-center cursor-pointer hover:bg-[color:var(--color-panel)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)] rounded"
             aria-label=move || {
                 if !copied() {
                     format!("Copy {} to clipboard", get_clipboard_text())
@@ -63,6 +63,7 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
             }
             on:click=move |e| {
                 e.prevent_default();
+                e.stop_propagation();
                 #[cfg(all(feature = "hydrate"))]
                 {
                     use leptos::task::spawn_local;
@@ -77,21 +78,25 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
                         // not focused). Dropping that Promise leaks the rejection as an
                         // unhandled promise rejection, which our error reporter flags as
                         // an error (GlitchTip #5767). Await it so the rejection is
-                        // consumed — a blocked copy is best-effort and unrecoverable.
+                        // consumed. Only confirm success after the browser accepts it.
                         let promise = clipboard.write_text(&text);
                         spawn_local(async move {
                             if JsFuture::from(promise).await.is_err() {
                                 leptos::logging::warn!(
                                     "clipboard write_text was blocked by the browser"
                                 );
+                                if let Some(toasts) = toasts {
+                                    toasts.error("Couldn't copy. Try again or select and copy the text.");
+                                }
+                                return;
+                            }
+                            if let Some(last_copied_text) = last_copied_text {
+                                last_copied_text.0.set(Some(text));
+                            }
+                            if let Some(toasts) = toasts {
+                                toasts.success("Copied to clipboard!");
                             }
                         });
-                        if let Some(last_copied_text) = last_copied_text {
-                            last_copied_text.0.set(Some(text));
-                        }
-                        if let Some(toasts) = toasts {
-                            toasts.success("Copied to clipboard!");
-                        }
                     }
                 }
     #[cfg(not(feature = "hydrate"))]

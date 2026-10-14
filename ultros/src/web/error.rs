@@ -331,7 +331,8 @@ impl ApiError {
                 None => StatusCode::INTERNAL_SERVER_ERROR,
             }
             .or_else_status(e.downcast_ref::<RetainerError>())
-            .or_else_group_status(e.downcast_ref::<GroupError>()),
+            .or_else_group_status(e.downcast_ref::<GroupError>())
+            .or_else_db_status(e.downcast_ref::<SeaDbErr>()),
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -397,9 +398,14 @@ impl ApiError {
                                     .into(),
                             )
                         }
-                        None => ultros_api_types::result::ApiError::Message(
-                            "Internal server error".to_string(),
-                        ),
+                        None => match e.downcast_ref::<SeaDbErr>() {
+                            Some(SeaDbErr::RecordNotFound(_)) => {
+                                ultros_api_types::result::ApiError::NotFound
+                            }
+                            _ => ultros_api_types::result::ApiError::Message(
+                                "Internal server error".to_string(),
+                            ),
+                        },
                     },
                 },
             },
@@ -447,6 +453,23 @@ impl GroupStatus for StatusCode {
             | Some(GroupError::ManagedByDiscord)
             | Some(GroupError::RoleManagedByDiscord) => StatusCode::BAD_REQUEST,
             None => self,
+        }
+    }
+}
+
+trait DbStatus {
+    fn or_else_db_status(self, db_error: Option<&SeaDbErr>) -> StatusCode;
+}
+
+impl DbStatus for StatusCode {
+    /// A lookup by id that found no row (`get_retainer_listings` on a stale
+    /// link) is the caller asking for something that isn't there.
+    fn or_else_db_status(self, db_error: Option<&SeaDbErr>) -> StatusCode {
+        match (self, db_error) {
+            (StatusCode::INTERNAL_SERVER_ERROR, Some(SeaDbErr::RecordNotFound(_))) => {
+                StatusCode::NOT_FOUND
+            }
+            _ => self,
         }
     }
 }
@@ -634,6 +657,27 @@ mod tests {
             let api = ApiError::from(anyhow::Error::from(error));
             assert_eq!(api.as_status_code(), expected, "{described}");
         }
+    }
+
+    /// `UltrosDb` lookups by id (`get_retainer_listings`, …) answer a missing
+    /// row with `DbErr::RecordNotFound` wrapped in `anyhow`. A stale
+    /// `/retainers/listings/{id}` link is the caller's problem, so it has to
+    /// come back as a 404 rather than a 500 filed as "Generic API error".
+    #[test]
+    fn record_not_found_through_anyhow_is_a_404() {
+        let api = ApiError::from(anyhow::Error::from(SeaDbErr::RecordNotFound(
+            "45590".to_string(),
+        )));
+        assert_eq!(api.as_status_code(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            api.as_api_error(),
+            ultros_api_types::result::ApiError::NotFound
+        );
+        assert!(!reports_to_tracker(
+            &api,
+            api.as_status_code(),
+            &AtomicBool::new(false)
+        ));
     }
 
     /// Both "managed by Discord" refusals have to reach the client as text a

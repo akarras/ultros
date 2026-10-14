@@ -44,6 +44,8 @@ pub fn SelectorKind(selector: AnySelector) -> impl IntoView {
 
 #[component]
 pub fn WorldOnlyPicker(
+    #[prop(optional, into)] label: Option<Signal<String>>,
+    #[prop(optional)] input_id: Option<String>,
     current_world: Signal<Option<World>>,
     set_current_world: SignalSetter<Option<World>>,
 ) -> impl IntoView {
@@ -64,6 +66,8 @@ pub fn WorldOnlyPicker(
             let left = view! {
                 <div class="relative">
                     <Select
+                        input_id=input_id
+                        label=label.unwrap_or_else(|| Signal::derive(move || crate::i18n::t_string!(i18n, world).to_string()))
                         items=data.into()
                         as_label=move |w| w.name.clone()
                         choice=current_world
@@ -89,6 +93,8 @@ pub fn WorldOnlyPicker(
 
 #[component]
 pub fn WorldPicker(
+    #[prop(optional, into)] label: Option<Signal<String>>,
+    #[prop(optional)] input_id: Option<String>,
     current_world: Signal<Option<AnySelector>>,
     set_current_world: SignalSetter<Option<AnySelector>>,
 ) -> impl IntoView {
@@ -122,6 +128,8 @@ pub fn WorldPicker(
             Either::Left(view! {
                 <div class="relative">
                     <Select
+                        input_id=input_id
+                        label=label.unwrap_or_else(|| Signal::derive(move || crate::i18n::t_string!(i18n, world).to_string()))
                         items=data.into()
                         choice=choice
                         set_choice=set_choice

@@ -662,6 +662,7 @@ pub fn AlertDrawer(
                                     None => view! {
                                         <div class="space-y-1">
                                             <input
+                                    aria-describedby=move || error.get().is_some().then_some("alert-form-error")
                                                 id="create-alert-search"
                                                 class="input w-full"
                                                 placeholder=t_string!(i18n, create_alert_search_placeholder)
@@ -716,6 +717,7 @@ pub fn AlertDrawer(
                             <div class="space-y-1">
                                 <label class="text-sm font-semibold" for="create-alert-threshold">{t!(i18n, alert_drawer_threshold_label)}</label>
                                 <input
+                                    aria-describedby=move || error.get().is_some().then_some("alert-form-error")
                                     id="create-alert-threshold"
                                     class="input w-full"
                                     type="number"
@@ -740,7 +742,7 @@ pub fn AlertDrawer(
                                     min=*BELOW_MEDIAN_PERCENT_RANGE.start()
                                     max=*BELOW_MEDIAN_PERCENT_RANGE.end()
                                     aria-invalid=move || (!percent_below_valid()).to_string()
-                                    aria-describedby="below-median-alert-percent-error"
+                                    aria-describedby=move || if error.get().is_some() { "below-median-alert-percent-error alert-form-error" } else { "below-median-alert-percent-error" }
                                     prop:value=percent_below
                                     on:input=move |e| set_percent_below.set(event_target_value(&e))
                                 />
@@ -754,6 +756,7 @@ pub fn AlertDrawer(
 
                         <label class="flex items-center gap-2">
                             <input
+                                    aria-describedby=move || error.get().is_some().then_some("alert-form-error")
                                 type="checkbox"
                                 prop:checked=hq_only
                                 on:change=move |e| set_hq_only.set(event_target_checked(&e))
@@ -778,6 +781,7 @@ pub fn AlertDrawer(
                             {t!(i18n, undercut_alert_margin_label)}
                         </label>
                         <input
+                                    aria-describedby=move || error.get().is_some().then_some("alert-form-error")
                             id="undercut-alert-margin"
                             class="input w-full"
                             type="number"
@@ -930,7 +934,7 @@ pub fn AlertDrawer(
                 </div>
 
                 <Show when=move || error.get().is_some()>
-                    <div class="text-sm text-red-500">{move || error.get().unwrap_or_default()}</div>
+                    <div id="alert-form-error" role="alert" class="text-sm text-negative">{move || error.get().unwrap_or_default()}</div>
                 </Show>
 
                 <div class="flex justify-end gap-2 pt-2">

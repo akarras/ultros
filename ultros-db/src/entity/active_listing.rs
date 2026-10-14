@@ -22,7 +22,7 @@ pub struct MateriaList(pub Vec<Materia>);
 #[sea_orm(table_name = "active_listing")]
 pub struct Model {
     #[sea_orm(primary_key, unique)]
-    pub id: i32,
+    pub id: i64,
     pub world_id: i32,
     pub item_id: i32,
     pub retainer_id: i32,

@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Exchange sources put NPC locations at your fingertips",
+  "blurb": "Item pages now show each exchange NPC's coordinates in a full clickable chip. Hover or focus it to preview the map pin and see how many other items that NPC sells or exchanges.",
+  "link": "/item/39595#exchange-sources"
+}

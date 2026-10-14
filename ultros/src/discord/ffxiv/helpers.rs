@@ -263,7 +263,7 @@ mod tests {
     use super::*;
     use chrono::NaiveDateTime;
 
-    fn listing(id: i32, price: i32, hq: bool) -> active_listing::Model {
+    fn listing(id: i64, price: i32, hq: bool) -> active_listing::Model {
         active_listing::Model {
             id,
             world_id: 1,
@@ -496,7 +496,7 @@ mod tests {
 
     #[test]
     fn top_n_cheapest_truncates_to_limit() {
-        let listings = (1..=20).map(|i| listing(i, i * 10, false)).collect();
+        let listings = (1..=20).map(|i| listing(i.into(), i * 10, false)).collect();
         let result = top_n_cheapest_listings(listings, None, 5);
         assert_eq!(result.len(), 5);
         let prices: Vec<_> = result.iter().map(|l| l.price_per_unit).collect();

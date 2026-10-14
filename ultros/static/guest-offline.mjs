@@ -1,4 +1,4 @@
-// Prepare offline support when the hydrated Lists directory or device editor opens.
+// Preparation starts from the hydrated device-list experience.
 // No server HTML or account state is sent to the worker.
 let preparing;
 

@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Old retainer links say \"not found\"",
+  "blurb": "Opening a link to a retainer that no longer exists now reports that it wasn't found instead of a server error."
+}

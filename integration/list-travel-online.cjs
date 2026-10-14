@@ -64,6 +64,7 @@ async function runTravelOnline({ browser, base, market, record = async () => {} 
   async function shop() {
     await click(tid("guest-shop-mode"));
     if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]'); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
+    if (await page.$('[data-testid="shop-confirm-route"]')) await page.click('[data-testid="shop-confirm-route"]');
     await page.waitForSelector(tid("shop-totals"));
     assert.match(await page.$eval(tid("shop-totals"), node => node.textContent), /36 gil.*0 missing/);
     await page.$eval(tid("shop-estimate"), node => { node.open = true; });
@@ -92,7 +93,7 @@ async function runTravelOnline({ browser, base, market, record = async () => {} 
     foreignDc = market.region.datacenters.find(dc => dc.id === foreign.datacenter_id);
     assert(foreignDc && home.id > first.id, "fixture has actual higher-ID home and foreign DC");
     exclusions = `${first.id},${foreign.id}`;
-    await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"], ["HOME_WORLD", home.name]]
+    await page.setCookie(...[["HIDE_ADS", "true"], ["i18n_pref_locale", "en"], ["HOME_WORLD", home.name]]
       .map(([name, value]) => ({ name, value, url: base, path: "/" })));
     await load("/list"); await click(tid("list-new"));
     await replace(tid("device-list-name"), name); await click(tid("device-list-create"));
@@ -111,7 +112,7 @@ async function runTravelOnline({ browser, base, market, record = async () => {} 
     // the wasm aborts the next document's own wasm fetch (lists-v2 waits too).
     await page.waitForFunction(() => typeof window.__ULTROS_GUEST_OFFLINE_READY__ === "boolean");
     const filtered = new URL(devicePath, base);
-    filtered.search = new URLSearchParams({ labs: "lists-sync", "excluded-worlds": exclusions, "excluded-datacenters": foreignDc.name, debug: "must-not-forward" }).toString();
+    filtered.search = new URLSearchParams({ "excluded-worlds": exclusions, "excluded-datacenters": foreignDc.name, debug: "must-not-forward" }).toString();
     await load(filtered.href);
     await page.select(tid("list-travel-limit"), "dc");
     await page.waitForFunction(() => new URL(location.href).searchParams.get("travel") === "dc");

@@ -59,7 +59,7 @@ async function checkItemSectionNav(page) {
     if (!nav) return ["item section navigation is missing"];
     const failures = [];
     const links = [...nav.querySelectorAll("a")];
-    const sections = ["#overview", "#listings", "#history", "#market-history", "#sources", "#related"];
+    const sections = ["#overview", "#listings", "#history", "#market-history", "#sources", "#related", "#item-verdicts", "#bulk-basket"];
     if (JSON.stringify(links.slice(0, sections.length).map((link) => link.getAttribute("href"))) !== JSON.stringify(sections)) {
       failures.push("item section navigation changed the existing link order");
     }
@@ -126,7 +126,7 @@ const ROUTE_ASSERTS = {
   "/currency-exchange": { titleIncludes: "Ultros" },
   "/recipe-analyzer?world=Gilgamesh": { titleIncludes: "Recipes" },
   // Formula inputs and price-signal columns are available by default. The
-  // Profit header carries an "after 5% tax" subtitle at every viewport width;
+  // Both the table header and compact assumptions summary expose the 5% tax;
   // the inline strip itself is md+ only. Exercise the optional market and
   // travel columns alongside a wider sale-price scope.
   //
@@ -145,11 +145,11 @@ const ROUTE_ASSERTS = {
   // `sale_stats?window=7` for the datacenter.
   "/recipe-analyzer?world=Gilgamesh&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home": {
     titleIncludes: "Recipes",
-    bodyIncludesAny: ["after 5% tax"],
+    bodyIncludesAny: ["5% tax"],
   },
   "/history": { titleIncludes: "Ultros" },
   "/settings": { titleIncludes: "Ultros" },
-  "/groups": { titleIncludes: "Groups", bodyIncludesAny: ["Groups", "No groups found"] },
+  "/groups": { titleIncludes: "Groups", bodyIncludesAny: ["Groups", "User groups", "No groups found"] },
   // Both legal pages set their own <MetaTitle> now, so neither falls back to the
   // app-default title that carries "Ultros". Assert the page's own name instead.
   "/privacy": { titleIncludes: "Privacy Policy", bodyIncludesAny: ["privacy", "Privacy"] },
