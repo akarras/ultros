@@ -14,23 +14,23 @@
 
 [sources.ffxiv-datamining]
 url = "https://github.com/xivapi/ffxiv-datamining.git"
-sha = "a67c23b00fe8cb254855d06b59845958b55d28f3"
+sha = "76d22160d687b0e0318071a098ab9eb9d531605f"
 
 [sources.ffxiv-datamining-cn]
 url = "https://github.com/thewakingsands/ffxiv-datamining-cn.git"
-sha = "3ba064a64e21ff62b587d886701bbe6e74d8d224"
+sha = "2c6741cffe3cfe70f093c54c463791364e515d8d"
 checkout_subdir = "csv/cn"
 
 [sources.ffxiv-datamining-ko]
 url = "https://github.com/Ra-Workspace/ffxiv-datamining-ko.git"
-sha = "5816cb2d9cb7560202bc205dce9b623872804145"
+sha = "429228421cc8c9db25dfb8c98eee65d250419029"
 branch = "refactor"
 checkout_subdir = "csv/ko"
 
 [sources.ffxiv-datamining-tc]
 url = "https://github.com/thewakingsands/ffxiv-datamining-tc.git"
-sha = "e203c7e46dd80fd2a967e5741b30e3c9fad0c767"
+sha = "1cf1f9fb735bad0748848dbd3f4de05721fe619a"
 checkout_subdir = "csv/tc"
 
 [icons]
-game_version = "2026.09.15.0000.0000"
+game_version = "2026.10.06.0000.0000"

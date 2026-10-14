@@ -11,6 +11,7 @@ use ultros_server_core::event;
 #[cfg(feature = "test-auth")]
 use ultros_server_core::test_market_isolation;
 
+pub mod bounded;
 pub mod ingest_health;
 pub mod item_update_service;
 

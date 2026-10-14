@@ -28,7 +28,7 @@ axis selection is required. Common Latin branding can always use Outfit.
 
 ## Coverage and updates
 
-The subset corpus first decompresses each locale's zlib-compressed
+The subset corpus first decompresses each locale's Brotli-compressed
 `data/xiv-db/<locale>.rkyv` pack, matching `xiv-gen-db::decompress_data`, then
 conservatively scans all UTF-8 character data in the complete decoded archive,
 all seven translation catalogs, the card renderer's Rust source, and the shared
@@ -57,7 +57,7 @@ unused OpenType layout features and hinting are removed to reduce file size.
 From the repository root, with Python and Git LFS data installed:
 
 ```sh
-python -m pip install fonttools==4.60.1
+python -m pip install fonttools==4.60.1 brotli==1.2.0
 python ultros-item-card/assets/fonts/regenerate.py --download
 ```
 

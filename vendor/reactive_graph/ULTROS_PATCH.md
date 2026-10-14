@@ -1,7 +1,7 @@
-# Vendored `reactive_graph` 0.2.14 — Ultros patch
+# Vendored `reactive_graph` 0.2.15 — Ultros patch
 
-This directory is an unmodified copy of the `reactive_graph` 0.2.14 crate
-from crates.io (the version `leptos` 0.8.20 resolves to) **plus** the change
+This directory is an unmodified copy of the `reactive_graph` 0.2.15 crate
+from crates.io (the version `leptos` 0.8.22 resolves to) **plus** the change
 described below. It is wired in through `[patch.crates-io]` in the root
 `Cargo.toml`, so every crate in the workspace that depends on `reactive_graph`
 0.2.x transparently gets this copy.
@@ -85,7 +85,7 @@ connection's thread — and both read the memos the resource just dirtied
   there are no other threads, so it returns `None` immediately as before.
 
 `tests/memo_concurrent.rs` reproduces the memo race (it fails on pristine
-0.2.14 with tens of thousands of panics in two seconds and a stale final
+0.2.15 with tens of thousands of panics in two seconds and a stale final
 value), pins the reentrancy behaviour and recovery after a panicking
 computation, and reproduces the signal read/write race (four readers against
 a tight `set` loop fail every run without the `Plain::try_new` change).

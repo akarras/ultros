@@ -12,31 +12,67 @@ pub(crate) async fn track_metrics(req: Request, next: Next) -> impl IntoResponse
     let path = if let Some(matched_path) = req.extensions().get::<MatchedPath>() {
         matched_path.as_str().to_owned()
     } else {
-        req.uri().path().to_owned()
+        "<fallback>".to_owned()
     };
     let method = req.method().clone();
 
     let user_agent = req
         .headers()
         .get(USER_AGENT)
-        .and_then(|value| value.to_str().ok().map(|s| s.to_string()))
-        .unwrap_or_default();
+        .and_then(|value| value.to_str().ok())
+        .map(user_agent_family)
+        .unwrap_or("missing");
     let response = next.run(req).await;
 
     let latency = start.elapsed().as_secs_f64();
     let status = response.status().as_u16().to_string();
 
+    record_request(method.as_str(), &path, &status, user_agent, latency);
+
+    response
+}
+
+fn record_request(method: &str, path: &str, status: &str, agent: &'static str, latency: f64) {
     let labels = [
-        ("method", method.to_string()),
-        ("path", path),
-        ("status", status),
-        ("user_agent", user_agent),
+        ("method", method.to_owned()),
+        ("path", path.to_owned()),
+        ("status", status.to_owned()),
     ];
 
     metrics::counter!("ultros_http_requests_total", &labels).increment(1);
     metrics::histogram!("ultros_http_requests_duration_seconds", &labels).record(latency);
+    // Keep agent counts separate from route/status/latency series, and never
+    // retain raw, client-controlled strings in the recorder or Prometheus.
+    metrics::counter!("ultros_http_user_agents_total", "agent" => agent).increment(1);
+}
 
-    response
+fn user_agent_family(value: &str) -> &'static str {
+    let value = value.to_ascii_lowercase();
+    if value.is_empty() {
+        "missing"
+    } else if ["bot", "spider", "crawler"]
+        .iter()
+        .any(|s| value.contains(s))
+    {
+        "bot"
+    } else if ["curl/", "wget/", "python", "go-http-client", "httpie/"]
+        .iter()
+        .any(|s| value.contains(s))
+    {
+        "tool"
+    } else if value.contains("edg/") || value.contains("edgios/") || value.contains("edga/") {
+        "edge"
+    } else if value.contains("opr/") || value.contains("opera") {
+        "opera"
+    } else if value.contains("firefox/") || value.contains("fxios/") {
+        "firefox"
+    } else if value.contains("chrome/") || value.contains("crios/") {
+        "chrome"
+    } else if value.contains("safari/") {
+        "safari"
+    } else {
+        "other"
+    }
 }
 
 fn metrics_app(recorder_handle: PrometheusHandle) -> Router {
@@ -91,4 +127,60 @@ pub(crate) async fn start_metrics_server(
         .with_graceful_shutdown(token.cancelled_owned())
         .await
         .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_versions_do_not_multiply_route_or_agent_series() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        metrics::with_local_recorder(&recorder, || {
+            for version in 0..128 {
+                let agent =
+                    user_agent_family(&format!("Mozilla/5.0 Chrome/{version}.0 Safari/537.36"));
+                record_request("GET", "/item/{id}", "200", agent, 0.01);
+            }
+        });
+        let rendered = recorder.handle().render();
+        let requests: Vec<_> = rendered
+            .lines()
+            .filter(|line| line.starts_with("ultros_http_requests_total{"))
+            .collect();
+        assert_eq!(requests.len(), 1, "{rendered}");
+        assert!(requests[0].ends_with(" 128"), "{rendered}");
+        for line in rendered
+            .lines()
+            .filter(|line| line.starts_with("ultros_http_requests_"))
+        {
+            assert!(!line.contains("agent="), "{line}");
+        }
+        let agents: Vec<_> = rendered
+            .lines()
+            .filter(|line| line.starts_with("ultros_http_user_agents_total{"))
+            .collect();
+        assert_eq!(
+            agents,
+            ["ultros_http_user_agents_total{agent=\"chrome\"} 128"]
+        );
+        assert!(!rendered.contains("Mozilla"));
+    }
+
+    #[test]
+    fn agents_collapse_to_fixed_families_with_bot_and_browser_precedence() {
+        for (value, expected) in [
+            ("", "missing"),
+            ("random client-controlled text", "other"),
+            ("Mozilla Chrome/131 Safari/537 Googlebot/2.1", "bot"),
+            ("Mozilla Chrome/131 Safari/537 Edg/131", "edge"),
+            ("Mozilla Chrome/131 Safari/537 OPR/113", "opera"),
+            ("Mozilla FxiOS/123 Safari/605", "firefox"),
+            ("Mozilla CriOS/123 Safari/605", "chrome"),
+            ("Mozilla Version/17 Safari/605", "safari"),
+            ("CURL/8.0", "tool"),
+        ] {
+            assert_eq!(user_agent_family(value), expected, "{value}");
+        }
+    }
 }

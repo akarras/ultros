@@ -76,7 +76,7 @@ ultros-alerts = { path = "../ultros-alerts" }
 ultros-character = { path = "../ultros-character" }
 ultros-group-sync = { path = "../ultros-group-sync" }
 ultros-lists = { path = "../ultros-lists" }
-resvg = "0.47.0"
+resvg = "0.48.1"
 isocountry = "0.3.2"
 http-body = "1.0.1"
 http-body-util = "0.1.3"

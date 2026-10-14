@@ -97,12 +97,14 @@ pub(crate) fn median(mut values: Vec<f64>) -> Option<f64> {
     if values.is_empty() {
         return None;
     }
-    values.sort_by(f64::total_cmp);
-    let mid = values.len() / 2;
-    Some(if values.len().is_multiple_of(2) {
-        (values[mid - 1] + values[mid]) / 2.0
+    let len = values.len();
+    let mid = len / 2;
+    let (left, &mut right, _) = values.select_nth_unstable_by(mid, f64::total_cmp);
+    Some(if len.is_multiple_of(2) {
+        let left_max = *left.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
+        (left_max + right) / 2.0
     } else {
-        values[mid]
+        right
     })
 }
 
