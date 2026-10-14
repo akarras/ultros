@@ -149,6 +149,7 @@ async function main() {
       throw new Error("cannot continue");
     }
     const worldId = worldData.body.regions[0].datacenters[0].worlds[0].id;
+    const worldDcName = worldData.body.regions[0].datacenters[0].name;
     const name = `ListFlow E2E ${Date.now()}`;
     const create = await api(ownerPage, "POST", "/api/v1/list/create", {
       name,
@@ -291,6 +292,114 @@ async function main() {
           })
           .catch(() => {});
       }
+    }
+
+    // ===== Step 2c: World/datacenter exclusions are visible and removable =====
+    console.log("[step] owner sees and clears bookmarked exclusions");
+    // A legacy bookmark's excluded-worlds/excluded-datacenters params still
+    // filter Build and Shop prices, so opening one must surface them as
+    // chips (section starts open) with a working Clear — never as invisible
+    // state only removable by hand-editing the URL.
+    {
+      const bookmarkUrl = `${listUrl}?excluded-worlds=${worldId}&excluded-datacenters=${encodeURIComponent(worldDcName)}`;
+      await ownerPage.goto(bookmarkUrl, { waitUntil: "domcontentloaded" });
+      await waitForHydration(ownerPage, TIMEOUT_MS);
+      const bookmarked = await ownerPage
+        .waitForFunction(
+          (dcName, id) => {
+            const chip = document.querySelector(`button[data-datacenter="${dcName}"]`);
+            const worldChip = document.querySelector(`button[data-excluded-world="${id}"]`);
+            return (
+              chip?.getAttribute("aria-pressed") === "true" &&
+              !!worldChip &&
+              !!document.querySelector('[data-testid="list-exclusions-count"]') &&
+              !!document.querySelector('[data-testid="list-exclusions-clear"]')
+            );
+          },
+          { timeout: 10000 },
+          worldDcName,
+          worldId,
+        )
+        .then(() => true)
+        .catch(() => false);
+      if (!bookmarked) {
+        fail(failures, "bookmarked exclusions did not render as visible chips");
+      } else {
+        pass("bookmarked world/datacenter exclusions render as visible chips");
+      }
+      await ownerPage.click('[data-testid="list-exclusions-clear"]');
+      const cleared = await ownerPage
+        .waitForFunction(
+          () =>
+            !window.location.search.includes("excluded-worlds=") &&
+            !window.location.search.includes("excluded-datacenters=") &&
+            !document.querySelector('[data-testid="list-exclusions-count"]'),
+          { timeout: 10000 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      if (!cleared) {
+        fail(failures, "Clear did not remove both exclusion params");
+      } else {
+        pass("Clear removes both exclusion params");
+      }
+      // Adding from the UI writes the same params the bookmark carried.
+      await ownerPage.evaluate((dcName) => {
+        document.querySelector(`button[data-datacenter="${dcName}"]`)?.click();
+      }, worldDcName);
+      const dcWritten = await ownerPage
+        .waitForFunction(
+          () => window.location.search.includes("excluded-datacenters="),
+          { timeout: 10000 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      if (!dcWritten) {
+        fail(failures, "datacenter chip did not write excluded-datacenters");
+      } else {
+        pass("datacenter chip writes the excluded-datacenters param");
+      }
+      await ownerPage.select('[data-testid="list-exclude-world-select"]', String(worldId));
+      const worldWritten = await ownerPage
+        .waitForFunction(
+          (id) =>
+            window.location.search.includes("excluded-worlds=") &&
+            !!document.querySelector(`button[data-excluded-world="${id}"]`),
+          { timeout: 10000 },
+          worldId,
+        )
+        .then(() => true)
+        .catch(() => false);
+      if (!worldWritten) {
+        fail(failures, "world select did not write excluded-worlds or show its chip");
+      } else {
+        pass("world select writes excluded-worlds and shows a removable chip");
+      }
+      await ownerPage.evaluate((id) => {
+        document.querySelector(`button[data-excluded-world="${id}"]`)?.click();
+      }, worldId);
+      const worldCleared = await ownerPage
+        .waitForFunction(
+          () =>
+            !window.location.search.includes("excluded-worlds=") &&
+            window.location.search.includes("excluded-datacenters="),
+          { timeout: 10000 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      if (!worldCleared) {
+        fail(failures, "removing the world chip did not clear excluded-worlds");
+      } else {
+        pass("removing the world chip clears excluded-worlds only");
+      }
+      await ownerPage.click('[data-testid="list-exclusions-clear"]');
+      await ownerPage.waitForFunction(
+        () => !window.location.search.includes("excluded-datacenters="),
+        { timeout: 10000 },
+      );
+      // Restore a clean, hydrated page for the steps below.
+      await ownerPage.goto(listUrl, { waitUntil: "domcontentloaded" });
+      await waitForHydration(ownerPage, TIMEOUT_MS);
     }
 
     // ===== Step 3: Mark an item acquired via the Owned editor =====

@@ -40,8 +40,7 @@ use crate::list_doc::adapter::Edit;
 use crate::list_doc::handle::{ListDocHandle, RecoveryState, SaveState};
 use crate::query_defaults::filter_query_signal;
 use crate::routes::list_common::{
-    ActivityFeed, IdList, ListViewResult, NameList, filter_excluded,
-    list_item_table_skeleton_columns,
+    ActivityFeed, ListViewResult, filter_excluded, list_item_table_skeleton_columns,
 };
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 #[cfg(feature = "hydrate")]
@@ -1658,25 +1657,27 @@ pub fn ListViewSync() -> impl IntoView {
         buying_view.get() || previous.copied().unwrap_or(false)
     });
 
-    // Still honoured from shared links; narrowing worlds is Shop's job now,
-    // so nothing on this page writes these two params.
-    let (excluded_worlds_param, _) = filter_query_signal::<IdList>("excluded-worlds");
-    let excluded_worlds = Memo::new(move |_| {
-        excluded_worlds_param
-            .get()
-            .map(|list| list.0.into_iter().collect::<HashSet<i32>>())
-            .unwrap_or_default()
-    });
-    let (excluded_datacenters_param, _) = filter_query_signal::<NameList>("excluded-datacenters");
-    let excluded_datacenters = Memo::new(move |_| {
-        excluded_datacenters_param
-            .get()
-            .map(|list| list.0.into_iter().collect::<HashSet<String>>())
-            .unwrap_or_default()
-    });
-    // Editor-owned travel limit (#1480): narrows the served rows both Build
-    // and Shop price, and travels with the URL like the exclusions above.
+    // Editor-owned travel limit and world/datacenter exclusions (#1480):
+    // `use_list_travel` is the one reader *and* writer of the `travel`,
+    // `excluded-worlds` and `excluded-datacenters` params, and the travel
+    // panel renders them, so a legacy bookmark's exclusions stay visible
+    // and removable here. They narrow the served rows both Build and Shop
+    // price.
     let travel = crate::components::list_travel_state::use_list_travel();
+    let excluded_worlds = Memo::new(move |_| {
+        travel
+            .excluded_worlds
+            .get()
+            .into_iter()
+            .collect::<HashSet<i32>>()
+    });
+    let excluded_datacenters = Memo::new(move |_| {
+        travel
+            .excluded_datacenters
+            .get()
+            .into_iter()
+            .collect::<HashSet<String>>()
+    });
 
     let (hide_acquired_param, set_hide_acquired_param) =
         filter_query_signal::<bool>("hide-acquired");
