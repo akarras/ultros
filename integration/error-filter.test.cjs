@@ -951,6 +951,68 @@ const cases = [
     },
     expectDrop: true,
   },
+  // The glue's own non-OK status check on the .wasm fetch (edge shedding a
+  // crawler burst, or a deploy restart). GlitchTip #7998, #7999.
+  {
+    name: "glue 'failed to fetch Wasm: 503' for our pkg bundle is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "Error",
+            value:
+              "failed to fetch Wasm: 503 Service Unavailable fetching " +
+              "'https://ultros.app/pkg/aadb88c/ultros.wasm'",
+            stacktrace: {
+              frames: [
+                { filename: "/pkg/aadb88c/ultros.js", function: "Module.ex" },
+                { filename: "/pkg/aadb88c/ultros.js", function: "ek" },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  // Guard: the same message for a wasm that is not our bundle still reports.
+  {
+    name: "'failed to fetch Wasm' for a non-Ultros wasm is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "Error",
+            value:
+              "failed to fetch Wasm: 404 Not Found fetching " +
+              "'https://ultros.app/static/other.wasm'",
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  // An engine predating a wasm proposal the build uses (reference types on
+  // Chrome 90 / Android 5). GlitchTip #8000.
+  {
+    name: "WASM CompileError 'enable with --experimental-wasm-reftypes' (unsupported engine) is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "CompileError",
+            value:
+              "WebAssembly.instantiateStreaming(): invalid value type 'externref', " +
+              "enable with --experimental-wasm-reftypes @+121",
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
   // Guard: a CompileError that is NOT a truncation (e.g. a genuinely corrupt
   // build we shipped) must still report — that is a real bug worth seeing.
   {
