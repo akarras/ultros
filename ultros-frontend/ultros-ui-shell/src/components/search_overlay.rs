@@ -72,7 +72,7 @@ pub fn SearchOverlay() -> impl IntoView {
                 >
                     <div class="search-overlay-header">
                         <div class="search-overlay-searchbox">
-                            <SearchBox autofocus=true />
+                            <SearchBox autofocus=true on_select=Callback::new(move |_| state.close()) />
                         </div>
                         <button
                             type="button"
