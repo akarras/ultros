@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "low",
+  "title": "Search closes after selecting a result",
+  "blurb": "Selecting a search result now closes the search window, even when you choose the item or page you are already viewing."
+}

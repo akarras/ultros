@@ -35,8 +35,8 @@ async function main() {
         return new Promise(resolve => {
           // Deliberately resolve even after abort: the UI must reject stale results.
           window.__searchRequests.push({query: url.searchParams.get('q'), signal,
-            finish: (title, status = 200) => resolve(new Response(JSON.stringify(
-              title ? [{score: 1, title, result_type: 'recipe', url: '/recipe/' + encodeURIComponent(title),
+            finish: (title, status = 200, resultUrl) => resolve(new Response(JSON.stringify(
+              title ? [{score: 1, title, result_type: 'recipe', url: resultUrl || '/recipe/' + encodeURIComponent(title),
                 icon_id: null, category: 'CRP Lv. 1'}] : []
             ), {status, headers: {'content-type': 'application/json'}}))});
         });
@@ -113,7 +113,45 @@ async function main() {
     await finish(7, 'Recovered recipe');
     await expectResult('Recovered recipe');
     assert.deepEqual(errors, []);
-    console.log('Eager search, stale responses, cancellation, cache, clear, unmount and retry passed.');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector(INPUT, {hidden: true});
+    // A pathname effect cannot dismiss a same-page or query-only selection.
+    // Exercise both input methods and ensure the modal can reopen afterwards.
+    for (const width of [1400, 390]) {
+      await page.setViewport({width, height: 800});
+      for (const method of ['Enter', 'click']) {
+        for (const destination of ['/about', '/about?search-selection=1', '/settings']) {
+          await page.goto(BASE + '/about', {waitUntil: 'networkidle2'});
+          await page.waitForFunction(() => window.__searchHydrated);
+          await page.keyboard.down('Control');
+          await page.keyboard.press('KeyK');
+          await page.keyboard.up('Control');
+          await page.waitForSelector(INPUT, {visible: true});
+          await edit('dismissal');
+          await page.evaluate(destination => {
+            window.__searchRequests.at(-1).finish('Selection target', 200, destination);
+          }, destination);
+          await expectResult('Selection target');
+          if (method === 'Enter') {
+            await page.keyboard.press('Enter');
+          } else {
+            await page.click('#search-results [role="option"]');
+          }
+          await page.waitForSelector('.search-overlay', {hidden: true});
+          await page.waitForFunction(destination => location.pathname + location.search === destination, {}, destination);
+          assert.equal(await page.$('dialog.search-overlay[open]'), null, 'search modal is dismissed');
+          await page.keyboard.down('Control');
+          await page.keyboard.press('KeyK');
+          await page.keyboard.up('Control');
+          await page.waitForSelector(INPUT, {visible: true});
+          assert.equal(await page.$eval(INPUT, input => input.value), '', 'search reopens empty');
+          await page.keyboard.press('Escape');
+          await page.waitForSelector(INPUT, {hidden: true});
+        }
+      }
+    }
+    assert.deepEqual(errors, [], 'selection and reopening cause no application errors');
+    console.log('Search responsiveness and desktop/mobile selection dismissal passed.');
   } finally {
     await browser.close();
   }

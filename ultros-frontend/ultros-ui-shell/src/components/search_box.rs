@@ -278,7 +278,10 @@ fn search_outcome(search_id: ReadSignal<usize>, started_id: usize) -> SearchOutc
 }
 
 #[component]
-pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
+pub fn SearchBox(
+    #[prop(optional)] autofocus: bool,
+    #[prop(optional)] on_select: Option<Callback<()>>,
+) -> impl IntoView {
     let i18n = use_i18n();
     let apple_hotkeys = use_platform_hotkeys().apple;
     let text_input = NodeRef::<Input>::new();
@@ -430,7 +433,25 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
         })
     };
 
-    let navigate_keydown = navigate.clone();
+    // Finish local cleanup before navigation or dismissal can unmount us.
+    // Selection must dismiss even when the destination path does not change.
+    let select_result = Callback::new(move |url: String| {
+        set_search(String::new());
+        set_active(false);
+        if let Some(input) = text_input.get() {
+            let _ = input.blur();
+        }
+        navigate(
+            &url,
+            NavigateOptions {
+                scroll: false,
+                ..Default::default()
+            },
+        );
+        if let Some(on_select) = on_select {
+            on_select.run(());
+        }
+    });
 
     // Keyboard navigation for Up/Down; Enter uses focused item
     let keydown = move |e: KeyboardEvent| {
@@ -465,35 +486,12 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
                 set_focused_index.set(Some(next));
             }
         } else if key == "Enter" {
-            if let Some(url) = focused_url.get_untracked() {
-                navigate_keydown(
-                    &url,
-                    NavigateOptions {
-                        scroll: false,
-                        ..Default::default()
-                    },
-                );
-                set_search("".to_string());
-                set_active(false);
-                if let Some(input) = text_input.get() {
-                    let _ = input.blur();
-                }
-            } else {
-                let first_url = search_results.with_untracked(|r| r.first().map(|f| f.url.clone()));
-                if let Some(url) = first_url {
-                    navigate_keydown(
-                        &url,
-                        NavigateOptions {
-                            scroll: false,
-                            ..Default::default()
-                        },
-                    );
-                    set_search("".to_string());
-                    set_active(false);
-                    if let Some(input) = text_input.get() {
-                        let _ = input.blur();
-                    }
-                }
+            let url = focused_url
+                .get_untracked()
+                .or_else(|| search_results.with_untracked(|r| r.first().map(|f| f.url.clone())));
+            if let Some(url) = url {
+                e.prevent_default();
+                select_result.run(url);
             }
         }
     };
@@ -657,8 +655,6 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
                         each=search_results.into()
                         key={move |result: &Arc<SearchResult>| result.url.clone()}
                         view={move |result: Arc<SearchResult>| {
-                            let navigate = navigate.clone();
-
                             // Clone Arc for different closures to satisfy borrow checker
                             let res_for_aria = result.clone();
                             let res_for_class = result.clone();
@@ -682,18 +678,7 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
                                         format!("p-2 hover:bg-[color:var(--color-background-elevated)] cursor-pointer flex items-center gap-2{}", hl)
                                     }
                                     on:click=move |_| {
-                                        navigate(
-                                            &res_for_click.url,
-                                            NavigateOptions {
-                                                scroll: false,
-                                                ..Default::default()
-                                            },
-                                        );
-                                        set_search("".to_string());
-                                        set_active(false);
-                                        if let Some(input) = text_input.get() {
-                                            let _ = input.blur();
-                                        }
+                                        select_result.run(res_for_click.url.clone());
                                     }
                                 >
                                     {
