@@ -124,14 +124,36 @@ pub(crate) async fn recent_sales(
 
 /// Newest-first, one row per `(item_id, hq)`, at most `limit` rows.
 fn newest_per_item(
-    mut rows: Vec<(i32, bool, crate::analyzer_service::SaleSummary)>,
+    rows: Vec<(i32, bool, crate::analyzer_service::SaleSummary)>,
     limit: usize,
 ) -> Vec<SaleData> {
-    rows.sort_unstable_by_key(|(_, _, sale)| std::cmp::Reverse(sale.sale_date));
-    let mut seen = std::collections::HashSet::new();
-    rows.into_iter()
-        .filter(|(item_id, hq, _)| seen.insert((*item_id, *hq)))
-        .take(limit)
+    let mut newest_by_item = std::collections::HashMap::new();
+    for (item_id, hq, sale) in rows {
+        let key = (item_id, hq);
+        newest_by_item
+            .entry(key)
+            .and_modify(|existing: &mut crate::analyzer_service::SaleSummary| {
+                if sale.sale_date > existing.sale_date {
+                    *existing = sale;
+                }
+            })
+            .or_insert(sale);
+    }
+
+    let mut unique_rows: Vec<_> = newest_by_item
+        .into_iter()
+        .map(|((item_id, hq), sale)| (item_id, hq, sale))
+        .collect();
+
+    if unique_rows.len() > limit {
+        unique_rows
+            .select_nth_unstable_by_key(limit, |(_, _, sale)| std::cmp::Reverse(sale.sale_date));
+        unique_rows.truncate(limit);
+    }
+    unique_rows.sort_unstable_by_key(|(_, _, sale)| std::cmp::Reverse(sale.sale_date));
+
+    unique_rows
+        .into_iter()
         .map(|(item_id, hq, sale)| SaleData {
             item_id,
             hq,
