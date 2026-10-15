@@ -100,6 +100,6 @@ In `ultros-clickhouse/src/undercut_pressure.rs`, the `median` function was fully
 **Action:**
 When fetching median values, use `select_nth_unstable_by` (handling odds/even slices correctly) rather than `sort_by(f64::total_cmp)`. Ensure that we compute max linearly for the left side of an even split.
 
-## 2026-11-20 - Grouping/filtering before Top-N sorting to reduce sorting overhead
+## 2026-10-15 - Grouping/filtering before Top-N sorting to reduce sorting overhead
 **Learning:** In `ultros/src/web/api/recent_sales.rs`, `newest_per_item` was sorting the entire vector of sales coming from all worlds using `sort_unstable_by_key`, then filtering out duplicate items with a HashSet and using `.take(limit)`. This forced a full `O(N log N)` sort on a huge array, including thousands of older sales that were going to be discarded. This pattern is similar to what was previously found but highlights that finding unique/max elements *before* sorting is critical.
 **Action:** When extracting the top N newest unique items from a list with potential duplicates, first group them into a `HashMap` tracking only the max/newest element per key (`O(N)`). Then collect the unique values and use `.select_nth_unstable_by_key(limit)` and `.truncate(limit)` to extract the top N in linear time (`O(U)`), performing the final `O(limit log limit)` sort only on the small remaining list.
