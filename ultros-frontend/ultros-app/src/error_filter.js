@@ -277,10 +277,23 @@
   //     `... reached end while decoding section length @+<offset>` (YandexBot
   //     cutting off the ~16 MB bundle; the offset differs per cut, so each one
   //     opened its own count=1 issue — #7966–#7970).
+  //   - the glue's own status check on the same non-OK response surfaces as
+  //     `Error: failed to fetch Wasm: 503 Service Unavailable fetching
+  //     '<origin>/pkg/<hash>/ultros.wasm'` (edge / origin shedding a crawler
+  //     burst — Baiduspider-render — or a deploy restart; #7998, #7999). Scoped
+  //     to our pkg URL so a failed fetch of some other wasm still reports;
+  //   - an engine too old for a wasm feature the build relies on surfaces as
+  //     `CompileError: ... invalid value type 'externref', enable with
+  //     --experimental-wasm-reftypes` (Chrome 90 on Android 5, #8000). V8 only
+  //     words a CompileError "enable with --experimental-wasm-<feature>" when
+  //     the module is valid but uses a proposal that engine predates, so this
+  //     is an unsupported browser, not a bad build.
   // The CompileError match is scoped to the truncation signature so a genuinely
   // corrupt build (e.g. a bad opcode) still reports — that would be an
   // all-users flood worth seeing, not these count=1 blips. GlitchTip #6755,
   // #6762, #6763, #6764, #6766, #6767.
+  var ULTROS_WASM_FETCH_STATUS_RE =
+    /^failed to fetch Wasm: \d{3}\b[^]*\/pkg\/[a-f0-9]+\/ultros\.wasm/;
   function isUltrosWasmCompileFailure(event) {
     try {
       var ex = firstException(event);
@@ -293,10 +306,14 @@
       ) {
         return true;
       }
+      if (ex.type === "Error" && ULTROS_WASM_FETCH_STATUS_RE.test(ex.value)) {
+        return true;
+      }
       if (
         ex.type === "CompileError" &&
         (ex.value.indexOf("extends past end of the module") !== -1 ||
-          ex.value.indexOf("reached end while decoding") !== -1)
+          ex.value.indexOf("reached end while decoding") !== -1 ||
+          ex.value.indexOf("enable with --experimental-wasm-") !== -1)
       ) {
         return true;
       }
