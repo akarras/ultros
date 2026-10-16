@@ -1,13 +1,11 @@
-//! The redesigned Build cart (Track B of #1427), mounted behind the
-//! `lists-sync` Labs experiment for account and device lists alike.
+//! The Build cart shared by account and device lists.
 //!
 //! Presentation only: the [`ListWorkspaceSource`] it consumes carries the
 //! rows, capabilities and edit callbacks, and the route that built the
 //! source keeps the document, sync, authorization and guest storage
 //! lifecycles. Each part of the cart lives in its own file so the follow-on
 //! tickets can change rows, summary, details, selection and feedback
-//! independently. The legacy Labs grid, `ListBuildWorkspace`, stays in
-//! `routes::list_view_sync` untouched.
+//! independently.
 
 pub mod details;
 pub mod estimate;
@@ -22,10 +20,10 @@ use leptos_i18n::I18nContext;
 use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
 
-use crate::components::list::filter_row::{SortKey, SortSpec};
+use crate::components::list::sort::{SortKey, SortSpec};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
-use crate::routes::list_view::remaining_quantity;
+use crate::routes::list_common::remaining_quantity;
 use crate::routes::list_view_sync::{InlineListAdd, ListWorkspaceSource};
 
 use feedback::{CartFeedback, Removal, focus_after_removal};
@@ -125,15 +123,6 @@ fn editor_drafting(target: Option<web_sys::EventTarget>) -> bool {
                 .get_attribute("data-committed")
                 .is_some_and(|committed| input.value().trim() != committed.trim())
         })
-}
-
-/// `?cart=legacy` mounts the previous Labs grid (`ListBuildWorkspace`) so a
-/// tester can compare the two presentations on the same list. The
-/// redesigned cart is the default under the experiment; no cookie or Labs
-/// token changes here.
-pub fn use_legacy_cart() -> Signal<bool> {
-    let query = ultros_ui::components::app_link::use_query_map_or_default();
-    Memo::new(move |_| query.with(|q| q.get("cart").is_some_and(|v| v == "legacy"))).into()
 }
 
 /// Deterministic, total ordering for the cart. `Price` sorts by the line
@@ -677,6 +666,8 @@ pub fn ListCart(
                     {sort_header(SortKey::Acquired, qty_label, true)}
                     <div class="uppercase tracking-wide">{t!(i18n, lists_workspace_quality)}</div>
                     {sort_header(SortKey::Price, cost_label, true)}
+                    <div></div>
+                    <div></div>
                     <div></div>
                     <div></div>
                 </div>

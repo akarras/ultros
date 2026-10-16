@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 "use strict";
 
-// Requires a fresh test-auth server. Exercises the real cookie, SSR branch,
-// hydration, and Settings switch; it creates and deletes its own empty list.
+// Requires a fresh test-auth server. Verifies Lists 2.0 is the default in
+// SSR, hydration and client navigation, including old Labs bookmarks.
 const assert = require("node:assert/strict");
 const puppeteer = require("puppeteer");
+const copy = require("../ultros-frontend/ultros-i18n/locales/en.json");
 
 async function main() {
   const base = process.env.BASE_URL || "http://127.0.0.1:8080";
@@ -53,44 +54,39 @@ async function main() {
 
     async function waitForAccountSave() {
       await page.waitForSelector('[data-testid="account-list-save-state"]');
-      await page.waitForFunction(() => document.querySelector('[data-testid="account-list-save-state"]')
-        ?.textContent.includes('Saved on this device'));
+      await page.waitForFunction(expected => document.querySelector('[data-testid="account-list-save-state"]')
+        ?.textContent.includes(expected), {}, copy.lists_online_local_saved);
     }
 
-    async function loadAndCheck(suffix, expected) {
+    async function loadAndCheck(suffix) {
       const response = await page.goto(new URL(path + suffix, base).toString(), { waitUntil: "domcontentloaded" });
       assert(response.ok(), "list SSR must succeed");
       const html = await response.text();
-      assert.equal(html.includes('data-testid="list-view-sync"'), expected, "SSR chooses the expected Labs branch");
+      assert.equal(html.includes('data-testid="list-view-sync"'), true, "SSR serves Lists 2.0");
       await page.waitForFunction(() => window.__labsHydrated);
       await page.waitForSelector('[data-testid="list-settings-btn"]');
-      assert.equal(await page.$(marker) !== null, expected, "hydration preserves the SSR branch");
+      assert.equal(await page.$(marker) !== null, true, "hydration keeps Lists 2.0");
       // Account persistence is asynchronous. Reloading before its first save
       // intentionally triggers the unsaved-work guard rather than navigating.
-      if (expected) await waitForAccountSave();
+      await page.waitForSelector('[data-testid="list-cart"]');
+      assert.equal(await page.$('[data-testid="list-build-workspace"]'), null);
+      await waitForAccountSave();
     }
 
-    await loadAndCheck("", false);
+    await loadAndCheck("");
     await page.setCookie({ name: "LABS", value: "analyzer-recipe", url: base, path: "/" });
-    await loadAndCheck("", false);
+    await loadAndCheck("");
     await page.setCookie({ name: "LABS", value: "lists-sync", url: base, path: "/" });
-    await loadAndCheck("", true);
+    await loadAndCheck("");
     await page.deleteCookie({ name: "LABS", url: base, path: "/" });
-    await loadAndCheck("&labs=lists-sync", true);
+    await loadAndCheck("&labs=lists-sync&cart=legacy");
     assert(!(await page.cookies()).some((cookie) => cookie.name === "LABS"), "URL override does not persist a cookie");
-    await loadAndCheck("", false);
+    await loadAndCheck("");
     console.log("[ok] absent, retired, valid cookie and URL-only override agree in SSR and hydration");
 
     await page.goto(new URL("/settings?lang=en", base).toString(), { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => window.__labsHydrated);
-    const switchSelector = '[data-testid="lab-lists-sync"] input[role="switch"]';
-    const isChecked = () => page.$eval(switchSelector, (input) => input.checked);
-    assert.equal(await isChecked(), false);
-    await page.$eval(switchSelector, (input) => input.click());
-    await page.waitForFunction(() => document.cookie.includes("LABS=lists-sync"));
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await page.waitForFunction(() => window.__labsHydrated);
-    assert.equal(await isChecked(), true, "enabling survives reload");
+    assert.equal(await page.$('[data-testid="labs-settings"]'), null, "retired Labs settings are absent");
     const documentToken = `labs-${Date.now()}`;
     await page.evaluate((token) => { window.__labsDocumentToken = token; }, documentToken);
     async function clickAppLink(pathname) {
@@ -106,19 +102,15 @@ async function main() {
     await waitForAccountSave();
     assert.equal(await page.evaluate(() => window.__labsDocumentToken), documentToken,
       "list navigation uses the current hydrated document");
-    console.log("[ok] Settings cookie selects the Labs branch during client-side list navigation");
-    await loadAndCheck("", true);
-
-    await page.goto(new URL("/settings?lang=en", base).toString(), { waitUntil: "domcontentloaded" });
-    await page.waitForFunction(() => window.__labsHydrated);
-    await page.$eval(switchSelector, (input) => input.click());
-    await page.waitForFunction(() => !document.cookie.split(";").some((part) => part.trim().startsWith("LABS=")));
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await page.waitForFunction(() => window.__labsHydrated);
-    assert.equal(await isChecked(), false, "disabling survives reload");
-    await loadAndCheck("", false);
-    console.log("[ok] Settings enables and removes the cookie across reloads");
-    assert.deepEqual(errors, [], "no browser errors during Labs navigation and hydration");
+    console.log("[ok] default account editor survives SSR, hydration, old bookmarks and client navigation");
+    assert.deepEqual(errors, [], "no browser errors during navigation and hydration");
+  } catch (error) {
+    console.error("Default list state:", await page.evaluate(() => ({
+      url: location.href,
+      status: document.querySelector('[data-testid="account-list-save-state"]')?.textContent,
+      text: document.body.innerText.slice(0, 2500),
+    })), errors);
+    throw error;
   } finally {
     try {
       if (listId !== undefined) await api("DELETE", `/api/v1/list/${listId}/delete`);

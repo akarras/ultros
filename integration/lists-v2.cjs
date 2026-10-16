@@ -90,7 +90,6 @@ async function main() {
   page.setDefaultTimeout(timeout);
   await page.setViewport({ width: 1280, height: 900 });
   await page.setCookie(
-    { name: "LABS", value: "lists-sync", url: base, path: "/" },
     { name: "HIDE_ADS", value: "true", url: base, path: "/" },
     { name: "i18n_pref_locale", value: "en", url: base, path: "/" },
   );
@@ -211,6 +210,30 @@ async function main() {
       document.activeElement === button && button.getAttribute("aria-expanded") === "false"), true,
     "Escape closes the details panel and focus returns to the row's toggle");
 
+    // Restored legacy row actions: one click marks the row acquired (and
+    // back), and the bell opens a price alert preset to the row's item.
+    const markAcquired = 'button[aria-label="Mark Bronze Ingot as acquired"]';
+    const markUnacquired = 'button[aria-label="Mark Bronze Ingot as not acquired"]';
+    await page.click(markAcquired);
+    await page.waitForSelector(markUnacquired, { visible: true });
+    assert.equal(await page.$eval(markUnacquired, button => button.getAttribute("aria-pressed")), "true",
+      "the acquired toggle reports its pressed state");
+    await saved();
+    await openDetails();
+    await waitValue(owned, 6);
+    await page.click(markUnacquired);
+    await waitValue(owned, 0);
+    await page.click(details);
+    await page.waitForFunction(selector => document.querySelector(selector) === null, {}, owned);
+    console.log("[ok] one click marks a row acquired and unacquired without typing Owned");
+    await page.click('button[aria-label="Create price alert for Bronze Ingot"]');
+    await page.waitForSelector('[role="dialog"]', { visible: true });
+    assert.match(await page.$eval('[role="dialog"]', element => element.textContent), /Bronze Ingot/,
+      "the row's price alert opens preset to the row's item");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.querySelector('[role="dialog"]') === null);
+    console.log("[ok] the row bell opens a price alert for the row's item");
+
     // A second row for selection, bulk quality and sorting checks.
     const mapleNeeded = 'input[aria-label="Needed for Maple Log"]';
     const mapleQuality = 'select[aria-label="Quality for Maple Log"]';
@@ -265,9 +288,14 @@ async function main() {
     await waitValue(needed, 6);
     console.log("[ok] header sorting waits for the active editor to commit");
 
-    // Bulk delete clears the selection; Undo brings the row back.
+    // Bulk delete asks twice: the first click only arms the confirm,
+    // the second deletes. Deleting clears the selection; Undo brings
+    // the row back.
     await page.click('input[aria-label="Select Maple Log"]');
     await page.waitForSelector(testId("cart-selection-bar"), { visible: true });
+    await page.click(testId("cart-bulk-delete"));
+    await page.waitForFunction(selector => document.querySelector(selector)?.dataset.confirming === "true", {}, testId("cart-bulk-delete"));
+    assert.notEqual(await page.$(mapleNeeded), null, "the first delete click only arms the confirm");
     await page.click(testId("cart-bulk-delete"));
     await page.waitForFunction(selector => document.querySelector(selector) === null, {}, mapleNeeded);
     assert.equal(await page.$(testId("cart-selection-bar")), null, "deleting the selection clears it");
@@ -499,7 +527,7 @@ async function main() {
     // Use the router link rather than a document navigation: component
     // cleanup must close the companion even when pagehide never fires.
     await page.bringToFront();
-    await page.$eval('a[href="/list?labs=lists-sync"]', link => link.click());
+    await page.$eval('a[href="/list"]', link => link.click());
     await page.waitForFunction(() => location.pathname === "/list");
     const closedByDeadline = await Promise.race([
       popup.isClosed() ? Promise.resolve(true) : new Promise(resolve => popup.once("close", () => resolve(true))),

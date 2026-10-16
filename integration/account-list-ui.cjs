@@ -35,7 +35,7 @@ async function saved(page) {
       () =>
         document
           .querySelector('[data-testid="account-list-save-state"]')
-          ?.textContent.includes("Saved on this device"),
+          ?.textContent.includes("Local copy saved"),
       { polling: 100, timeout: 60000 },
     );
   } catch (error) {
@@ -80,12 +80,6 @@ async function main() {
       `${base}/test/login?user_id=${user}&username=AccountStorageQA&redirect=/list`,
     );
     assert(response.ok(), "test-auth login must be enabled");
-    await control.setCookie({
-      name: "LABS",
-      value: "lists-sync",
-      url: base,
-      path: "/",
-    });
     const worlds = await api(control, "GET", "/api/v1/world_data");
     const name = `Account storage QA ${Date.now()}`;
     await api(control, "POST", "/api/v1/list/create", {

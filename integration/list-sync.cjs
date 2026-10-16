@@ -1,19 +1,18 @@
 #!/usr/bin/env node
 /* eslint-disable no-console */
 /**
- * Lists local-first sync E2E (Labs `lists-sync`). Requires a server built
+ * Lists local-first sync E2E. Requires a server built
  * with `--features test-auth`.
  *
- * Scenario A (one list, sequential — the plan's steps 1-4 plus the REST and
- * legacy checks):
+ * Scenario A (one list, sequential, including REST and fresh-session checks):
  *   1. Owner creates a list, adds two items, shares it with an editor.
- *   2. Both open it under Labs. The owner marks a row acquired; the editor
+ *   2. Both open it. The owner marks a row acquired; the editor
  *      sees it without a reload.
  *   3. The owner goes offline, un-marks it, comes back: everyone converges
  *      and the server agrees.
  *   4. Ctrl+Z on the owner reverts the last edit for everyone.
  *   5. A REST add from the owner's API client appears on both pages.
- *   6. A third session without Labs sees the same rows.
+ *   6. A fresh third session opens the same editor and sees the same rows.
  *
  * Global Constraint 2 scenarios, each on its own fresh list:
  *   A2. Continuous updates cannot starve permission probes; downgrade retires
@@ -37,7 +36,7 @@ const USERS = {
 const DOC_PREFIX = "ultros.listdoc.v1.";
 const dialogPages = new WeakSet();
 
-async function login(page, baseUrl, user, labs) {
+async function login(page, baseUrl, user) {
   if (!dialogPages.has(page)) {
     await page.setCacheEnabled(false);
     page.setDefaultNavigationTimeout(60000);
@@ -52,12 +51,6 @@ async function login(page, baseUrl, user, labs) {
   const resp = await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
   if (!resp || resp.status() >= 400) {
     throw new Error(`test login failed for ${user.username}: ${resp ? resp.status() : -1}`);
-  }
-  // The LABS cookie is server-visible, so SSR and hydration agree on the branch.
-  if (labs) {
-    await page.setCookie({ name: "LABS", value: "lists-sync", url: baseUrl, path: "/" });
-  } else {
-    await page.deleteCookie({ name: "LABS", url: baseUrl, path: "/" }).catch(() => {});
   }
 }
 
@@ -105,7 +98,7 @@ async function waitForHydration(page, timeout) {
   });
 }
 
-// The compact Labs cart keeps owned quantities behind each row's details
+// The compact Lists 2.0 cart keeps owned quantities behind each row's details
 // toggle; open every closed panel so the inputs exist, then let Leptos flush.
 const OPEN_DETAILS = `
   const closed = Array.from(document.querySelectorAll('button[aria-label^="Details for "][aria-expanded="false"]'));
@@ -113,18 +106,12 @@ const OPEN_DETAILS = `
   if (closed.length) await new Promise(resolve => setTimeout(resolve, 150));
 `;
 
-// Labs exposes owned quantities in row details; the production view retains toggles.
+// Owned quantities live in row details for every session.
 async function rowState(page) {
   return page.evaluate(new Function(`return (async () => {${OPEN_DETAILS}
-    if (document.querySelector('[data-testid="list-view-sync"]')) {
-      const owned = [...document.querySelectorAll('input[aria-label^="Owned for "]')];
-      return { unacquired: owned.filter(input => Number(input.value) === 0).length,
-        acquired: owned.filter(input => Number(input.value) > 0).length };
-    }
-    return {
-    unacquired: document.querySelectorAll('button[aria-label="Mark as acquired"]').length,
-    acquired: document.querySelectorAll('button[aria-label="Mark unacquired"]').length,
-    };
+    const owned = [...document.querySelectorAll('input[aria-label^="Owned for "]')];
+    return { unacquired: owned.filter(input => Number(input.value) === 0).length,
+      acquired: owned.filter(input => Number(input.value) > 0).length };
   })();`));
 }
 
@@ -133,7 +120,7 @@ async function setAcquired(page, acquired) {
     return Array.from(document.querySelectorAll('input[aria-label^="Owned for "]'))
     .find(input => (Number(input.value) > 0) !== acquired)?.getAttribute('aria-label');
   })();`), acquired);
-  if (!label) throw new Error(`No editable Labs row available to set acquired=${acquired}`);
+  if (!label) throw new Error(`No editable Lists 2.0 row available to set acquired=${acquired}`);
   await page.locator(`input[aria-label=${JSON.stringify(label)}]`).fill(acquired ? "1" : "0");
   await page.keyboard.press("Enter");
 }
@@ -216,7 +203,7 @@ async function waitForDenied(page, timeout) {
   let seen = "";
   while (Date.now() - started < timeout) {
     seen = await bodyText(page).catch(() => seen);
-    // The Labs page renders `list_view_failed_to_get_items` for a denial.
+    // The Lists 2.0 page renders `list_view_failed_to_get_items` for a denial.
     if (/Failed to get items/i.test(seen)) return true;
     // Or the write chrome is gone, which is the softer "no longer yours".
     if (!(await page.$('[data-testid="inline-list-add"]')) && !/Add Item/.test(seen)) {
@@ -272,12 +259,12 @@ async function main() {
     for (let index = 0; index < 3; index++) {
       browsers.push(await puppeteer.launch({ headless, args: ["--no-sandbox", "--disable-setuid-sandbox"] }));
     }
-    const [ownerContext, editorContext, legacyContext, switchContext] = browsers.map(value => value.defaultBrowserContext());
+    const [ownerContext, editorContext, freshContext, switchContext] = browsers.map(value => value.defaultBrowserContext());
     ownerPage = await ownerContext.newPage();
     const editorPage = await editorContext.newPage();
-    const legacyPage = await legacyContext.newPage();
+    const freshPage = await freshContext.newPage();
     const switchPage = await switchContext.newPage();
-    for (const p of [ownerPage, editorPage, legacyPage, switchPage]) {
+    for (const p of [ownerPage, editorPage, freshPage, switchPage]) {
       p.setDefaultTimeout(TIMEOUT_MS);
       p.on("pageerror", error => console.error("[browser]", error.stack || String(error)));
       p.on("requestfailed", request => {
@@ -294,17 +281,17 @@ async function main() {
     }
 
     console.log("[step] logins");
-    await login(ownerPage, BASE_URL, USERS.owner, true);
-    await login(editorPage, BASE_URL, USERS.editor, true);
-    await login(legacyPage, BASE_URL, USERS.owner, false);
-    pass("owner, editor and legacy sessions signed in");
+    await login(ownerPage, BASE_URL, USERS.owner);
+    await login(editorPage, BASE_URL, USERS.editor);
+    await login(freshPage, BASE_URL, USERS.owner);
+    pass("owner, editor and fresh sessions signed in");
 
     const worldData = await api(ownerPage, "GET", "/api/v1/world_data");
     if (worldData.status !== 200) throw new Error(`world_data: ${worldData.status}`);
     const worldId = worldData.body.regions[0].datacenters[0].worlds[0].id;
 
     // ================= Scenario A =================
-    console.log("[scenario A] live convergence, offline, undo, REST, legacy");
+    console.log("[scenario A] live convergence, offline, undo, REST, fresh");
     const listId = await createList(ownerPage, worldId, "ListSync E2E A");
     createdLists.push(listId);
     for (const itemId of [5, 6]) {
@@ -327,7 +314,7 @@ async function main() {
       const sync = await page.evaluate(
         () => !!document.querySelector('[data-testid="list-view-sync"]'),
       );
-      if (!sync) fail(failures, `A: ${label} is not on the Labs list page`);
+      if (!sync) fail(failures, `A: ${label} is not on the Lists 2.0 list page`);
     }
     const initial = await waitForState(ownerPage, (s) => s.unacquired === 2, TIMEOUT_MS);
     if (initial.unacquired !== 2) {
@@ -443,31 +430,31 @@ async function main() {
       pass("A: REST write reached the editor's document");
     }
 
-    console.log("[step] the legacy page agrees");
-    await legacyPage.goto(listUrl, { waitUntil: "domcontentloaded" });
-    await waitForHydration(legacyPage, TIMEOUT_MS);
-    const legacySync = await legacyPage.evaluate(
+    console.log("[step] the fresh page agrees");
+    await freshPage.goto(listUrl, { waitUntil: "domcontentloaded" });
+    await waitForHydration(freshPage, TIMEOUT_MS);
+    const freshSync = await freshPage.evaluate(
       () => !!document.querySelector('[data-testid="list-view-sync"]'),
     );
-    if (legacySync) fail(failures, "A: legacy session unexpectedly got the Labs page");
+    if (!freshSync) fail(failures, "A: fresh session did not get the default Lists 2.0 page");
     // Compare against what the server actually holds rather than a fixed
     // split, so a legitimate divergence is reported as such and an earlier
-    // step's failure does not also mis-blame the legacy page.
+    // step's failure does not also mis-blame the fresh page.
     const serverNow = (await serverAcquired(ownerPage, listId)) || [];
     const wantAcquired = serverNow.filter((a) => a > 0).length;
     const wantUnacquired = serverNow.length - wantAcquired;
-    const legacy = await waitForState(
-      legacyPage,
+    const fresh = await waitForState(
+      freshPage,
       (s) => s.acquired === wantAcquired && s.unacquired === wantUnacquired,
       TIMEOUT_MS,
     );
-    if (legacy.acquired !== wantAcquired || legacy.unacquired !== wantUnacquired) {
+    if (fresh.acquired !== wantAcquired || fresh.unacquired !== wantUnacquired) {
       fail(
         failures,
-        `A: legacy page disagrees with the server: page=${JSON.stringify(legacy)} server=${JSON.stringify(serverNow)}`,
+        `A: fresh page disagrees with the server: page=${JSON.stringify(fresh)} server=${JSON.stringify(serverNow)}`,
       );
     } else {
-      pass(`A: legacy page shows the same rows as the server (${JSON.stringify(serverNow)})`);
+      pass(`A: fresh page shows the same rows as the server (${JSON.stringify(serverNow)})`);
     }
 
     console.log("[scenario A2] bounded access checks during continuous broadcasts");
@@ -639,7 +626,7 @@ async function main() {
     });
     if (shareD.status !== 200) fail(failures, `D: share: ${shareD.status}`);
     // A = the editor (shared), B = the outsider (no share), same context.
-    await login(switchPage, BASE_URL, USERS.editor, true);
+    await login(switchPage, BASE_URL, USERS.editor);
     const urlD = new URL(`/list/${listD}`, BASE_URL).toString();
     await switchPage.goto(urlD, { waitUntil: "domcontentloaded" });
     await waitForHydration(switchPage, TIMEOUT_MS);
@@ -655,7 +642,7 @@ async function main() {
     if (dKeysA.length === 0) fail(failures, "D: user A has no snapshot key before the switch");
     else pass(`D: user A holds ${dKeysA[0]}`);
 
-    await login(switchPage, BASE_URL, USERS.outsider, true);
+    await login(switchPage, BASE_URL, USERS.outsider);
     await switchPage.goto(urlD, { waitUntil: "domcontentloaded" });
     const dDenied = await waitForDenied(switchPage, 15000);
     if (!dDenied) {

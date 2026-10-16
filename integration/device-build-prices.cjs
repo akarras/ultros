@@ -129,8 +129,8 @@ async function main() {
     const worlds = data.regions.flatMap(region => region.datacenters.flatMap(dc => dc.worlds));
     [world, secondWorld] = worlds;
     assert(world && secondWorld, "two worlds required for scope replacement");
-    await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"], ["HOME_WORLD", world.name], ["PRICE_ZONE", world.name]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
-    await load(`${base}/list?labs=lists-sync`);
+    await page.setCookie(...[["HIDE_ADS", "true"], ["i18n_pref_locale", "en"], ["HOME_WORLD", world.name], ["PRICE_ZONE", world.name]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
+    await load(`${base}/list`);
     await page.click(tid("list-new")); await replace(tid("device-list-name"), `Device prices ${Date.now()}`); await page.click(tid("device-list-create"));
     await page.waitForSelector(tid("device-list-editor")); const deviceUrl = page.url();
     console.log("Device editor ready; adding catalog items");
@@ -202,7 +202,7 @@ async function main() {
     await page.setOfflineMode(false); await load(deviceUrl);
     // A reopened list prices itself against the scope it saved.
     await expectState(item, "priced"); await expectTotal("120 gil");
-    assert((await text(tid("device-price-controls"))).includes(secondWorld.name), "reopen restores selected scope");
+    assert.equal(await page.$eval(`${tid("device-price-controls")} input[role="combobox"]`, input => input.value), secondWorld.name, "reopen restores selected scope");
     assert.equal(await page.$eval(`${row(item)} input[aria-label="Needed for Bronze Ingot"]`, el => el.value), "4");
     await page.click(`${row(item)} button[aria-label="Details for Bronze Ingot"]`);
     await setNumber(`${row(item)} input[aria-label="Owned for Bronze Ingot"]`, 4);
@@ -223,7 +223,7 @@ async function main() {
     accountId = (await api("GET", "/api/v1/list")).find(entry => entry.list.name === name).list.id;
     await api("POST", `/api/v1/list/${accountId}/add/item`, { id: 0, list_id: accountId, item_id: item, hq: null, quantity: 2, acquired: 0 });
     cookie = (await page.cookies()).map(entry => `${entry.name}=${entry.value}`).join("; ");
-    const accountUrl = `${base}/list/${accountId}?labs=lists-sync`;
+    const accountUrl = `${base}/list/${accountId}`;
     const holdInitial = await page.evaluateOnNewDocument(id => { window.__holdInitialPriceDoc = id; window.__heldInitialPriceDocs = []; }, accountId);
     await load(accountUrl);
     await page.waitForFunction(() => window.__heldInitialPriceDocs?.length > 0);
@@ -316,7 +316,7 @@ async function main() {
     await api("POST", "/api/v1/list/create", { name: secondName, wdr_filter: { World: secondWorld.id } });
     secondAccountId = (await api("GET", "/api/v1/list")).find(entry => entry.list.name === secondName).list.id;
     await api("POST", `/api/v1/list/${secondAccountId}/add/item`, { id: 0, list_id: secondAccountId, item_id: item, hq: null, quantity: 2, acquired: 0 });
-    await load(`${base}/list/${secondAccountId}?labs=lists-sync`); await expectTotal("60 gil");
+    await load(`${base}/list/${secondAccountId}`); await expectTotal("60 gil");
     await load(accountUrl); await expectTotal("40 gil");
     failAccount = true; holdAccount = true;
     await page.evaluate(id => {
@@ -328,7 +328,7 @@ async function main() {
       };
       requestAnimationFrame(sample);
       window.__priceRouteToken = "same-document";
-      const link = document.createElement("a"); link.href = `/list/${id}?labs=lists-sync`; link.textContent = "Other list";
+      const link = document.createElement("a"); link.href = `/list/${id}`; link.textContent = "Other list";
       document.body.append(link); link.click(); link.remove();
     }, secondAccountId);
     await page.waitForFunction(id => location.pathname === `/list/${id}`, {}, secondAccountId);

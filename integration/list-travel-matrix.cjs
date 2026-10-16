@@ -61,7 +61,7 @@ async function runTravelMatrix({ page, base, market, createList, load, click, re
   }
   async function open(cart, params = {}) {
     await refreshOwner();
-    await load(`${cart.path}?${new URLSearchParams({ labs: "lists-sync", ...params })}`);
+    await load(`${cart.path}?${new URLSearchParams({ ...params })}`);
     await click(tid("guest-build-mode"));
     if (cart.surface === "device") await click(tid("device-prices-refresh"));
   }

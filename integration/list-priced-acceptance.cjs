@@ -139,7 +139,7 @@ async function main() {
     page.on("dialog", dialog => dialog.type() === "beforeunload" ? dialog.accept() : dialog.dismiss());
     fs.mkdirSync(artifacts, { recursive: true });
     artifactsReady = true;
-    await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"]]
+    await page.setCookie(...[["HIDE_ADS", "true"], ["i18n_pref_locale", "en"]]
       .map(([name, value]) => ({ name, value, url: base, path: "/" })));
     await page.setViewport({ width: 1280, height: 900 });
     await login(READER); await login(OWNER);

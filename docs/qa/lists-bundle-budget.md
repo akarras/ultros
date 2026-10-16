@@ -158,3 +158,8 @@ debug WASM is not a substitute. Check memory/build-time behavior too; cache-seed
 timings do not measure clean compilation cost. Independently review the pair and
 measure the final integrated Lists head in a fresh target after all feature
 merges. These measurements do not complete the production-soak gate.
+As of the 2026-10-13 audit in
+[`../lists-promotion-decision.md`](../lists-promotion-decision.md)
+(blocker B6), that final integrated measurement still does not exist
+for the promotion merge candidate; the historical pair above must not
+be substituted for it.

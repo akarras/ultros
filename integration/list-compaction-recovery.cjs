@@ -62,7 +62,7 @@ async function disconnect(page) {
 }
 
 async function saved(page) {
-  await page.waitForFunction(() => document.querySelector('[data-testid="account-list-save-state"]')?.textContent.includes("Saved on this device"), { timeout: 60000 });
+  await page.waitForFunction(() => document.querySelector('[data-testid="account-list-save-state"]')?.textContent.includes("Local copy saved"), { timeout: 60000 });
 }
 
 async function open(context, id, errors, beforeSaved) {
@@ -116,7 +116,6 @@ async function main() {
       await prepare(page);
       const response = await page.goto(`${base}/test/login?user_id=${user}&username=CompactionRecoveryQA&redirect=/list`);
       assert(response.ok(), "test-auth must be enabled");
-      await page.setCookie({ name: "LABS", value: "lists-sync", url: base, path: "/" });
       controls.push(page);
     }
     control = controls[1];
