@@ -62,6 +62,11 @@ pub(crate) fn top_n_cheapest_listings(
     if let Some(hq) = hq_filter {
         listings.retain(|l| l.hq == hq);
     }
+    // ⚡ Bolt: Optimization: Extract top N elements in O(N) time with select_nth_unstable_by_key before sorting
+    if limit > 0 && listings.len() > limit {
+        listings.select_nth_unstable_by_key(limit, |l| l.price_per_unit);
+        listings.truncate(limit);
+    }
     listings.sort_unstable_by_key(|l| l.price_per_unit);
     listings.truncate(limit);
     listings
