@@ -3561,12 +3561,12 @@ async fn delete_user(
     State(cache): State<AuthUserCache>,
     State(db): State<UltrosDb>,
     cookie_jar: PrivateCookieJar,
-) -> Result<(PrivateCookieJar, Redirect), ApiError> {
+) -> Result<(PrivateCookieJar, Json<()>), ApiError> {
     let id = user.id;
     db.delete_discord_user(id as i64).await?;
     cache.remove_user(id).await;
     let cookie_jar = cookie_jar.remove(oauth::discord_auth_removal_cookie());
-    Ok((cookie_jar, Redirect::to("/")))
+    Ok((cookie_jar, Json(())))
 }
 
 /// The pack locale a `/static/{data,startup}/{version}/{lang}` URL names.

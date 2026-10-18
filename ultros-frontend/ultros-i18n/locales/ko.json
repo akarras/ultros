@@ -862,6 +862,7 @@
     "analyzer_cost_unpriced": "가격 없음 {{n}}",
     "analyzer_cost_unpriced_title": "{{n}}종의 재료는 구매 범위에 매물도 NPC 판매도 없어 여기서는 0으로 계산됩니다",
     "recipe_analyzer_calc_signal_semantics": "대체 열도 신호별로 같은 규칙을 따릅니다. 재료는 가장 싼 매물(“HQ 필요” 시 HQ 우선) 또는 선택한 판매 통계를, 매출은 판매 서버의 NQ/HQ 중 싼 쪽을 씁니다. 통계가 없거나 0이면 재료별로 매물 가격으로 돌아가며 0이 되지 않습니다. 판매 서버에 판매 기록이 없으면 대체 매출은 —로 표시됩니다.",
+    "delete_account_error": "계정을 삭제할 수 없습니다. 다시 시도해 주세요.",
     "delete_account": "계정 삭제",
     "delete_account_desc": "위험: 계정과 관련된 모든 정보를 삭제하려면, 토글로 확인한 뒤 삭제 버튼을 누르세요.",
     "delete_account_confirm": "예, 제 계정을 삭제합니다",

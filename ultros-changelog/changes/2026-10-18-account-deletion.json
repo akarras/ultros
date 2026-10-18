@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Account deletion works again",
+  "blurb": "You can now delete your account even if you have saved retainers or lists. Deletion signs you out, and any failure shows a message so you can try again.",
+  "link": "/profile"
+}

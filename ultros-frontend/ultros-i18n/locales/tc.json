@@ -862,6 +862,7 @@
     "analyzer_cost_unpriced": "{{n}} 項無價格",
     "analyzer_cost_unpriced_title": "{{n}} 種材料在購買範圍內沒有掛單也沒有 NPC 販售，此處按 0 計算",
     "recipe_analyzer_calc_signal_semantics": "替代欄位遵循相同的每訊號規則：材料取最便宜的相符掛單（勾選「需要 HQ」時優先 HQ）或所選的銷售統計，收入取售出伺服器上 NQ 與 HQ 中較低者。統計缺失或為零時按材料回退到掛單價，絕不為 0；售出伺服器沒有銷售歷史時，替代收入顯示 —。",
+    "delete_account_error": "無法刪除帳號，請再試一次。",
     "delete_account": "刪除帳號",
     "delete_account_desc": "危險：若要刪除帳號及所有相關資料，請先開啟切換按鈕確認，再點擊刪除按鈕。",
     "delete_account_confirm": "是，刪除我的帳號",
