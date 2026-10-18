@@ -11,6 +11,7 @@ use sea_orm::EntityTrait;
 use sea_orm::LoaderTrait;
 use sea_orm::QueryFilter;
 use sea_orm::Set;
+use sea_orm::{QueryOrder, QuerySelect, sea_query::OnConflict};
 use thiserror::Error;
 use tracing::info;
 use tracing::instrument;
@@ -54,36 +55,37 @@ pub enum RetainerError {
 }
 
 impl UltrosDb {
-    /// Returns all retainers in the DB whose `world_id` matches one of the
-    /// `final_fantasy_character` rows that the Discord user owns (i.e. has a
-    /// row in `owned_ffxiv_character`). This is the source of truth for
-    /// "retainers the caller is allowed to claim" — a retainer can only belong
-    /// to a character on the same world, so filtering by the user's verified
-    /// characters' worlds is the strictest schema-level claim filter available
-    /// (the `retainer` table has no direct character link; ownership is only
-    /// recorded after the fact on `owned_retainers.character_id`).
-    #[instrument]
-    pub async fn get_retainers_for_user_characters(
+    /// Search market data independently of character claims. Characters only
+    /// organize a user's list; they do not confer authority over a retainer.
+    /// Fetch one extra row to let Discord distinguish a complete result set
+    /// from one that needs a narrower search.
+    #[instrument(skip(self))]
+    pub async fn search_retainers_for_discord(
         &self,
-        discord_user_id: u64,
+        name: &str,
+        world_id: Option<i32>,
     ) -> Result<Vec<retainer::Model>> {
-        let world_ids: Vec<i32> = owned_ffxiv_character::Entity::find()
-            .find_also_related(final_fantasy_character::Entity)
-            .filter(owned_ffxiv_character::Column::DiscordUserId.eq(discord_user_id as i64))
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .filter_map(|(_, character)| character.map(|c| c.world_id))
-            .collect();
-
-        if world_ids.is_empty() {
+        if name.trim().is_empty() {
             return Ok(vec![]);
         }
-
-        Ok(retainer::Entity::find()
-            .filter(retainer::Column::WorldId.is_in(world_ids))
+        let mut query = retainer::Entity::find().filter(retainer::Column::Name.like(format!(
+            "{}%",
+            crate::group_roles::escape_like(&retainer_search_name(name))
+        )));
+        if let Some(world_id) = world_id {
+            query = query.filter(retainer::Column::WorldId.eq(world_id));
+        }
+        Ok(query
+            .order_by_asc(retainer::Column::Name)
+            .order_by_asc(retainer::Column::WorldId)
+            .order_by_asc(retainer::Column::Id)
+            .limit(26)
             .all(&self.db)
             .await?)
+    }
+
+    pub async fn get_retainer(&self, id: i32) -> Result<Option<retainer::Model>> {
+        Ok(retainer::Entity::find_by_id(id).one(&self.db).await?)
     }
 
     #[instrument]
@@ -93,6 +95,20 @@ impl UltrosDb {
         discord_user_id: u64,
         username: String,
     ) -> Result<owned_retainers::Model> {
+        Ok(self
+            .register_retainer_with_status(retainer_id, discord_user_id, username)
+            .await?
+            .0)
+    }
+
+    /// Idempotent, including concurrent requests. A duplicate must preserve
+    /// character assignment and ordering, rather than updating either.
+    pub async fn register_retainer_with_status(
+        &self,
+        retainer_id: i32,
+        discord_user_id: u64,
+        username: String,
+    ) -> Result<(owned_retainers::Model, bool)> {
         let _user = self
             .get_or_create_discord_user(discord_user_id, username)
             .await?;
@@ -111,15 +127,53 @@ impl UltrosDb {
             .max()
             .flatten()
             .map(|w| w + 1);
-        Ok(owned_retainers::ActiveModel {
+        let inserted = owned_retainers::Entity::insert(owned_retainers::ActiveModel {
             id: ActiveValue::default(),
             retainer_id: Set(retainer.id),
             character_id: ActiveValue::default(),
             discord_id: Set(discord_user_id as i64),
             weight: ActiveValue::Set(weight),
+        })
+        .on_conflict(
+            OnConflict::columns([
+                owned_retainers::Column::DiscordId,
+                owned_retainers::Column::RetainerId,
+            ])
+            .do_nothing()
+            .to_owned(),
+        )
+        // Count inserted rows: SeaORM's single-row RETURNING path reports an
+        // empty conflict result as RecordNotFound rather than Conflicted.
+        .exec_without_returning(&self.db)
+        .await?;
+        let owned = owned_retainers::Entity::find()
+            .filter(owned_retainers::Column::DiscordId.eq(discord_user_id as i64))
+            .filter(owned_retainers::Column::RetainerId.eq(retainer_id))
+            .one(&self.db)
+            .await?
+            .ok_or(RetainerError::NotFound)?;
+        Ok((owned, inserted == 1))
+    }
+
+    /// Shared assignment permission checks for the website and Discord bot.
+    pub async fn assign_retainer_character(
+        &self,
+        owner_id: i64,
+        owned_retainer_id: i32,
+        character_id: Option<i32>,
+    ) -> Result<()> {
+        if let Some(character_id) = character_id
+            && !self.user_owns_character(owner_id, character_id).await?
+        {
+            return Err(
+                RetainerError::Forbidden("Add this character to your account first").into(),
+            );
         }
-        .insert(&self.db)
-        .await?)
+        self.update_owned_retainer(owner_id, owned_retainer_id, |mut model| {
+            model.character_id = Set(character_id);
+            model
+        })
+        .await
     }
 
     #[instrument]
@@ -396,6 +450,20 @@ impl UltrosDb {
     }
 }
 
+fn retainer_search_name(name: &str) -> String {
+    name.trim()
+        .chars()
+        .enumerate()
+        .map(|(index, ch)| {
+            if index == 0 {
+                ch.to_ascii_uppercase()
+            } else {
+                ch.to_ascii_lowercase()
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -403,6 +471,193 @@ mod tests {
     use sea_orm::{EntityTrait, Set};
 
     use super::*;
+
+    async fn isolated_db() -> UltrosDb {
+        use sea_orm::{ConnectionTrait, Database};
+        let connection = Database::connect("sqlite::memory:").await.unwrap();
+        for sql in [
+            "CREATE TABLE discord_user (id BIGINT PRIMARY KEY, username TEXT NOT NULL)",
+            "CREATE TABLE final_fantasy_character (id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL, world_id INTEGER NOT NULL)",
+            "CREATE TABLE owned_ffxiv_character (ffxiv_character_id INTEGER NOT NULL, discord_user_id BIGINT NOT NULL, PRIMARY KEY (ffxiv_character_id, discord_user_id))",
+            "CREATE TABLE retainer (id INTEGER PRIMARY KEY, world_id INTEGER NOT NULL, name TEXT NOT NULL, retainer_city_id INTEGER NOT NULL)",
+            "CREATE TABLE owned_retainers (id INTEGER PRIMARY KEY AUTOINCREMENT, retainer_id INTEGER NOT NULL, discord_id BIGINT NOT NULL, character_id INTEGER, weight INTEGER, UNIQUE (discord_id, retainer_id))",
+        ] {
+            connection.execute_unprepared(sql).await.unwrap();
+        }
+        UltrosDb::from_connection(connection)
+    }
+
+    async fn retainer(db: &UltrosDb, id: i32, name: &str, world: i32) {
+        retainer::ActiveModel {
+            id: Set(id),
+            name: Set(name.into()),
+            world_id: Set(world),
+            retainer_city_id: Set(1),
+        }
+        .insert(db.get_connection())
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn discord_search_and_claim_work_without_characters_across_worlds() {
+        let db = isolated_db().await;
+        retainer(&db, 1, "Dawnkeeper", 10).await;
+        retainer(&db, 2, "Dawnkeeper", 20).await;
+        retainer(&db, 3, "Starpetal", 30).await;
+        assert_eq!(
+            db.search_retainers_for_discord(" dAwN ", None)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        let narrowed = db
+            .search_retainers_for_discord("Dawn", Some(20))
+            .await
+            .unwrap();
+        assert_eq!(narrowed.iter().map(|r| r.id).collect::<Vec<_>>(), [2]);
+        // No character claims exist. All three worlds are still trackable.
+        for id in 1..=3 {
+            let (_, created) = db
+                .register_retainer_with_status(id, 100, "player".into())
+                .await
+                .unwrap();
+            assert!(created);
+        }
+        assert_eq!(db.get_owned_retainer_ids(100).await.unwrap().len(), 3);
+        assert!(
+            db.search_retainers_for_discord(" ", None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            db.search_retainers_for_discord("Missing", None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_and_concurrent_claims_preserve_character_and_order() {
+        let db = isolated_db().await;
+        retainer(&db, 1, "Dawnkeeper", 10).await;
+        let (owned, created) = db
+            .register_retainer_with_status(1, 100, "player".into())
+            .await
+            .unwrap();
+        assert!(created);
+        let character = db.insert_character(1, "First", "Alt", 10).await.unwrap();
+        db.create_owned_character(100, character.id).await.unwrap();
+        db.assign_retainer_character(100, owned.id, Some(character.id))
+            .await
+            .unwrap();
+        db.update_owned_retainer(100, owned.id, |mut o| {
+            o.weight = Set(Some(7));
+            o
+        })
+        .await
+        .unwrap();
+        let (left, right) = tokio::join!(
+            db.register_retainer_with_status(1, 100, "player".into()),
+            db.register_retainer_with_status(1, 100, "player".into()),
+        );
+        for result in [left, right] {
+            let (retry, created) = result.unwrap();
+            assert!(!created);
+            assert_eq!(retry.id, owned.id);
+            assert_eq!(retry.character_id, Some(character.id));
+            assert_eq!(retry.weight, Some(7));
+        }
+        assert_eq!(db.get_owned_retainer_ids(100).await.unwrap(), [1]);
+        retainer(&db, 2, "Starpetal", 20).await;
+        let (left, right) = tokio::join!(
+            db.register_retainer_with_status(2, 100, "player".into()),
+            db.register_retainer_with_status(2, 100, "player".into()),
+        );
+        let left = left.unwrap();
+        let right = right.unwrap();
+        assert_eq!(left.0.id, right.0.id);
+        assert_ne!(
+            left.1, right.1,
+            "exactly one concurrent request creates the record"
+        );
+        // Claims are private bookkeeping, so another user may track the same retainer.
+        assert!(
+            db.register_retainer_with_status(1, 200, "other".into())
+                .await
+                .unwrap()
+                .1
+        );
+    }
+
+    #[tokio::test]
+    async fn assignment_supports_three_characters_and_checks_both_owners() {
+        let db = isolated_db().await;
+        for (id, world) in [(1, 10), (2, 10), (3, 20)] {
+            retainer(&db, id, &format!("Retainer{id}"), world).await;
+            let owned = db
+                .register_retainer(id, 100, "player".into())
+                .await
+                .unwrap();
+            db.insert_character(id, "Player", &format!("Alt{id}"), world)
+                .await
+                .unwrap();
+            db.create_owned_character(100, id).await.unwrap();
+            db.assign_retainer_character(100, owned.id, Some(id))
+                .await
+                .unwrap();
+        }
+        let groups = db.get_all_owned_retainers_and_character(100).await.unwrap();
+        assert_eq!(groups.len(), 3);
+        for (character, retainers) in groups {
+            let character = character.unwrap();
+            assert_eq!(retainers.len(), 1);
+            assert_eq!(retainers[0].0.character_id, Some(character.id));
+            assert_eq!(retainers[0].1.world_id, character.world_id);
+        }
+        let foreign = db.register_retainer(1, 200, "other".into()).await.unwrap();
+        db.insert_character(4, "Other", "Player", 10).await.unwrap();
+        db.create_owned_character(200, 4).await.unwrap();
+        assert!(
+            db.assign_retainer_character(100, foreign.id, Some(1))
+                .await
+                .is_err()
+        );
+        let owned = db.register_retainer(1, 100, "player".into()).await.unwrap();
+        assert!(
+            db.assign_retainer_character(100, owned.id, Some(4))
+                .await
+                .is_err()
+        );
+        db.assign_retainer_character(100, owned.id, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.register_retainer(1, 100, "player".into())
+                .await
+                .unwrap()
+                .character_id,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn discord_search_is_bounded_and_stable() {
+        let db = isolated_db().await;
+        for id in (1..=40).rev() {
+            retainer(&db, id, &format!("Retainer{id:02}"), 10).await;
+        }
+        let found = db
+            .search_retainers_for_discord("Retainer", None)
+            .await
+            .unwrap();
+        assert_eq!(found.len(), 26, "25 choices plus one overflow marker");
+        assert_eq!(found.first().unwrap().name, "Retainer01");
+        assert_eq!(found.last().unwrap().name, "Retainer26");
+    }
 
     async fn test_db() -> UltrosDb {
         UltrosDb::connect().await.expect("connect to test DB")

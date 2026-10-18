@@ -34,8 +34,8 @@ pub fn BotGuide() -> impl IntoView {
 
             <section id="getting-started" class="flex flex-col gap-3">
                 <h2 class="text-2xl font-semibold text-brand-300">{t!(i18n, bot_section_getting_started_heading)}</h2>
+                <p>{t!(i18n, bot_setup_step_add_character)}</p>
                 <ol class="list-decimal list-inside flex flex-col gap-2">
-                    <li>{t!(i18n, bot_setup_step_add_character)}</li>
                     <li>{t!(i18n, bot_setup_step_discord_run_prefix)} <code class="rounded bg-black/40 px-1.5 py-0.5">"/ffxiv retainer add"</code> {t!(i18n, bot_setup_step_discord_run_suffix)}</li>
                     <li>{t!(i18n, bot_setup_step_run_in_channel_prefix)} <code class="rounded bg-black/40 px-1.5 py-0.5">"/ffxiv retainer add_undercut_alert margin_percent:0"</code> {t!(i18n, bot_setup_step_run_in_channel_suffix)}</li>
                 </ol>
@@ -58,7 +58,7 @@ pub fn BotGuide() -> impl IntoView {
                     description=t_string!(i18n, bot_cmd_retainer_description).to_string()
                     commands=vec![
                         ("/ffxiv retainer list", t_string!(i18n, bot_cmd_retainer_list_desc).to_string()),
-                        ("/ffxiv retainer add retainer_id:<name>", t_string!(i18n, bot_cmd_retainer_add_desc).to_string()),
+                        ("/ffxiv retainer add [retainer:<name>] [world] [character]", t_string!(i18n, bot_cmd_retainer_add_desc).to_string()),
                         ("/ffxiv retainer remove owned_retainer_id:<name>", t_string!(i18n, bot_cmd_retainer_remove_desc).to_string()),
                         ("/ffxiv retainer check_listings", t_string!(i18n, bot_cmd_retainer_check_listings_desc).to_string()),
                         ("/ffxiv retainer check_undercuts", t_string!(i18n, bot_cmd_retainer_check_undercuts_desc).to_string()),

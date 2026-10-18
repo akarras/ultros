@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Undercut alerts keep up with your retainers",
+  "blurb": "Adding or removing retainers in Discord now updates your existing undercut alerts too, without needing to restart them.",
+  "link": "/bot"
+}

@@ -234,6 +234,18 @@ pub struct UndercutTracker {
 }
 
 impl UndercutTracker {
+    /// Ownership changes replace the snapshot, but must not re-arm an
+    /// unchanged listing that already notified this user.
+    async fn refresh_retainers(&mut self) -> Result<()> {
+        let (retainer_ids, mut listings) =
+            get_user_unique_retainer_ids_and_listing_ids_by_price(&self.db, self.discord_user_id)
+                .await?;
+        preserve_alerted_listings(&self.user_lowest_listings, &mut listings);
+        self.retainer_ids = retainer_ids;
+        self.user_lowest_listings = listings;
+        Ok(())
+    }
+
     pub async fn new(
         discord_user: u64,
         ultros_db: &UltrosDb,
@@ -387,6 +399,19 @@ impl UndercutTracker {
             EventType::Update(_) => {}
         }
         Ok(None)
+    }
+}
+
+fn preserve_alerted_listings(
+    previous: &HashMap<ListingKey, ListingValue>,
+    refreshed: &mut HashMap<ListingKey, ListingValue>,
+) {
+    for (key, value) in refreshed {
+        if let Some(old) = previous.get(key)
+            && old.lowest_price == value.lowest_price
+        {
+            value.has_alerted = old.has_alerted;
+        }
     }
 }
 
@@ -735,7 +760,7 @@ impl RetainerAlertListener {
         margin: i32,
         ultros_db: UltrosDb,
         mut listings: EventBus<ListingEventData>,
-        active_retainers: EventBus<OwnedRetainer>,
+        mut active_retainers: EventBus<OwnedRetainer>,
         services: RetainerAlertServices,
     ) -> Result<Self> {
         let RetainerAlertServices { ctx, notifications } = services;
@@ -764,6 +789,16 @@ impl RetainerAlertListener {
                 // Every arm is cancel-safe (mpsc and broadcast `recv`, a
                 // sleep), so an undercut is never lost when another arm wins.
                 tokio::select! {
+                    event = active_retainers.recv() => {
+                        let refresh = match event {
+                            Ok(event) => event.as_ref().discord_id == discord_user as i64,
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => true,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        };
+                        if refresh && let Err(error) = undercut_tracker.refresh_retainers().await {
+                            error!(?error, "could not refresh retainers for undercut alerts");
+                        }
+                    }
                     msg = receiver.recv() => match msg {
                         // Stop means the alert was disabled or deleted, so
                         // anything still batched is dropped with it.
@@ -808,6 +843,46 @@ impl RetainerAlertListener {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ownership_refresh_keeps_existing_alerts_but_rearms_changed_prices() {
+        let key = |item_id| ListingKey {
+            item_id,
+            world_id: 1,
+            hq: false,
+        };
+        let value = |lowest_price, has_alerted| ListingValue {
+            lowest_price,
+            has_alerted,
+        };
+        let previous = HashMap::from([
+            (key(1), value(100, true)),
+            (key(2), value(200, true)),
+            (key(3), value(300, true)),
+        ]);
+        let mut refreshed = HashMap::from([
+            (key(1), value(100, false)),
+            (key(2), value(150, false)),
+            (key(4), value(400, false)),
+        ]);
+        preserve_alerted_listings(&previous, &mut refreshed);
+        assert!(
+            refreshed[&key(1)].has_alerted,
+            "retrying an add must not duplicate an alert"
+        );
+        assert!(
+            !refreshed[&key(2)].has_alerted,
+            "a changed price can be undercut afresh"
+        );
+        assert!(
+            !refreshed[&key(4)].has_alerted,
+            "new retainers participate in detection"
+        );
+        assert!(
+            !refreshed.contains_key(&key(3)),
+            "removed retainers leave the snapshot"
+        );
+    }
 
     // ---------- is_undercut_by_more_than_margin ----------
 

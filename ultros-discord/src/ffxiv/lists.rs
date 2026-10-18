@@ -1,5 +1,5 @@
 use super::{Context, Error};
-use crate::discord::ffxiv::helpers::{
+use crate::ffxiv::helpers::{
     discord_locale_to_xiv_language, localized_item_matches, localized_item_name,
     resolve_item_id_any_locale, truncate_100,
 };

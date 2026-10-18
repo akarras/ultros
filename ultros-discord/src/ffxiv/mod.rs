@@ -7,6 +7,8 @@ mod helpers;
 mod item_prices;
 mod lists;
 mod retainer;
+mod retainer_services;
+mod retainer_setup;
 
 use admin::rescan_market;
 use alert::alert;

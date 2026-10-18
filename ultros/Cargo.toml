@@ -74,6 +74,7 @@ ultros-search = { path = "../ultros-search" }
 ultros-server-core = { path = "../ultros-server-core" }
 ultros-alerts = { path = "../ultros-alerts" }
 ultros-character = { path = "../ultros-character" }
+ultros-discord = { path = "../ultros-discord" }
 ultros-group-sync = { path = "../ultros-group-sync" }
 ultros-lists = { path = "../ultros-lists" }
 resvg = "0.48.1"
@@ -131,5 +132,5 @@ profiling = ["dep:tikv-jemallocator", "dep:jemalloc_pprof"]
 jemalloc = ["dep:tikv-jemallocator"]
 # Exposes /test/login for E2E tests. Compile-time gated so prod binaries
 # physically cannot contain this route. Build with: --features test-auth
-test-auth = ["ultros-ingest/test-auth", "ultros-server-core/test-auth"]
+test-auth = ["ultros-ingest/test-auth", "ultros-server-core/test-auth", "ultros-discord/test-auth"]
 default = []

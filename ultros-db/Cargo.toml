@@ -33,3 +33,4 @@ rkyv = ["dep:rkyv"]
 
 [dev-dependencies]
 serde_json = { workspace = true }
+sea-orm = { workspace = true, features = ["sqlx-sqlite"] }

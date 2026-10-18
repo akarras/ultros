@@ -2,7 +2,7 @@ use poise::serenity_prelude::Color;
 use std::fmt::Write;
 
 use crate::analyzer_service::ResaleOptions;
-use crate::discord::ffxiv::helpers::{
+use crate::ffxiv::helpers::{
     clamp_sold_amount, discord_locale_to_xiv_language, localized_item_name,
     threshold_days_to_sold_within,
 };

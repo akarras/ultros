@@ -7,12 +7,21 @@ Last status review: 2026-09-23 — every ticket re-checked against the code; lin
 Priorities use `P0`/`P1`/`P2`/`P3` (P0 = ship next, P3 = nice-to-have).
 Effort is a rough T-shirt size (`S` ≤ half-day, `M` 1–2 days, `L` ≥ 3 days).
 
-The bot lives in [ultros/src/discord/](ultros/src/discord/). Registered root commands
-([mod.rs:185](ultros/src/discord/mod.rs:185)) are `age`, `register`, `ping` and `ffxiv`; the `ffxiv`
-subgroups ([ffxiv/mod.rs:22](ultros/src/discord/ffxiv/mod.rs:22)) are `character`, `retainer`,
+The bot now lives in [ultros-discord](../ultros-discord/README.md). The file and line
+references below describe the historical audit snapshot. Registered root commands
+([lib.rs](../ultros-discord/src/lib.rs)) are `age`, `register`, `ping` and `ffxiv`; the `ffxiv`
+subgroups ([ffxiv/mod.rs](../ultros-discord/src/ffxiv/mod.rs)) are `character`, `retainer`,
 `analyze`, `list`, `prices`, `rescan_market` (owners only) and `alert`.
 
 ## Status at a glance (2026-09-23)
+
+**2026-10-18 update:** The retainer setup journey supersedes B-1.1's world
+gate, B-1.4's verification copy, and B-2.6's expired registration menus.
+Retainers can now be searched on any world without a character claim;
+private setup supports optional character lookup/assignment, repeated adds,
+and continuing across alts. `/ffxiv retainer list` provides the same
+organization controls. The shared registration menu acknowledges selections
+and removes expired controls. The status table below is the earlier snapshot.
 
 | Ticket | Status |
 | --- | --- |

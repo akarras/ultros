@@ -4,12 +4,11 @@ use poise::serenity_prelude::CreateAttachment;
 use ultros_db::world_data::world_cache::AnySelector;
 use xiv_gen::ItemId;
 
-use crate::discord::ffxiv::ULTROS_COLOR;
-use crate::discord::ffxiv::helpers::{
+use crate::ffxiv::ULTROS_COLOR;
+use crate::ffxiv::helpers::{
     discord_locale_to_xiv_language, localized_item_matches, localized_item_name,
     name_matches_lowered, top_n_cheapest_listings,
 };
-use crate::web::item_card::generate_price_history_chart;
 
 use super::{Context, Error};
 
@@ -124,7 +123,7 @@ async fn history(
         .world_helper
         .lookup_world_by_name(&world)
         .ok_or(anyhow!("Unable to find world"))?;
-    let png = generate_price_history_chart(
+    let png = (data.price_history_renderer)(
         &data.ch_client,
         &data.world_cache,
         &data.world_helper,

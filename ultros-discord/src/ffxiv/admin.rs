@@ -151,7 +151,7 @@ pub(crate) async fn rescan_market(ctx: Context<'_>) -> Result<(), Error> {
 /// and repeat coverage independently of the bounded recent-update endpoint.
 /// Discord availability never delays the work. The advisory lease serializes
 /// automatic passes with manual sweeps and workers on other replicas.
-pub(crate) fn spawn_market_reconciliation(service: Arc<UpdateService>, token: CancellationToken) {
+pub fn spawn_market_reconciliation(service: Arc<UpdateService>, token: CancellationToken) {
     #[cfg(feature = "test-auth")]
     if crate::test_market_isolation::enabled() {
         tracing::warn!("test-auth market fixture isolation: automatic reconciliation disabled");

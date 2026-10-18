@@ -1,4 +1,19 @@
-pub(crate) mod ffxiv;
+//! Discord transport and commands, independent of the web/SSR application.
+#![recursion_limit = "256"]
+
+mod ffxiv;
+
+use ultros_alerts as alerts;
+use ultros_analyzer::analyzer_service;
+use ultros_character::character_claim;
+use ultros_group_sync as group_sync;
+use ultros_ingest::item_update_service;
+use ultros_lists as lists;
+#[cfg(feature = "test-auth")]
+use ultros_server_core::test_market_isolation;
+use ultros_server_core::{env_flag::env_flag_enabled, event, event::EventType};
+
+pub use ffxiv::admin::spawn_market_reconciliation;
 
 use chrono::Local;
 use poise::{builtins::HelpConfiguration, serenity_prelude as serenity};
@@ -15,15 +30,25 @@ use crate::{
     item_update_service::UpdateService,
 };
 
-type Error = Box<dyn std::error::Error + Send + Sync>;
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
+
+/// The server supplies its renderer so Discord never depends on the web app.
+pub type PriceHistoryRenderer = Arc<
+    dyn for<'a> Fn(
+            &'a ClickHouseClient,
+            &'a WorldCache,
+            &'a WorldHelper,
+            &'static xiv_gen::Item,
+            &'a str,
+        ) -> futures::future::BoxFuture<'a, Result<Vec<u8>, Error>>
+        + Send
+        + Sync,
+>;
 // User data, which is stored and accessible in all command invocations
 
 pub(crate) struct Data {
     db: UltrosDb,
-    /// No bot command reads this yet; a later task in the lists-sync plan
-    /// routes the legacy list-editing commands through `ListSync`.
-    #[allow(dead_code)]
     list_sync: crate::lists::ListSync,
     lodestone_client: reqwest::Client,
     event_senders: EventSenders,
@@ -33,8 +58,9 @@ pub(crate) struct Data {
     update_service: Arc<UpdateService>,
     /// Backs `/prices history`'s chart image — same ClickHouse-sourced
     /// `PriceSeries` construction the web item-card PNG and JSON endpoint
-    /// share (`crate::web::build_price_series`).
+    /// share through the injected renderer.
     ch_client: ClickHouseClient,
+    price_history_renderer: PriceHistoryRenderer,
 }
 
 #[poise::command(slash_command, prefix_command)]
@@ -165,24 +191,45 @@ async fn handle_event(event: &serenity::FullEvent, data: &Data) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn start_discord(
-    db: UltrosDb,
-    list_sync: crate::lists::ListSync,
-    event_senders: EventSenders,
-    event_receivers: EventReceivers,
-    analyzer_service: AnalyzerService,
-    world_cache: Arc<WorldCache>,
-    world_helper: Arc<WorldHelper>,
-    update_service: Arc<UpdateService>,
+fn commands() -> Vec<poise::Command<Data, Error>> {
+    vec![age(), register(), ping(), ffxiv::ffxiv()]
+}
+
+/// Shared application services supplied by the process hosting the bot.
+pub struct DiscordServices {
+    pub db: UltrosDb,
+    pub list_sync: lists::ListSync,
+    pub event_senders: EventSenders,
+    pub event_receivers: EventReceivers,
+    pub analyzer_service: AnalyzerService,
+    pub world_cache: Arc<WorldCache>,
+    pub world_helper: Arc<WorldHelper>,
+    pub update_service: Arc<UpdateService>,
+    pub ch_client: ClickHouseClient,
+    pub price_history_renderer: PriceHistoryRenderer,
+}
+
+pub async fn start_discord(
+    services: DiscordServices,
     discord_token: String,
     token: CancellationToken,
-    ch_client: ClickHouseClient,
 ) {
+    let DiscordServices {
+        db,
+        list_sync,
+        event_senders,
+        event_receivers,
+        analyzer_service,
+        world_cache,
+        world_helper,
+        update_service,
+        ch_client,
+        price_history_renderer,
+    } = services;
     let setup_token = token.clone();
     let framework: poise::Framework<Data, Error> = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![age(), register(), ping(), ffxiv::ffxiv()],
+            commands: commands(),
             event_handler: |_ctx, event, _framework, data| {
                 Box::pin(async move {
                     handle_event(event, data).await;
@@ -243,6 +290,7 @@ pub(crate) async fn start_discord(
                     world_helper,
                     update_service,
                     ch_client,
+                    price_history_renderer,
                 })
             })
         })
@@ -272,6 +320,40 @@ pub(crate) async fn start_discord(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_registration_preserves_retainer_options_and_admin_permissions() {
+        let commands = commands();
+        let ffxiv = commands.iter().find(|c| c.name == "ffxiv").unwrap();
+        let retainer = ffxiv
+            .subcommands
+            .iter()
+            .find(|c| c.name == "retainer")
+            .unwrap();
+        let add = retainer
+            .subcommands
+            .iter()
+            .find(|c| c.name == "add")
+            .unwrap();
+        assert!(add.slash_action.is_some());
+        assert_eq!(
+            add.parameters
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["retainer", "world", "character"]
+        );
+        assert!(add.parameters.iter().all(|p| !p.required));
+        let rescan = ffxiv
+            .subcommands
+            .iter()
+            .find(|c| c.name == "rescan_market")
+            .unwrap();
+        assert!(rescan.owners_only);
+        for name in ["character", "analyze", "list", "prices", "alert"] {
+            assert!(ffxiv.subcommands.iter().any(|c| c.name == name));
+        }
+    }
 
     fn user(overrides: serde_json::Value) -> serenity::User {
         let mut base = serde_json::json!({
