@@ -343,6 +343,12 @@ case " ${LEPTOS_FEATURES:-} " in
         if [ "$login_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$login_exit"
         fi
+        log "running account deletion flow (test-auth feature detected)"
+        delete_account_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:delete-account ) || delete_account_exit=$?
+        if [ "$delete_account_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$delete_account_exit"
+        fi
         log "running shared-list flow (test-auth feature detected)"
         socket_revocation_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:list-socket-revocation ) || socket_revocation_exit=$?

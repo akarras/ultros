@@ -18,7 +18,6 @@ use crate::i18n::*;
 use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::IntoSignalSetter;
-use leptos::task::spawn_local;
 use leptos_i18n::I18nContext;
 
 use icondata as i;
@@ -277,10 +276,20 @@ fn AdChoice() -> impl IntoView {
 #[component]
 fn DeleteUser() -> impl IntoView {
     let (confirmed, set_confirmed) = signal(false);
+    let delete = Action::new(|_: &()| async {
+        let result = delete_user().await;
+        #[cfg(not(feature = "ssr"))]
+        if result.is_ok() {
+            // Reload to discard account resources and cached private data.
+            let _ = window().location().replace("/");
+        }
+        result
+    });
+    let pending = delete.pending();
     let i18n = use_i18n();
 
     view! {
-        <div class="p-6 rounded-xl bg-red-900/20 border border-red-800/30 ">
+        <div class="p-6 rounded-xl bg-red-900/20 border border-red-800/30 " data-testid="delete-account">
             <h3 class="text-2xl font-bold text-negative mb-4">{t!(i18n, delete_account)}</h3>
             <p class="text-gray-300 mb-4">
                 {t!(i18n, delete_account_desc)}
@@ -296,21 +305,31 @@ fn DeleteUser() -> impl IntoView {
 
                 <button
                     class=move || {
-                        if confirmed() {
+                        if confirmed() && !pending.get() {
                             "px-4 py-2 rounded-lg bg-red-800 hover:bg-red-700
                              text-white transition-colors duration-200"
                         } else {
                             "px-4 py-2 rounded-lg bg-gray-700 text-gray-400 cursor-not-allowed"
                         }
                     }
+                    type="button"
+                    disabled=move || !confirmed() || pending.get()
+                    aria-busy=move || pending.get().to_string()
                     on:click=move |_| {
-                        if confirmed.get_untracked() {
-                            spawn_local(async move { if let Ok(()) = delete_user().await {} });
+                        if confirmed.get_untracked() && !pending.get_untracked() {
+                            delete.dispatch(());
                         }
                     }
                 >
                     {t!(i18n, delete_my_account)}
                 </button>
+                {move || {
+                    delete.value().get().and_then(Result::err).map(|_| view! {
+                        <p role="alert" class="text-negative">
+                            {t!(i18n, delete_account_error)}
+                        </p>
+                    })
+                }}
             </div>
         </div>
     }

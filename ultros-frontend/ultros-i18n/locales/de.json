@@ -862,6 +862,7 @@
     "analyzer_cost_unpriced": "{{n}} ohne Preis",
     "analyzer_cost_unpriced_title": "Zutaten ohne Preis: {{n}} — weder Angebot im Kaufbereich noch Händler; sie zählen hier mit 0",
     "recipe_analyzer_calc_signal_semantics": "Alternative Spalten folgen derselben Regel je Signal: Zutaten nehmen das günstigste passende Angebot (HQ bevorzugt bei „HQ erforderlich“) oder die gewählte Verkaufsstatistik, der Erlös das günstigere von NQ und HQ auf der Verkaufswelt. Eine fehlende oder leere Statistik fällt je Zutat auf das Angebot zurück, nie auf 0; ein alternativer Erlös zeigt —, wenn die Verkaufswelt keine Verkaufshistorie hat.",
+    "delete_account_error": "Dein Konto konnte nicht gelöscht werden. Bitte versuche es erneut.",
     "delete_account": "Konto löschen",
     "delete_account_desc": "GEFAHR: Wenn du dein Konto und alle zugehörigen Daten löschen möchtest, bestätige es mit dem Schalter und klicke dann auf Löschen.",
     "delete_account_confirm": "Ja, mein Konto löschen",
