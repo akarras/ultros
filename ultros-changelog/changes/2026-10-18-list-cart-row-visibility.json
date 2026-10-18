@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "List rows keep their item names and controls visible",
+  "blurb": "Item names and row actions now fit the space available, including Build layouts with the item search beside the list and small screens.",
+  "link": "/list"
+}

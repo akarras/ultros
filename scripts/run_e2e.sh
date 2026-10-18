@@ -258,6 +258,13 @@ if [ "${RUN_RECIPE_PLANNER:-1}" != "0" ]; then
 fi
 
 if [ "${RUN_LISTS_V2:-1}" != "0" ]; then
+    log "running default device-list navigation and help E2E"
+    lists_help_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:lists-help ) || lists_help_exit=$?
+    if [ "$lists_help_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$lists_help_exit"
+    fi
+
     log "running account storage locking and recovery module E2E"
     account_storage_exit=0
     ( cd integration && npm run test:account-list-storage ) || account_storage_exit=$?
@@ -378,10 +385,10 @@ case " ${LEPTOS_FEATURES:-} " in
             test_exit="$group_detail_exit"
         fi
         log "running list-flow E2E (test-auth feature detected)"
-        labs_exit=0
-        ( cd integration && BASE_URL="$BASE_URL" npm run test:labs ) || labs_exit=$?
-        if [ "$labs_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
-            test_exit="$labs_exit"
+        lists_default_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:lists-default ) || lists_default_exit=$?
+        if [ "$lists_default_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$lists_default_exit"
         fi
         list_flow_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:list-flow ) || list_flow_exit=$?
@@ -435,12 +442,6 @@ case " ${LEPTOS_FEATURES:-} " in
         ( cd integration && BASE_URL="$BASE_URL" npm run test:account-list-ui ) || account_ui_exit=$?
         if [ "$account_ui_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$account_ui_exit"
-        fi
-        log "running list-flow E2E under Labs lists-sync"
-        list_flow_labs_exit=0
-        ( cd integration && BASE_URL="$BASE_URL" LABS_COOKIE=lists-sync npm run test:list-flow ) || list_flow_labs_exit=$?
-        if [ "$list_flow_labs_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
-            test_exit="$list_flow_labs_exit"
         fi
         log "running browser-push smoke (test-auth feature detected)"
         push_exit=0

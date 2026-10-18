@@ -13,6 +13,22 @@ This folder contains a lightweight Puppeteer harness for screenshot-driven E2E c
 
 ## Prerequisites
 
+Lists 2.0 runs by default. `npm run test:lists-default` checks account SSR,
+hydration, client navigation and compatibility with old Labs bookmarks (requires
+`test-auth`). `npm run test:lists-help` and `npm run test:lists-v2` exercise device
+lists without signing in or setting a Labs cookie. `npm run test:list-flow`
+covers inline editing, recipes, sharing and deletion on the account editor.
+
+To verify the incident switch, start an isolated `test-auth` server with
+`ULTROS_LISTS_READONLY=true`, then run
+`BASE_URL=http://127.0.0.1:8080 npm --prefix integration run test:lists-readonly`.
+This separate probe checks the paused directory/account/device routes in SSR
+and hydration at desktop/mobile widths, retained purchase progress, refusal of
+stale-client document handshakes/updates, and unchanged projected rows. It creates
+and removes only its own account-list fixture; screenshots go under
+`integration/artifacts/lists-readonly/`. The normal E2E suite expects editing to
+be enabled, so run it against an unpaused server.
+
 - Rust toolchain and cargo-leptos installed
 - Node.js 22.12+ and npm installed (Puppeteer 25 requires it)
 - Internet access (Puppeteer will download a compatible Chromium on first install)

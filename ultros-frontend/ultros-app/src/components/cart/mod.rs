@@ -1,13 +1,11 @@
-//! The redesigned Build cart (Track B of #1427), mounted behind the
-//! `lists-sync` Labs experiment for account and device lists alike.
+//! The Build cart shared by account and device lists.
 //!
 //! Presentation only: the [`ListWorkspaceSource`] it consumes carries the
 //! rows, capabilities and edit callbacks, and the route that built the
 //! source keeps the document, sync, authorization and guest storage
 //! lifecycles. Each part of the cart lives in its own file so the follow-on
 //! tickets can change rows, summary, details, selection and feedback
-//! independently. The legacy Labs grid, `ListBuildWorkspace`, stays in
-//! `routes::list_view_sync` untouched.
+//! independently.
 
 pub mod details;
 pub mod estimate;
@@ -22,10 +20,10 @@ use leptos_i18n::I18nContext;
 use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
 
-use crate::components::list::filter_row::{SortKey, SortSpec};
+use crate::components::list::sort::{SortKey, SortSpec};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
-use crate::routes::list_view::remaining_quantity;
+use crate::routes::list_common::remaining_quantity;
 use crate::routes::list_view_sync::{InlineListAdd, ListWorkspaceSource};
 
 use feedback::{CartFeedback, Removal, focus_after_removal};
@@ -125,15 +123,6 @@ fn editor_drafting(target: Option<web_sys::EventTarget>) -> bool {
                 .get_attribute("data-committed")
                 .is_some_and(|committed| input.value().trim() != committed.trim())
         })
-}
-
-/// `?cart=legacy` mounts the previous Labs grid (`ListBuildWorkspace`) so a
-/// tester can compare the two presentations on the same list. The
-/// redesigned cart is the default under the experiment; no cookie or Labs
-/// token changes here.
-pub fn use_legacy_cart() -> Signal<bool> {
-    let query = ultros_ui::components::app_link::use_query_map_or_default();
-    Memo::new(move |_| query.with(|q| q.get("cart").is_some_and(|v| v == "legacy"))).into()
 }
 
 /// Deterministic, total ordering for the cart. `Price` sorts by the line
@@ -603,16 +592,16 @@ pub fn ListCart(
             </Show>
             </div>
             </div>
-            <div class="space-y-3 min-w-0" class=("xl:col-span-2", move || !source.can_write.get()) data-testid="list-cart-rows-column">
+            <div class="@container/cart space-y-3 min-w-0" class=("xl:col-span-2", move || !source.can_write.get()) data-testid="list-cart-rows-column">
             <Show when=move || source.estimate_available.get() && !is_empty.get()>
                 <crate::components::list_estimate_summary::ListEstimateSummary estimate feed=source.market scope=source.scope_name progress=Signal::from(progress) />
             </Show>
             <CartFeedback toast action_seq=action_seq.into() can_undo=source.can_undo can_write=source.can_write on_undo=undo_removal />
             <Show when=move || !is_empty.get()>
             <div class="flex flex-wrap items-center gap-2">
-                <input class="input min-w-0 basis-full sm:basis-0 flex-1" type="search" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev)) />
+                <input class="input min-w-0 basis-full @min-[48rem]/cart:basis-0 flex-1" type="search" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev)) />
                 <button type="button" class="btn-secondary px-3 py-1 text-xs" class:bg-brand-950=move || source.hide_acquired.get() data-testid="cart-hide-acquired" aria-pressed=move || source.hide_acquired.get().to_string() on:click=move |_| source.set_hide_acquired.run(!source.hide_acquired.get_untracked())>{t!(i18n, list_view_hide_acquired)}</button>
-                <label class="flex items-center gap-2 text-sm sm:hidden">
+                <label class="flex items-center gap-2 text-sm @min-[48rem]/cart:hidden">
                     <span class="text-[color:var(--color-text-muted)]">{t!(i18n, cart_sort_by)}</span>
                     <select class="input" aria-label=t_string!(i18n, cart_sort_by) prop:value=move || sort_option(source.sort.get()) on:change=move |ev| source.set_sort.run(parse_sort_option(&event_target_value(&ev)))>
                         <option value="">{t!(i18n, cart_sort_default)}</option>
@@ -660,7 +649,7 @@ pub fn ListCart(
                 #[cfg(not(feature = "hydrate"))]
                 { let _ = ev; }
             }>
-                <Show when=move || !is_empty.get()><div role="group" aria-label=t_string!(i18n, cart_sort_by) class=format!("{ROW_GRID} hidden sm:grid border-b border-[color:var(--color-outline)] text-xs text-[color:var(--color-text-muted)]")>
+                <Show when=move || !is_empty.get()><div role="group" aria-label=t_string!(i18n, cart_sort_by) class=format!("{ROW_GRID} hidden @min-[48rem]/cart:grid border-b border-[color:var(--color-outline)] text-xs text-[color:var(--color-text-muted)]")>
                     <div class="justify-self-center">
                         <Show when=move || source.can_write.get()>
                             <input type="checkbox" class="h-5 w-5" aria-label=t_string!(i18n, cart_select_all_visible) prop:checked=move || all_visible_selected.get() disabled=move || visible_ids.with(|ids| ids.is_empty()) on:change=move |_| {
@@ -677,6 +666,8 @@ pub fn ListCart(
                     {sort_header(SortKey::Acquired, qty_label, true)}
                     <div class="uppercase tracking-wide">{t!(i18n, lists_workspace_quality)}</div>
                     {sort_header(SortKey::Price, cost_label, true)}
+                    <div></div>
+                    <div></div>
                     <div></div>
                     <div></div>
                 </div>

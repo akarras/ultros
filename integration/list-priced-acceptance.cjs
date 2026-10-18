@@ -139,7 +139,7 @@ async function main() {
     page.on("dialog", dialog => dialog.type() === "beforeunload" ? dialog.accept() : dialog.dismiss());
     fs.mkdirSync(artifacts, { recursive: true });
     artifactsReady = true;
-    await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"]]
+    await page.setCookie(...[["HIDE_ADS", "true"], ["i18n_pref_locale", "en"]]
       .map(([name, value]) => ({ name, value, url: base, path: "/" })));
     await page.setViewport({ width: 1280, height: 900 });
     await login(READER); await login(OWNER);
@@ -278,7 +278,7 @@ async function main() {
       await remote.waitForFunction(() => window.__pricedHydrated);
       await load(`/list/${focusList}`);
       await click(tid("guest-shop-mode")); if (await page.$('[data-testid="shop-change-route"][aria-expanded="false"]')) await page.click('[data-testid="shop-change-route"]'); await click((tid("shop-route-option") + '[data-route-cheapest="true"]'));
-      if (await page.$('[data-testid="shop-confirm-route"]')) await page.click('[data-testid="shop-confirm-route"]');
+      await require("./list-shop-focus.cjs").confirmRoutePreservingEditor(page);
       await page.waitForSelector('[data-shop-key]');
       await require("./list-shop-focus.cjs").runShopFocus(page, { label: "real-market-account", remotePurchase: async (key, delta) => {
         await remote.bringToFront();
@@ -346,17 +346,20 @@ async function main() {
       await record("device-cached-prices-failed-refresh-reference");
       lookupMode = "pass"; await click(tid("device-prices-refresh")); await summary("56 gil", false);
       await page.waitForFunction(() => !/refresh failed/i.test(document.querySelector('[data-testid="list-estimate-freshness"]')?.textContent));
-      // A new row is looked up on its own; fault that lookup so the row
-      // stays unpriced beside the known subtotal.
+      // The reference checks started a trip, which intentionally pauses eager
+      // pricing even after returning to Build. A new row stays unpriced beside
+      // the known subtotal; fault an explicit refresh to exercise that failure.
       lookupMode = "abort";
       const newItemName = market.manifest.item_names[1];
       await replace('input[aria-label="Quantity to add"]', 1);
       await replace('input[aria-label="Add an item"]', newItemName);
       await page.waitForSelector(`button[aria-label="Add ${newItemName}"]`);
       await page.keyboard.press("Enter"); await page.keyboard.press("Escape");
-      await page.waitForFunction(() => /refresh failed/i.test(document.querySelector('[data-testid="list-estimate-freshness"]')?.textContent));
       await page.waitForFunction(name => document.querySelector(`input[aria-label="Needed for ${name}"]`)
         ?.closest("li")?.querySelector('[data-testid="cart-line-estimate"]')?.dataset.priceState === "not-requested", {}, newItemName);
+      await summary("56 gil", true);
+      await click(tid("device-prices-refresh"));
+      await page.waitForFunction(() => /refresh failed/i.test(document.querySelector('[data-testid="list-estimate-freshness"]')?.textContent));
       await summary("56 gil", true); await checkBuildReference();
       await record("device-new-item-not-requested-with-existing-prices");
       lookupMode = "pass";
@@ -404,7 +407,7 @@ async function main() {
     await refreshOwner(); await market.set("partial"); await stock(single);
     await load(`/list/${single}`); await summary("20 gil", true);
     await checkBuildReference();
-    assert.match(await page.$eval(tid("list-estimate-status"), node => node.textContent), /3 units still unpriced/);
+    assert.match(await page.$eval(tid("list-estimate-status"), node => node.textContent), /Unpriced units: 3/);
     await record("partial-supply-known-subtotal");
     await refreshOwner(); await market.set("empty"); await stock(single);
     await load(`/list/${single}`); await summary("—", true);

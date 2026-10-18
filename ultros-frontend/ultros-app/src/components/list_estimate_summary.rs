@@ -3,11 +3,15 @@
 //! it came from. The arithmetic, coverage rules and feed states live in
 //! `ultros_calc::list_estimate`; this only turns them into text.
 
+use crate::components::icon::Icon;
 use crate::components::relative_time::RelativeToNow;
+use crate::global_state::LocalWorldData;
 use crate::i18n::*;
+use icondata as i;
 use leptos::prelude::*;
 use thousands::Separable;
-use ultros_calc::list_estimate::{CartEstimate, Coverage, MissingReason, PriceFeed};
+use ultros_api_types::world_helper::{AnyResult, AnySelector};
+use ultros_calc::list_estimate::{CartEstimate, Coverage, MissingReason, PriceFeed, WorldTotal};
 
 type I18n = leptos_i18n::I18nContext<Locale, I18nKeys>;
 
@@ -82,6 +86,56 @@ pub(crate) fn displayed_total(feed: PriceFeed, estimate: &CartEstimate) -> Optio
     }
 }
 
+/// One datacenter's slice of the estimate: its total and the worlds the
+/// priced units would come from, dearest world first.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DatacenterTotal {
+    pub name: String,
+    pub total: i64,
+    pub worlds: Vec<(String, WorldTotal)>,
+}
+
+/// Group per-world totals under their datacenters. `lookup` resolves a
+/// world id to `(datacenter id, datacenter name, world name)`; an
+/// unresolved world groups under the unknown label with its id as its
+/// name, so a missing world table degrades the labels, never the sums.
+pub(crate) fn group_by_datacenter(
+    worlds: Vec<WorldTotal>,
+    unknown: &str,
+    lookup: impl Fn(i32) -> Option<(i32, String, String)>,
+) -> Vec<DatacenterTotal> {
+    let mut groups: Vec<(i32, DatacenterTotal)> = Vec::new();
+    for world in worlds {
+        let (datacenter_id, datacenter_name, world_name) = lookup(world.world_id)
+            .unwrap_or_else(|| (0, unknown.to_string(), world.world_id.to_string()));
+        let group = match groups
+            .iter_mut()
+            .find(|(id, _)| *id == datacenter_id)
+            .map(|(_, group)| group)
+        {
+            Some(group) => group,
+            None => {
+                groups.push((
+                    datacenter_id,
+                    DatacenterTotal {
+                        name: datacenter_name,
+                        total: 0,
+                        worlds: Vec::new(),
+                    },
+                ));
+                &mut groups.last_mut().expect("just pushed").1
+            }
+        };
+        group.total = group.total.saturating_add(world.total);
+        group.worlds.push((world_name, world));
+    }
+    let mut groups: Vec<_> = groups.into_iter().map(|(_, group)| group).collect();
+    // Worlds arrive dearest-first and keep that order inside a group;
+    // groups themselves sort the same way, name breaking ties.
+    groups.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.name.cmp(&b.name)));
+    groups
+}
+
 #[component]
 pub fn ListEstimateSummary(
     estimate: Signal<CartEstimate>,
@@ -123,6 +177,27 @@ pub fn ListEstimateSummary(
             }
         )
     };
+    let (breakdown_open, set_breakdown_open) = signal(false);
+    let worlds = StoredValue::new(use_context::<LocalWorldData>().and_then(|data| data.0.ok()));
+    let unknown = t_string!(i18n, list_summary_unknown).to_string();
+    let breakdown = Memo::new(move |_| {
+        estimate.with(|estimate| {
+            group_by_datacenter(estimate.world_totals(), &unknown, |world_id| {
+                worlds.with_value(|worlds| {
+                    let helper = worlds.as_ref()?;
+                    let world = helper.lookup_selector(AnySelector::World(world_id))?;
+                    let AnyResult::World(world) = world else {
+                        return None;
+                    };
+                    let datacenter_name = helper
+                        .lookup_selector(AnySelector::Datacenter(world.datacenter_id))
+                        .map(|datacenter| datacenter.get_name().to_string())
+                        .unwrap_or_else(|| unknown.clone());
+                    Some((world.datacenter_id, datacenter_name, world.name.clone()))
+                })
+            })
+        })
+    });
     view! {
         <section
             class="panel rounded-xl px-4 py-3 flex flex-col gap-1"
@@ -167,6 +242,36 @@ pub fn ListEstimateSummary(
                         <span>" · "{t_string!(i18n, lists_estimate_scope, scope = scope).to_string()}</span>
                     })}
                 </p>
+            </Show>
+            <Show when=move || feed.get().has_prices() && !breakdown.with(|groups| groups.is_empty())>
+                <button type="button" class="inline-flex items-center gap-1 self-start text-xs font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" data-testid="list-estimate-breakdown-toggle" aria-expanded=move || breakdown_open.get().to_string() aria-controls="list-estimate-breakdown" on:click=move |_| set_breakdown_open.set(!breakdown_open.get_untracked())>
+                    <span>{t!(i18n, lists_estimate_breakdown)}</span>
+                    <span class="inline-flex transition-transform" class:rotate-180=move || breakdown_open.get()><Icon icon=i::BiChevronDownRegular /></span>
+                </button>
+                <Show when=move || breakdown_open.get()>
+                    <div id="list-estimate-breakdown" class="space-y-2" data-testid="list-estimate-breakdown">
+                        <For each=move || breakdown.get() key=|group| group.name.clone() children=move |group| {
+                            view! {
+                                <div>
+                                    <p class="flex flex-wrap items-baseline justify-between gap-x-4 text-sm">
+                                        <span class="font-semibold">{group.name.clone()}</span>
+                                        <span class="tabular-nums">{t_string!(i18n, lists_workspace_gil, price = group.total.separate_with_commas()).to_string()}</span>
+                                    </p>
+                                    <ul class="mt-0.5 space-y-0.5">
+                                        <For each=move || group.worlds.clone() key=|(name, world)| (world.world_id, name.clone()) children=move |(name, world)| {
+                                            view! {
+                                                <li class="flex flex-wrap items-baseline justify-between gap-x-4 pl-4 text-xs text-[color:var(--color-text-muted)]">
+                                                    <span>{name}" · "{t_string!(i18n, lists_estimate_breakdown_units, units = world.units).to_string()}</span>
+                                                    <span class="tabular-nums">{t_string!(i18n, lists_workspace_gil, price = world.total.separate_with_commas()).to_string()}</span>
+                                                </li>
+                                            }
+                                        } />
+                                    </ul>
+                                </div>
+                            }
+                        } />
+                    </div>
+                </Show>
             </Show>
         </section>
     }
@@ -320,6 +425,70 @@ mod tests {
                 }
             });
         }
+    }
+
+    #[test]
+    fn breakdown_groups_worlds_under_datacenters_and_keeps_the_sums() {
+        let lookup = |world_id: i32| match world_id {
+            1 => Some((10, "Aether".to_string(), "Gilgamesh".to_string())),
+            2 => Some((10, "Aether".to_string(), "Midgardsormr".to_string())),
+            3 => Some((20, "Crystal".to_string(), "Balmung".to_string())),
+            _ => None,
+        };
+        let total = |world_id, total| WorldTotal {
+            world_id,
+            total,
+            units: 1,
+            listings: 1,
+        };
+        let groups = group_by_datacenter(
+            vec![total(2, 50), total(3, 40), total(1, 30), total(99, 5)],
+            "Unknown",
+            lookup,
+        );
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].name, "Aether");
+        assert_eq!(groups[0].total, 80);
+        assert_eq!(
+            groups[0]
+                .worlds
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            ["Midgardsormr", "Gilgamesh"],
+            "worlds stay dearest-first inside a datacenter"
+        );
+        assert_eq!(groups[1].name, "Crystal");
+        assert_eq!(groups[1].total, 40);
+        assert_eq!(groups[2].name, "Unknown");
+        assert_eq!(groups[2].worlds[0].0, "99");
+        assert_eq!(groups.iter().map(|g| g.total).sum::<i64>(), 125);
+    }
+
+    #[test]
+    fn breakdown_toggle_renders_only_when_units_are_priced() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let i18n = leptos_i18n::context::init_i18n_context::<Locale>();
+            provide_context(i18n);
+            let feed = PriceFeed::observed(chrono::Utc::now());
+            let priced = render(cart(&[(2, 0, 2)]), feed);
+            assert!(
+                priced.contains("list-estimate-breakdown-toggle"),
+                "{priced}"
+            );
+            assert!(priced.contains("Cost by datacenter and world"), "{priced}");
+            assert!(
+                !priced.contains("data-testid=\"list-estimate-breakdown\""),
+                "the breakdown starts collapsed: {priced}"
+            );
+            let unpriced = render(cart(&[(2, 0, 0)]), feed);
+            assert!(
+                !unpriced.contains("list-estimate-breakdown-toggle"),
+                "{unpriced}"
+            );
+        });
     }
 
     #[test]

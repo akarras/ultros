@@ -1157,11 +1157,22 @@ pub fn ListShop(
                         route_confirmed.set(true);
                         routes_open.set(false);
                         #[cfg(feature = "hydrate")]
-                        leptos::leptos_dom::helpers::request_animation_frame(move || {
-                            if let Some(button) = change_route.get_untracked() {
-                                let _ = button.focus();
-                            }
-                        });
+                        {
+                            let document = web_sys::window().and_then(|window| window.document());
+                            let before = document.as_ref().and_then(|document| document.active_element());
+                            leptos::leptos_dom::helpers::request_animation_frame(move || {
+                                // Confirmation hides this button, but a player can
+                                // enter a stack quantity before the next frame.
+                                let restore = document.as_ref().is_some_and(|document| {
+                                    document.active_element().is_none_or(|current| {
+                                        current.tag_name() == "BODY" || before.as_ref() == Some(&current)
+                                    })
+                                });
+                                if restore && let Some(button) = change_route.get_untracked() {
+                                    let _ = button.focus();
+                                }
+                            });
+                        }
                     }>{t_string!(i18n, lists_shop_confirm_route)}</button>
                 </Show>
                 <p class="text-xs text-[color:var(--color-text-muted)]">{move || t_string!(i18n, list_travel_comparison_note)}</p>

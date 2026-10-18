@@ -680,24 +680,6 @@ pub async fn edit_list_item(list_item: ListItem) -> AppResult<()> {
     post_api("/api/v1/list/item/edit", list_item).await
 }
 
-pub async fn delete_list_item(list_id: i32) -> AppResult<()> {
-    delete_api(&format!("/api/v1/list/item/{list_id}/delete")).await
-}
-
-pub async fn delete_list_items(list_items: Vec<i32>) -> AppResult<()> {
-    post_api("/api/v1/list/item/delete", list_items).await
-}
-
-#[derive(Serialize)]
-pub struct BulkHqUpdate {
-    pub ids: Vec<i32>,
-    pub hq: Option<bool>,
-}
-
-pub async fn edit_list_items_hq(ids: Vec<i32>, hq: Option<bool>) -> AppResult<()> {
-    post_api("/api/v1/list/item/hq", BulkHqUpdate { ids, hq }).await
-}
-
 /// Every group the user belongs to, each with the member and role counts its
 /// card needs — one request for the whole grid.
 pub async fn get_groups() -> AppResult<Vec<UserGroupSummary>> {

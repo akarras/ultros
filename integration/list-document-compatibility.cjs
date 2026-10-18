@@ -40,7 +40,7 @@ async function prepare(page, errors) {
   page.setDefaultNavigationTimeout(60000);
   page.on("pageerror", error => { if (!String(error.stack).includes("googlesyndication")) errors.push(String(error.stack || error)); });
   page.on("console", message => { if (["warn", "error"].includes(message.type()) && /list snapshot|list schema|invalid list document/.test(message.text())) console.log(`Browser ${message.type()}: ${message.text()}`); });
-  await page.setCookie({ name: "LABS", value: "lists-sync", url: base }, { name: "HIDE_ADS", value: "true", url: base });
+  await page.setCookie({ name: "HIDE_ADS", value: "true", url: base });
   await page.setRequestInterception(true);
   page.on("request", request => /(^|\.)(googlesyndication\.com|doubleclick\.net|googleadservices\.com)$/.test(new URL(request.url()).hostname) ? request.abort() : request.continue());
   await page.evaluateOnNewDocument(() => {

@@ -1,8 +1,9 @@
 //! One compact cart row: identity, quantity, quality, estimated line cost,
-//! a details toggle and an icon-only delete button. Commit-on-change:
-//! typing never writes or reorders the document; Enter blurs to commit,
-//! Escape restores the committed value. Owned quantity, target price and
-//! listing detail live in the row's details panel (`details.rs`).
+//! a one-click acquired toggle, a price-alert button, a details toggle and
+//! an icon-only delete button. Commit-on-change: typing never writes or
+//! reorders the document; Enter blurs to commit, Escape restores the
+//! committed value. Owned quantity, target price and listing detail also
+//! live in the row's details panel (`details.rs`).
 
 use std::collections::HashSet;
 
@@ -20,7 +21,7 @@ use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 
 /// Shared by the header row and every item row so the columns line up.
-pub const ROW_GRID: &str = "grid items-center gap-x-2 gap-y-1 px-2 py-1.5 grid-cols-[auto_minmax(0,1fr)_auto] sm:grid-cols-[2rem_minmax(0,1fr)_5.5rem_6.5rem_8rem_2.5rem_2.5rem]";
+pub const ROW_GRID: &str = "grid items-center gap-x-2 gap-y-1 px-2 py-1.5 grid-cols-[auto_minmax(0,1fr)_auto] @min-[48rem]/cart:grid-cols-[2rem_minmax(0,1fr)_5.5rem_6.5rem_8rem_2.5rem_2.5rem_2.5rem_2.5rem]";
 
 /// Which numeric field an editor commits to, and how it is rendered.
 pub struct NumericField {
@@ -199,6 +200,31 @@ pub fn quantity_input_id(row_id: i32) -> String {
     format!("cart-qty-{row_id}")
 }
 
+/// Whether game data says this item can be sold on the market board. The
+/// legacy row used the same cutoff: search categories 0 and 1 never appear
+/// on the board, so their rows must not read as merely out of stock.
+pub fn is_marketable_category(item_search_category: i32) -> bool {
+    item_search_category > 1
+}
+
+/// Whether a row already owns everything it asks for.
+pub fn row_is_acquired(item: &ListItem) -> bool {
+    item.acquired.unwrap_or(0) >= item.quantity.unwrap_or(1).max(1)
+}
+
+/// The row after the one-click acquired toggle: a complete row goes back to
+/// owning nothing, any other row is marked as owning its full quantity.
+/// Partial amounts are still set exactly in the details panel.
+pub fn toggled_acquired(item: &ListItem) -> ListItem {
+    let mut updated = item.clone();
+    updated.acquired = if row_is_acquired(item) {
+        Some(0)
+    } else {
+        Some(item.quantity.unwrap_or(1).max(1))
+    };
+    updated
+}
+
 #[component]
 pub fn CartRow(
     item: Signal<ListItem>,
@@ -228,6 +254,13 @@ pub fn CartRow(
         .items
         .get(&ItemId(initial.item_id))
         .is_some_and(|i| i.can_be_hq);
+    // Unknown game data is not evidence either way; only a known
+    // non-board category earns the badge (the legacy row's rule).
+    let not_marketable = tracked_data()
+        .items
+        .get(&ItemId(initial.item_id))
+        .is_some_and(|i| !is_marketable_category(i.item_search_category));
+    let (alert_open, set_alert_open) = signal(false);
     let row = item;
     let id = initial.id;
     let is_open = Memo::new(move |_| expanded.with(|open| open.contains(&id)));
@@ -252,6 +285,12 @@ pub fn CartRow(
         on_edit,
     );
     let estimate_text = move || {
+        if not_marketable {
+            return view! {
+                <span class="text-xs text-red-200">{t!(i18n, list_item_row_unavailable_on_market)}</span>
+            }
+            .into_any();
+        }
         let Some(line) = line.get() else {
             return view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }
                 .into_any();
@@ -285,43 +324,164 @@ pub fn CartRow(
     let remove_name = name.clone();
     let panel_name = name.clone();
     let copy_name = name.clone();
+    let acquired_name = name.clone();
+    let alert_name = name.clone();
+    let preset_name = name.clone();
     let panel_controls = details_id.clone();
     view! {
         <li class=format!("{ROW_GRID} border-b border-[color:var(--color-outline)] last:border-b-0 hover:bg-[color:var(--color-background-panel)] transition-colors") class:ring-2=highlighted class:ring-brand-400=highlighted data-item-id=initial.item_id data-row-id=id>
-            <input class="order-1 h-5 w-5 sm:justify-self-center" type="checkbox" aria-label=t_string!(i18n, lists_workspace_select_named, name = select_name) disabled=move || !can_write.get() prop:checked=move || selected_items.with(|s| s.contains(&id)) on:change=move |_| selected_items.update(|s| { if !s.remove(&id) {s.insert(id);} }) />
+            <input class="order-1 h-5 w-5 @min-[48rem]/cart:justify-self-center" type="checkbox" aria-label=t_string!(i18n, lists_workspace_select_named, name = select_name) disabled=move || !can_write.get() prop:checked=move || selected_items.with(|s| s.contains(&id)) on:change=move |_| selected_items.update(|s| { if !s.remove(&id) {s.insert(id);} }) />
             <div class="order-2 flex min-w-0 items-center gap-2">
                 <ItemIcon item_id=initial.item_id icon_size=IconSize::Small />
-                <span class="truncate font-semibold" title=name.clone()>{name.clone()}</span>
-                // Copy the name for the in-game market board search.
-                <span class="shrink-0 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] [&_button]:flex [&_button]:h-7 [&_button]:w-7 [&_button]:items-center [&_button]:justify-center" data-testid="cart-copy-name"><crate::components::clipboard::Clipboard clipboard_text=Signal::derive(move || copy_name.clone()) /></span>
+                <div class="min-w-0">
+                    <div class="flex min-w-0 items-center gap-2">
+                        <span class="truncate font-semibold" data-testid="cart-item-name" title=name.clone()>{name.clone()}</span>
+                        // Copy the name for the in-game market board search.
+                        <span class="shrink-0 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] [&_button]:flex [&_button]:h-7 [&_button]:w-7 [&_button]:items-center [&_button]:justify-center" data-testid="cart-copy-name"><crate::components::clipboard::Clipboard clipboard_text=Signal::derive(move || copy_name.clone()) /></span>
+                    </div>
+                    {not_marketable.then(|| view! {
+                        <span class="mt-0.5 inline-flex items-center gap-1 rounded-md border border-red-400/40 px-1.5 py-0.5 text-xs text-red-200" data-testid="cart-not-marketable" title=t_string!(i18n, list_item_row_not_marketable_tooltip).to_string()>
+                            <Icon icon=i::AiExclamationOutlined />
+                            <span>{t!(i18n, list_item_row_unavailable_on_market)}</span>
+                        </span>
+                    })}
+                </div>
             </div>
-            <div class="order-3 text-right tabular-nums text-sm sm:order-5" data-testid="cart-line-estimate" data-price-state=move || line.with(|line| match line.as_ref().map(|line|line.status) {
+            <div class="order-3 text-right tabular-nums text-sm @min-[48rem]/cart:order-5" data-testid="cart-line-estimate" data-price-state=move || if not_marketable { "not-marketable" } else { line.with(|line| match line.as_ref().map(|line|line.status) {
                 Some(LineStatus::NotRequested) | None => "not-requested",
                 Some(LineStatus::NoSupply) => "no-supply",
                 Some(LineStatus::PartialSupply) => "partial",
                 Some(LineStatus::Acquired) => "acquired",
                 Some(LineStatus::Priced) => "priced",
-            })>
+            }) }>
                 <span class="sr-only">{t!(i18n, cart_est_cost)}</span>
                 {estimate_text}
             </div>
-            <div class="order-4 col-span-2 col-start-2 flex items-center gap-2 sm:contents">
-                <div class="w-20 shrink-0 sm:order-3 sm:w-auto">{quantity}</div>
-                <select class="input w-auto min-w-0 flex-1 sm:order-4" aria-label=t_string!(i18n, lists_workspace_field_named, label = t_string!(i18n, lists_workspace_quality).to_string(), name = quality_name) disabled=move || !can_write.get() prop:value=move || match row.get().hq {Some(true) => "hq", Some(false) => "nq", None => "any"} on:change=move |ev| {let mut updated = row.get_untracked(); updated.hq = match event_target_value(&ev).as_str() {"hq" if can_hq => Some(true), "nq" => Some(false), _ => None}; on_edit.run(updated);}>
+            <div class="order-4 col-span-2 col-start-2 flex flex-wrap items-center gap-1 @min-[48rem]/cart:contents">
+                <div class="w-20 shrink-0 @min-[48rem]/cart:order-3 @min-[48rem]/cart:w-auto">{quantity}</div>
+                <select class="input w-auto min-w-20 flex-1 @min-[48rem]/cart:min-w-0 @min-[48rem]/cart:order-4" aria-label=t_string!(i18n, lists_workspace_field_named, label = t_string!(i18n, lists_workspace_quality).to_string(), name = quality_name) disabled=move || !can_write.get() prop:value=move || match row.get().hq {Some(true) => "hq", Some(false) => "nq", None => "any"} on:change=move |ev| {let mut updated = row.get_untracked(); updated.hq = match event_target_value(&ev).as_str() {"hq" if can_hq => Some(true), "nq" => Some(false), _ => None}; on_edit.run(updated);}>
                     <option value="any">{t!(i18n, lists_workspace_any)}</option>
                     <option value="nq">{t!(i18n, lists_workspace_nq)}</option>
                     {can_hq.then(|| view! { <option value="hq">{t!(i18n, lists_workspace_hq)}</option> })}
                 </select>
-                <button type="button" id=toggle_id class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 sm:order-6" aria-label=t_string!(i18n, cart_details_for, name = details_name) aria-expanded=move || is_open.get().to_string() aria-controls=details_id.clone() on:click=move |_| expanded.update(|open| { if !open.remove(&id) { open.insert(id); } })>
+                <button type="button" class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-green-200 @min-[48rem]/cart:order-6" class:text-green-300=move || row_is_acquired(&row.get()) data-testid="cart-toggle-acquired" aria-pressed=move || row_is_acquired(&row.get()).to_string() aria-label=move || if row_is_acquired(&row.get()) { t_string!(i18n, cart_mark_unacquired_named, name = acquired_name.clone()).to_string() } else { t_string!(i18n, cart_mark_acquired_named, name = acquired_name.clone()).to_string() } title=move || if row_is_acquired(&row.get()) { t_string!(i18n, list_view_mark_unacquired).to_string() } else { t_string!(i18n, list_item_row_mark_acquired).to_string() } disabled=move || !can_write.get() on:click=move |_| on_edit.run(toggled_acquired(&row.get_untracked()))>
+                    <Icon icon=Signal::derive(move || if row_is_acquired(&row.get()) { i::BsCheckCircle } else { i::BiCheckRegular }) />
+                </button>
+                <button type="button" class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 @min-[48rem]/cart:order-7" data-testid="cart-price-alert" aria-label=t_string!(i18n, cart_price_alert_named, name = alert_name) title=t_string!(i18n, list_item_row_create_alert).to_string() on:click=move |_| set_alert_open.set(true)>
+                    <Icon icon=i::BsBell />
+                </button>
+                <button type="button" id=toggle_id class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 @min-[48rem]/cart:order-8" aria-label=t_string!(i18n, cart_details_for, name = details_name) aria-expanded=move || is_open.get().to_string() aria-controls=details_id.clone() on:click=move |_| expanded.update(|open| { if !open.remove(&id) { open.insert(id); } })>
                     <span class="inline-flex transition-transform" class:rotate-180=move || is_open.get()><Icon icon=i::BiChevronDownRegular /></span>
                 </button>
-                <button type="button" class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-negative sm:order-7" aria-label=t_string!(i18n, cart_remove_named, name = remove_name) data-testid="cart-remove" id=remove_button_id(id) disabled=move || !can_write.get() || removing.with(|set| set.contains(&id)) on:click=move |_| on_delete.run(id)>
+                <button type="button" class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-negative @min-[48rem]/cart:order-9" aria-label=t_string!(i18n, cart_remove_named, name = remove_name) data-testid="cart-remove" id=remove_button_id(id) disabled=move || !can_write.get() || removing.with(|set| set.contains(&id)) on:click=move |_| on_delete.run(id)>
                     <Icon icon=i::BiTrashRegular />
                 </button>
             </div>
             <Show when=move || is_open.get()>
                 <CartRowDetails id=panel_controls.clone() item=row line name=panel_name.clone() can_write on_edit on_close=close_details />
             </Show>
+            <Show when=move || alert_open.get()>
+                <crate::components::alert_drawer::AlertDrawer
+                    preset_item=(initial.item_id, preset_name.clone())
+                    default_world=Signal::derive(|| None)
+                    set_visible=set_alert_open.into()
+                />
+            </Show>
         </li>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(quantity: Option<i32>, acquired: Option<i32>) -> ListItem {
+        ListItem {
+            quantity,
+            acquired,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn toggle_acquired_marks_the_full_quantity_and_back() {
+        let partial = item(Some(5), Some(2));
+        assert!(!row_is_acquired(&partial));
+        let done = toggled_acquired(&partial);
+        assert_eq!(done.acquired, Some(5));
+        assert!(row_is_acquired(&done));
+        assert_eq!(toggled_acquired(&done).acquired, Some(0));
+    }
+
+    #[test]
+    fn toggle_acquired_defaults_quantity_to_one_and_clears_over_acquired() {
+        assert_eq!(toggled_acquired(&item(None, None)).acquired, Some(1));
+        assert_eq!(toggled_acquired(&item(Some(3), Some(9))).acquired, Some(0));
+    }
+
+    #[test]
+    fn non_board_search_categories_are_not_marketable() {
+        assert!(!is_marketable_category(0));
+        assert!(!is_marketable_category(1));
+        assert!(is_marketable_category(2));
+        assert!(is_marketable_category(42));
+    }
+}
+
+/// SSR render coverage: the badge and the two restored row buttons must be
+/// in the server HTML, not only appear after hydration.
+#[cfg(all(test, feature = "ssr"))]
+mod render_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn render_row(item_id: i32) -> String {
+        let item = ListItem {
+            id: 7,
+            item_id,
+            quantity: Some(2),
+            acquired: Some(0),
+            ..Default::default()
+        };
+        view! {
+            <CartRow item=Signal::stored(item) line=Signal::stored(None)
+                selected_items=RwSignal::new(HashSet::new()) expanded=RwSignal::new(HashSet::new())
+                on_edit=Callback::new(|_| {}) on_delete=Callback::new(|_| {})
+                can_write=Signal::stored(true) />
+        }
+        .to_html()
+    }
+
+    #[test]
+    fn row_restores_alert_acquired_toggle_and_not_marketable_badge() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let data = tracked_data();
+            let unmarketable = data
+                .items
+                .values()
+                .find(|item| !is_marketable_category(item.item_search_category))
+                .expect("game data has a non-marketable item");
+            let html = render_row(unmarketable.key_id.0);
+            assert!(html.contains("cart-not-marketable"), "{html}");
+            assert!(
+                html.contains("data-price-state=\"not-marketable\""),
+                "{html}"
+            );
+            assert!(html.contains("Unavailable on market board"), "{html}");
+            assert!(html.contains("cart-toggle-acquired"), "{html}");
+            assert!(html.contains("cart-price-alert"), "{html}");
+
+            let marketable = data
+                .items
+                .values()
+                .find(|item| is_marketable_category(item.item_search_category))
+                .expect("game data has a marketable item");
+            let html = render_row(marketable.key_id.0);
+            assert!(!html.contains("cart-not-marketable"), "{html}");
+            assert!(!html.contains("Unavailable on market board"), "{html}");
+        });
     }
 }

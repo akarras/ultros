@@ -1,6 +1,6 @@
 # Lists local-first sync
 
-`/list/:id` behind the `lists-sync` Labs toggle runs on a Loro CRDT document
+`/list/:id` runs on a Loro CRDT document by default
 stored in the browser and merged through the server. Spec:
 `docs/superpowers/specs/2026-09-07-lists-local-first-sync-design.md`.
 
@@ -210,8 +210,24 @@ the final integrated build or complete the production soak.
 
 ## Promotion
 
-Lists 2.0 adds guest Build/Shop and account adoption under the same Labs
-preference; its product contract is in
+> **Gate status (2026-10-13): BLOCKED.** The #1510 production-soak audit
+> in [`lists-promotion-decision.md`](lists-promotion-decision.md) found
+> the promotion **not promotion-ready**: most soak checkboxes are
+> missing or only locally evidenced, and the final integrated bundle
+> measurement does not exist. The branch state described below is
+> **not deployed** (production verified as `main` @ `d09d761` on
+> 2026-10-13, Lists still behind Labs). Do not merge the promotion
+> until that record’s blockers are evidenced or its waiver is signed.
+
+In the promotion branch, Lists 2.0 is the default for account and device
+lists. The Labs switch, original REST-driven list editor and directory, and
+`?cart=legacy` comparison grid have been removed. Old `LABS` cookies and
+`?labs=lists-sync` bookmarks no longer select a different implementation.
+Existing account lists use the same document bootstrap and REST projections;
+device lists keep their existing browser storage and IDs. REST endpoints
+remain available for the Discord bot, imports, sharing and other callers.
+
+The guest Build/Shop and account adoption product contract is in
 [`2026-09-10-lists-2-product-design.md`](superpowers/specs/2026-09-10-lists-2-product-design.md).
 The Shop and companion requirements from that contract are tracked item by
 item, with the checks that exercised each one, in
@@ -223,24 +239,128 @@ The Build side (compact cart, estimates, undo) is reconciled the same way in
 which also records the deployed build and the browser verification still owed.
 New UI strings, including companion labels and offline boot messages, must
 remain translated in all seven supported locales. Verify keyboard focus
-through a committed row edit on both device and account lists before promotion.
+through a committed row edit on both device and account lists when changing them.
 
 The existing root service worker also serves push notifications. Worker
 activation and control of open tabs are site-wide; only guest offline cache
-preparation is Labs opt-in. Its fetch handler can use an anonymous guest shell
+preparation starts on the Lists directory or a device-list route. Its fetch handler can use an anonymous guest shell
 and public assets only after a cache generation has been prepared. It never
 caches authenticated page HTML, account APIs, or market responses. The guest
 store, offline helper, and companion modules ship with the versioned WASM
 package so an older cached static helper cannot change a deployed module API.
 
-Promotion out of Labs deletes `LAB_LISTS_SYNC`, the `LabsSettings` section
-when the registry is empty, the legacy `ListView`, and the REST-driven
-actions it owns. It requires the soak below to pass. Promotion requires decoded
-projection-checker evidence, a controlled bundle comparison and the production
-soak. Phase 4 validation is recorded below. This document does not record a
-completed production soak.
+`integration/lists-default.cjs` verifies default SSR, hydration and client-side
+navigation, including stale Labs cookies and comparison bookmarks.
+`integration/lists-help.cjs` and `lists-v2.cjs` cover anonymous device lists
+without opting in. The list-flow suite now runs once against the default editor.
+The historical soak plan and Phase 4 evidence below are retained for context;
+this promotion does not claim new production-soak or bundle measurements.
 
-## Production soak
+## Rollback
+
+The promotion deleted the Labs toggle and the legacy editor, so rollback is
+deliberately two-tiered. Tier 1 needs no rebuild; tier 2 is a full revert.
+Neither tier touches list data.
+
+### Tier 1: read-only kill-switch (`ULTROS_LISTS_READONLY`)
+
+Set `ULTROS_LISTS_READONLY=true` in the server environment and restart the
+process (`ultros-server-core/src/lists_readonly.rs`; same boolean spellings
+as `ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET`). No image rebuild, no migration.
+While it is on:
+
+- The SSR bootstrap carries `lists_readonly` to the browser. `/list/:id`
+  renders the REST projection read-only (`routes/list_readonly.rs`),
+  `/list` renders a read-only account directory, and `/list/device/:id`
+  shows only the paused banner. No list document is opened on any route.
+- The realtime socket refuses `SubscribeListDoc` handshakes and rejects
+  `ListDocUpdate` merges with a scoped `lists are temporarily read-only`
+  error. The restart drops every live socket, so a tab loaded before the
+  flip cannot resubscribe or keep writing after it reconnects.
+- Guest offline-cache preparation is skipped, so no new service-worker
+  generation staging an editor shell is published while paused.
+- REST list writers (Discord bot, imports, sharing) keep working through
+  `ListSync`: they predate the promotion and are not the layer it changed.
+  If the incident implicates the server merge itself, go to tier 2 — the
+  switch only stops the browser surfaces the promotion exposed.
+
+Limits to know during an incident: the switch takes effect on each
+browser's next full page load (already-hydrated tabs keep their in-memory
+editor until reload, but their writes stop at the socket refusal above),
+and a previously prepared offline guest generation can still boot the
+device editor *offline* — device documents are local-only and use the
+unchanged store format, so those edits merge normally once editing
+resumes. To restore editing, unset the variable (or set it to `false`)
+and restart; no data step is needed in either direction.
+
+Verify after flipping: load `/list` and one account `/list/:id` — both
+show the “temporarily paused” banner and the account list's projected
+rows; the browser console shows no `SubscribeListDoc` handshake; and
+`localStorage` snapshots (`ultros.listdoc.v1.*`) are untouched.
+
+### Tier 2: revert the promotion
+
+Before promotion, retain the currently deployed image's immutable digest
+and Git SHA. Redeploy that exact image for tier 2; the floating `main` tag
+can already point at the promotion and is not a rollback target.
+
+If an image is unavailable, make a rollback branch from current `main`
+and revert the actual landed promotion commit through the normal checks
+and deployment pipeline. For a squash commit use `git revert <commit>`;
+for a merge commit use `git revert -m 1 <merge-commit>`. If the stack lands
+as separate commits, revert its children before their parents. Historical
+branch SHAs are not a substitute for the deployed commit: integration
+merges and squash merges change that history. There is no database migration
+to undo, and no list snapshots or projections should be deleted.
+
+### Why downgrade is data-safe
+
+Verified against `main...codex/lists-promotion` (25994a5e):
+
+- **Documents**: `ultros-list-doc`, `ultros-lists`, `ultros-db`, and
+  `ultros/static/guest-list-store.mjs` are byte-identical before and
+  after the promotion. The schema-1 snapshot boundary
+  (`ListDocument::from_snapshot`), the guest IndexedDB
+  (`ultros-device-lists-v1`, version 1), and the account localStorage
+  snapshots (`ultros.listdoc.v1.*`) are unchanged, so documents written
+  by the new UI open in the pre-promotion build unchanged.
+- **Projections / REST**: the legacy editor read only REST
+  (`get_list_items_with_listings` over `list_item`), and every accepted
+  document update still maintains that projection (`project_rows` /
+  `project_meta` in `ultros-db/src/list_doc.rs`, covered by
+  `a_peer_update_projects_into_rows_and_back_again`). Lists edited only
+  in the new UI therefore appear complete in the old build. Confirm with
+  the decoded [projection checker](list-projection-checker.md) over the
+  incident's list IDs before and after a tier-2 deploy.
+- **Service worker**: the promotion changed one comment in
+  `service-worker.js` and removed the Labs gate from
+  `guest-offline.mjs` cache preparation. Fetch handling is
+  network-first with cache fallback only on network failure, and
+  generations are never modified in place. After a downgrade the browser
+  installs the old worker script and claims tabs as usual; online
+  navigations serve the old build immediately. A generation prepared by
+  the new build can still answer *offline* device-list navigations with
+  the new build's shell until the old build prepares its own (which, for
+  a never-Labs user, it will not) — that shell reads the same IndexedDB
+  format and caches no account data, so the worst case is the new device
+  editor remaining available offline, not data loss.
+
+### Alternatives considered
+
+Resurrecting the full legacy editor behind a flag was rejected: it is
+~1,800 lines of route plus ~2,000 lines of deleted components, and its
+REST write paths were partly removed with it — re-adding it would ship a
+second editor to maintain for an incident-only surface. A cookie/query
+flag in the Labs style was rejected because it is per-browser (an
+incident switch must cover every client at once, including ones that
+never opted in) and it reads as a permanent user-facing toggle. A
+gradual cohort was rejected for the same reason the promotion deleted
+Labs: the document layer underneath both UIs is identical, so a cohort
+would roll out only the editor skin while complicating every route. The
+env switch covers the failure the promotion actually introduces — the
+new browser surfaces misbehaving — at the smallest surface area.
+
+## Historical production soak plan
 
 The deployed seven-day observation and promotion decision are tracked in
 [#1510](https://github.com/akarras/ultros/issues/1510).
@@ -250,6 +370,10 @@ acceptance and readiness assessment; local fixtures do not close the soak.
 Run after the branch is deployed, over at least a week with the toggle on
 for the maintainer's own shared lists. Retain the authoritative list-ID manifest
 and reconcile deletions using the [checker workflow](list-projection-checker.md).
+Note this plan can only run on a **pre-promotion** build: the promotion
+branch deletes the Labs toggle and legacy view that steps 1 and 3 use, so
+the soak (or a signed waiver) must precede that merge. Current gate
+disposition: [`lists-promotion-decision.md`](lists-promotion-decision.md).
 
 1. Turn it on under Settings › Labs on two browsers and one phone, and
    share one list between two Discord accounts.

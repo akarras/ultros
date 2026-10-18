@@ -1,7 +1,6 @@
 pub use ultros_ui::components::app_link;
 pub use ultros_ui_alerts::components::alert_drawer;
 pub use ultros_ui_alerts::components::alert_rules_panel;
-pub use ultros_ui_crafting::components::add_recipe_to_current_list;
 pub use ultros_ui_crafting::components::add_recipe_to_list;
 pub use ultros_ui_crafting::components::add_set_to_list;
 pub use ultros_ui_lists::components::add_to_list;

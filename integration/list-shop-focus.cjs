@@ -17,6 +17,44 @@ async function typeQuantity(page, selector, value) {
   await page.keyboard.type(String(value));
 }
 
+async function confirmRoutePreservingEditor(page) {
+  // Hold animation callbacks so typing certainly precedes confirmation's
+  // deferred focus repair, rather than depending on a fast/slow browser frame.
+  await page.evaluate(() => {
+    const request = window.requestAnimationFrame;
+    const cancel = window.cancelAnimationFrame;
+    const held = new Map();
+    window.requestAnimationFrame = callback => {
+      const id = request.call(window, () => {});
+      held.set(id, callback);
+      return id;
+    };
+    window.cancelAnimationFrame = id => { held.delete(id); cancel.call(window, id); };
+    window.__restoreConfirmationFrames = () => {
+      window.requestAnimationFrame = request;
+      window.cancelAnimationFrame = cancel;
+      for (const [id, callback] of held) {
+        cancel.call(window, id);
+        request.call(window, callback);
+      }
+      held.clear();
+    };
+  });
+  const quantity = '[data-shop-key] [data-testid="shop-stack-quantity"]';
+  try {
+    await page.click(testId("shop-confirm-route"));
+    await page.waitForSelector(quantity, { visible: true });
+    await typeQuantity(page, quantity, 1);
+    await page.evaluate(() => window.__restoreConfirmationFrames());
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert(await page.$eval(quantity, input => input === document.activeElement && input.value === "1"),
+      "delayed trip confirmation preserves the newer quantity editor and draft");
+    console.log("[ok] delayed trip confirmation preserves a newer quantity editor");
+  } finally {
+    await page.evaluate(() => { window.__restoreConfirmationFrames(); delete window.__restoreConfirmationFrames; });
+  }
+}
+
 // Reusable by the strict real-market acceptance suite. The caller supplies
 // another real list editor, not a synthetic snapshot or local DOM mutation.
 // First stop: two purchasable stacks of at least two units; at least one later
@@ -41,7 +79,13 @@ async function runShopFocus(page, { remotePurchase, label, onRemoteCompletion })
   }, quantity);
   await remotePurchase(other.key, 1);
   await page.waitForFunction(({ key, before }) => Number(document.querySelector(`[data-shop-key="${key}"] input`).max) === before - 1, {}, { key: other.key, before: other.quantity });
-  assert.equal(await page.$eval(quantity, node => node === window.shopDraftNode && node === document.activeElement), true, `${label}: unrelated purchase preserves editor node and focus`);
+  const editor = await page.$eval(quantity, node => ({
+    sameNode: node === window.shopDraftNode,
+    focused: node === document.activeElement,
+    active: document.activeElement?.outerHTML.slice(0, 300),
+    value: node.value,
+  }));
+  assert(editor.sameNode && editor.focused, `${label}: unrelated purchase preserves editor node and focus: ${JSON.stringify(editor)}`);
   assert.equal(await page.$eval(quantity, node => node.value), String(first.quantity), `${label}: unrelated purchase preserves draft`);
   assert.equal(await page.evaluate(() => window.scrollY), await page.evaluate(() => window.shopDraftScroll), `${label}: unrelated purchase preserves scroll`);
   await capture(page, { path: path.join(artifacts, `${label.replace(/[^a-z0-9]+/gi, "-")}-draft.png`), fullPage: false });
@@ -192,7 +236,7 @@ async function main() {
     const worlds = await api("GET", "/api/v1/world_data");
     const region = worlds.regions.find(region => region.datacenters.some(dc => dc.worlds.length >= 3));
     const [home, second, last] = [...region.datacenters.find(dc => dc.worlds.length >= 3).worlds].sort((a, b) => a.id - b.id);
-    await page.setCookie(...[["LABS", "lists-sync"], ["HOME_WORLD", home.name], ["PRICE_ZONE", home.name], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
+    await page.setCookie(...[["HOME_WORLD", home.name], ["PRICE_ZONE", home.name], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
     offers = [[-1474001, home, false, 2, 10], [-1474002, home, true, 2, 20], [-1474003, second, false, 3, 12], [-1474004, last, true, 4, 25]].map(([id, world, hq, quantity, price_per_unit]) => ({ id, world_id: world.id, item_id: 5056, retainer_id: 1, price_per_unit, quantity, hq, timestamp: "2026-09-16T00:00:00" }));
     cookie = (await page.cookies()).map(entry => `${entry.name}=${entry.value}`).join("; ");
     // Only prices and the unrelated ads SDK are intercepted. Both editors
@@ -303,5 +347,5 @@ async function main() {
   }
 }
 
-module.exports = { runShopFocus };
+module.exports = { runShopFocus, confirmRoutePreservingEditor };
 if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
