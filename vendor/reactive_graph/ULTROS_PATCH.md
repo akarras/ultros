@@ -1,7 +1,7 @@
-# Vendored `reactive_graph` 0.2.15 — Ultros patch
+# Vendored `reactive_graph` 0.2.16 — Ultros patch
 
-This directory is an unmodified copy of the `reactive_graph` 0.2.15 crate
-from crates.io (the version `leptos` 0.8.22 resolves to) **plus** the change
+This directory is an unmodified copy of the `reactive_graph` 0.2.16 crate
+from crates.io (the newest 0.2.x, which `leptos` 0.8.22 accepts) **plus** the change
 described below. It is wired in through `[patch.crates-io]` in the root
 `Cargo.toml`, so every crate in the workspace that depends on `reactive_graph`
 0.2.x transparently gets this copy.
@@ -171,11 +171,23 @@ do.
 
 ## Upstream status
 
-Not yet reported upstream as of 2026-09-15; the newest published
-`reactive_graph` (0.3.0-beta2) still has the same `take()` /
-unconditional-`Clean` memo code and the same `try_read`-only signal reads.
-Once it is fixed upstream and `leptos` picks up the new version, delete this
-directory and the `[patch.crates-io]` entry.
+Not yet reported upstream as of 2026-10-19; the newest published
+`reactive_graph` (0.3.0-rc0) still has the same `take()` /
+unconditional-`Clean` memo code (`computed/inner.rs:128`, no compute lock) and
+the same `try_read`-only `Plain::try_new`. Once it is fixed upstream and
+`leptos` picks up the new version, delete this directory and the
+`[patch.crates-io]` entry.
+
+### Rebase log
+
+- **0.2.15 → 0.2.16 (2026-10-19).** Upstream's only source change is in
+  `src/owner.rs`: `cleanup`/`unset_with_forced_cleanup` now collect the values
+  `Arena::remove` returns into a `nodes_to_drop` vec and let it drop *after*
+  the arena lock is released, so a `Drop` impl (or an `on_cleanup`) that
+  touches the arena no longer re-enters the lock and deadlocks. It also adds a
+  `#[cfg(test)] mod tests` to `owner.rs` covering those orderings. Both merged
+  with this patch's `owner.rs` hunks (the `Activity` tracker lives in
+  different functions) with no conflicts.
 
 ## Maintaining
 
