@@ -130,6 +130,7 @@ pub fn AutoMarkModalContent(
             <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <input
                     class="input flex-1"
+                    aria-label=t_string!(i18n, list_auto_mark_character_name_placeholder)
                     placeholder=t_string!(i18n, list_auto_mark_character_name_placeholder)
                     prop:value=watch_character_name
                     on:input=move |e| set_watch_character_name.run(event_target_value(&e))
