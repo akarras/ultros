@@ -40,6 +40,15 @@ struct CharacterSearch {
     world: Option<String>,
 }
 
+impl Search {
+    fn bounded(name: String, world: Option<String>) -> Self {
+        Self {
+            name: truncate_100(&name),
+            world: world.map(|world| truncate_100(&world)),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum View {
     Search,
@@ -192,17 +201,17 @@ impl Session {
         character: Option<i32>,
     ) -> Result<Self, Error> {
         let mut session = Self {
-            search: Search {
-                name: retainer.clone().unwrap_or_default(),
-                world,
-            },
+            search: Search::bounded(retainer.clone().unwrap_or_default(), world),
             ..Default::default()
         };
-        session.refresh_characters(services).await?;
+        // Character details are optional. A failed lookup must not prevent a
+        // retainer from being tracked or discard the recoverable setup menu.
+        let character_error = session.refresh_characters(services).await.err();
         session.adding_for = character
             .and_then(|id| session.characters.iter().find(|c| c.id == id))
             .cloned();
-        let missing_character = character.is_some() && session.adding_for.is_none();
+        let missing_character =
+            character_error.is_none() && character.is_some() && session.adding_for.is_none();
         // Autocomplete values use an explicit prefix so an arbitrary typed name
         // cannot accidentally be interpreted as a database primary key.
         let selected = retainer
@@ -215,10 +224,21 @@ impl Session {
         if let Err(error) = session.search(services, selected).await {
             session.notice = error.to_string();
         }
+        if let Some(error) = character_error {
+            session.notice.push_str(&format!("\n{error}\nI couldn't load your characters. You can still track retainers and retry Assign / change character later."));
+        }
         if missing_character {
             session.notice.push_str("\nThat character is no longer on your account. You can still track the retainer and use Assign / change character to choose or add another.");
         }
         Ok(session)
+    }
+
+    async fn start_list(services: &impl RetainerServices) -> Self {
+        let mut session = Self::default();
+        if let Err(error) = session.load_list(services).await {
+            session.notice = error.to_string();
+        }
+        session
     }
 
     fn action<'a>(&self, custom_id: &'a str) -> Option<&'a str> {
@@ -343,8 +363,10 @@ impl Session {
     async fn find_characters(
         &mut self,
         services: &impl RetainerServices,
-        search: CharacterSearch,
+        mut search: CharacterSearch,
     ) -> Result<(), Error> {
+        search.name = truncate_100(&search.name);
+        search.world = search.world.map(|world| truncate_100(&world));
         self.character_search = Some(search.clone());
         self.view = View::CharacterResults;
         self.character_matches.clear();
@@ -444,7 +466,13 @@ impl Session {
                     .character_id
                     .and_then(|id| self.characters.iter().find(|c| c.id == id))
                     .map(character_name)
-                    .unwrap_or_else(|| "Not assigned".into());
+                    .unwrap_or_else(|| {
+                        if owned.character_id.is_some() {
+                            "Character details unavailable".into()
+                        } else {
+                            "Not assigned".into()
+                        }
+                    });
                 let text = format!(
                     "Retainer: **{} · {}**\nCharacter: **{character}**\n\nThis retainer is tracked on your account.",
                     retainer.name,
@@ -666,7 +694,7 @@ impl Session {
             if action == "search" {
                 match modal::<Search>(ctx, interaction, Some(self.search.clone()), remaining).await? {
                     Dialog::Submitted(search) => {
-                        self.search = search;
+                        self.search = Search::bounded(search.name, search.world);
                         self.search(&services, None).await?;
                     }
                     Dialog::Interrupted => return Ok(Step::Unchanged),
@@ -787,6 +815,7 @@ impl Session {
                 } else {
                     self.search.world = character.as_ref().map(|c| services.world_name(c.world_id));
                     self.adding_for = character;
+                    self.matches.clear();
                     self.view = View::Search;
                 }
             }
@@ -808,6 +837,7 @@ impl Session {
                 } else {
                     self.search.world = Some(services.world_name(character.world_id));
                     self.adding_for = Some(character);
+                    self.matches.clear();
                     self.view = View::Search;
                     self.notice =
                         "Character added. You can now add a retainer for this character.".into();
@@ -1007,8 +1037,7 @@ pub(super) async fn list(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     }
     ctx.defer_ephemeral().await?;
-    let mut session = Session::default();
-    session.load_list(&LiveServices(ctx)).await?;
+    let session = Session::start_list(&LiveServices(ctx)).await;
     session.run(ctx).await
 }
 

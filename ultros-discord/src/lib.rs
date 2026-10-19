@@ -2,6 +2,7 @@
 #![recursion_limit = "256"]
 
 mod ffxiv;
+mod qa;
 
 use ultros_alerts as alerts;
 use ultros_analyzer::analyzer_service;
@@ -48,6 +49,7 @@ pub type PriceHistoryRenderer = Arc<
 // User data, which is stored and accessible in all command invocations
 
 pub(crate) struct Data {
+    qa_scope: Option<qa::QaScope>,
     db: UltrosDb,
     list_sync: crate::lists::ListSync,
     lodestone_client: reqwest::Client,
@@ -226,10 +228,36 @@ pub async fn start_discord(
         ch_client,
         price_history_renderer,
     } = services;
+    let qa_scope = match qa::QaScope::from_env() {
+        Ok(scope) => scope,
+        Err(error) => {
+            tracing::error!(%error, "Discord QA configuration is invalid; bot not started");
+            return;
+        }
+    };
     let setup_token = token.clone();
     let framework: poise::Framework<Data, Error> = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: commands(),
+            skip_checks_for_owners: false,
+            pre_command: |ctx| Box::pin(async move {
+                tracing::info!(command = ctx.command().qualified_name,
+                    channel_id = ctx.channel_id().get(), "Discord command started");
+            }),
+            command_check: Some(|ctx| Box::pin(async move {
+                Ok(ctx.data().qa_scope.is_none_or(|scope|
+                    scope.allows(ctx.guild_id().map(|guild| guild.get()), ctx.channel_id().get())))
+            })),
+            on_error: |error| Box::pin(async move {
+                if let poise::FrameworkError::CommandCheckFailed { ctx, .. } = &error
+                    && ctx.data().qa_scope.is_some_and(|scope|
+                        !scope.allows(ctx.guild_id().map(|guild| guild.get()), ctx.channel_id().get())) {
+                    return;
+                }
+                if let Err(error) = poise::builtins::on_error(error).await {
+                    tracing::error!(%error, "Discord framework error handler failed");
+                }
+            }),
             event_handler: |_ctx, event, _framework, data| {
                 Box::pin(async move {
                     handle_event(event, data).await;
@@ -245,11 +273,18 @@ pub async fn start_discord(
                 // registration. Command registration can fail independently of
                 // the gateway connection, and alert delivery should still work.
                 crate::alerts::delivery::set_serenity_ctx(ctx.clone());
-                if let Err(e) =
+                let registration = if let Some(scope) = qa_scope {
+                    tracing::info!(guild_id = scope.guild_id, channel_id = scope.channel_id,
+                        "Discord QA enabled: registering guild commands and restricting command handling to the QA channel");
+                    poise::builtins::register_in_guild(ctx, &framework.options().commands,
+                        serenity::GuildId::new(scope.guild_id)).await
+                } else {
                     poise::builtins::register_globally(ctx, &framework.options().commands).await
-                {
+                };
+                if let Err(e) = registration {
                     tracing::error!("failed to register Discord application commands: {e}");
                 }
+                tracing::info!(qa = qa_scope.is_some(), "Discord bot ready for commands");
                 let (item_events, alert_events) = (
                     (
                         event_receivers.retainers.resubscribe(),
@@ -278,6 +313,7 @@ pub async fn start_discord(
                     },
                 ));
                 Ok(Data {
+                    qa_scope,
                     db,
                     list_sync,
                     lodestone_client: reqwest::Client::builder()

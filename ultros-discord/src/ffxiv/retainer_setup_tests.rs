@@ -9,6 +9,7 @@ struct State {
     market: Vec<Retainer>,
     owned: BTreeMap<i32, Owned>,
     calls: Vec<String>,
+    listing_requests: Vec<i32>,
     fail: Option<&'static str>,
 }
 
@@ -42,6 +43,10 @@ fn character(id: i32, world_id: i32) -> Character {
         first_name: "Player".into(),
         last_name: format!("Alt{id}"),
     }
+}
+
+fn owned_id(retainer_id: i32) -> i32 {
+    10_000 + retainer_id
 }
 
 #[async_trait::async_trait]
@@ -98,7 +103,7 @@ impl RetainerServices for FakeServices {
             return Ok((owned.clone(), false));
         }
         let owned = Owned {
-            id,
+            id: owned_id(id),
             retainer_id: id,
             discord_id: 100,
             character_id: None,
@@ -114,7 +119,8 @@ impl RetainerServices for FakeServices {
         }
         state
             .owned
-            .get_mut(&owned)
+            .values_mut()
+            .find(|record| record.id == owned)
             .ok_or_else(|| anyhow!("Not your retainer"))?
             .character_id = character;
         Ok(())
@@ -133,12 +139,23 @@ impl RetainerServices for FakeServices {
             })
             .collect())
     }
-    async fn listings(&self, _: i32) -> Result<Vec<active_listing::Model>, Error> {
-        drop(self.call("listings")?);
+    async fn listings(&self, id: i32) -> Result<Vec<active_listing::Model>, Error> {
+        let mut state = self.call("listings")?;
+        if !state.market.iter().any(|r| r.id == id) {
+            return Err(anyhow!("Unknown market retainer ID").into());
+        }
+        state.listing_requests.push(id);
         Ok(vec![])
     }
     async fn remove(&self, owned: i32) -> Result<(), Error> {
-        self.call("remove")?.owned.remove(&owned);
+        let mut state = self.call("remove")?;
+        let id = state
+            .owned
+            .iter()
+            .find(|(_, record)| record.id == owned)
+            .map(|(id, _)| *id)
+            .ok_or_else(|| anyhow!("Not your retainer"))?;
+        state.owned.remove(&id);
         Ok(())
     }
     async fn search_characters(
@@ -452,4 +469,146 @@ async fn lodestone_search_failure_keeps_the_search_defaults_and_saved_retainer()
     services.0.lock().unwrap().fail = None;
     session.find_characters(&services, search).await.unwrap();
     assert_eq!(session.view, View::CharacterResults);
+}
+
+#[tokio::test]
+async fn initial_character_load_failure_does_not_block_retainer_setup() {
+    let services = FakeServices::default();
+    services.0.lock().unwrap().market = vec![retainer(1, 10)];
+    services.0.lock().unwrap().characters = vec![character(2, 10)];
+    services.0.lock().unwrap().fail = Some("characters");
+    let mut session = Session::start_add(&services, Some("Dawnkeeper".into()), None, Some(2))
+        .await
+        .unwrap();
+    assert_eq!(session.view, View::Saved);
+    assert_eq!(session.current.as_ref().unwrap().0.character_id, None);
+    assert!(description(&session).contains("couldn't load your characters"));
+    assert!(!description(&session).contains("no longer on your account"));
+    services.0.lock().unwrap().fail = None;
+    click(&mut session, &services, "assign", None).await;
+    click(&mut session, &services, "pick_character", Some(2)).await;
+    assert_eq!(session.current.as_ref().unwrap().0.character_id, Some(2));
+}
+
+#[tokio::test]
+async fn initial_list_failure_opens_the_retry_menu() {
+    let services = FakeServices::default();
+    services.0.lock().unwrap().market = vec![retainer(1, 10)];
+    Session::start_add(&services, Some("Dawnkeeper".into()), None, None)
+        .await
+        .unwrap();
+    services.0.lock().unwrap().fail = Some("retainers");
+    let mut session = Session::start_list(&services).await;
+    assert_eq!(session.view, View::List);
+    assert!(!session.list_loaded);
+    assert!(description(&session).contains("couldn't load"));
+    services.0.lock().unwrap().fail = None;
+    click(&mut session, &services, "list", None).await;
+    assert!(session.list_loaded);
+    assert_eq!(session.retainers.len(), 1);
+}
+
+#[tokio::test]
+async fn switching_character_invalidates_results_from_the_previous_world() {
+    let services = FakeServices::default();
+    services.0.lock().unwrap().market = vec![retainer(1, 10), retainer(2, 20)];
+    services.0.lock().unwrap().characters = vec![character(1, 10), character(2, 20)];
+    let mut session = Session::start_add(&services, Some("Dawn".into()), None, Some(1))
+        .await
+        .unwrap();
+    assert_eq!(session.matches.len(), 2);
+    click(&mut session, &services, "switch_character", None).await;
+    click(&mut session, &services, "pick_character", Some(2)).await;
+    assert!(session.matches.is_empty());
+    assert_eq!(session.search.world.as_deref(), Some("World 20"));
+    click(&mut session, &services, "pick_retainer", Some(1)).await;
+    assert!(services.0.lock().unwrap().owned.is_empty());
+    session.search(&services, None).await.unwrap();
+    assert_eq!(
+        session.matches.iter().map(|r| r.id).collect::<Vec<_>>(),
+        [2]
+    );
+    click(&mut session, &services, "pick_retainer", Some(2)).await;
+    assert_eq!(session.current.as_ref().unwrap().0.character_id, Some(2));
+}
+
+#[tokio::test]
+async fn adding_a_character_also_invalidates_previous_retainer_results() {
+    let services = FakeServices::default();
+    services.0.lock().unwrap().market = vec![retainer(1, 10), retainer(2, 20)];
+    let mut session = Session::start_add(&services, Some("Dawn".into()), None, None)
+        .await
+        .unwrap();
+    assert_eq!(session.matches.len(), 2);
+    session.view = View::CharacterResults;
+    session.character_matches = vec![lodestone::search::ProfileSearchResult {
+        user_id: 3,
+        name: "Player Alt3".into(),
+        world: "World 10".into(),
+    }];
+    click(&mut session, &services, "pick_new_character", Some(3)).await;
+    assert!(session.matches.is_empty());
+    assert_eq!(session.search.world.as_deref(), Some("World 10"));
+    assert_eq!(session.adding_for.as_ref().unwrap().id, 3);
+}
+
+#[tokio::test]
+async fn long_slash_input_is_bounded_for_replies_and_modal_defaults() {
+    let services = FakeServices::default();
+    let mut session = Session::start_add(
+        &services,
+        Some("界".repeat(6000)),
+        Some("界".repeat(6000)),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(session.search.name.chars().count(), 100);
+    assert_eq!(session.search.world.as_ref().unwrap().chars().count(), 100);
+    assert!(description(&session).chars().count() < 4096);
+    session
+        .find_characters(
+            &services,
+            CharacterSearch {
+                name: "界".repeat(6000),
+                world: Some("界".repeat(6000)),
+            },
+        )
+        .await
+        .unwrap();
+    let defaults = session.character_search.as_ref().unwrap();
+    assert_eq!(defaults.name.chars().count(), 100);
+    assert_eq!(defaults.world.as_ref().unwrap().chars().count(), 100);
+}
+
+#[tokio::test]
+async fn ownership_ids_and_market_ids_stay_distinct_through_management() {
+    let services = FakeServices::default();
+    services.0.lock().unwrap().market = vec![retainer(7, 10)];
+    services.0.lock().unwrap().characters = vec![character(3, 10)];
+    let mut session = Session::start_add(&services, Some("retainer:7".into()), None, None)
+        .await
+        .unwrap();
+    assert_eq!(session.current.as_ref().unwrap().0.id, owned_id(7));
+    click(&mut session, &services, "listings", None).await;
+    assert_eq!(session.view, View::Listings);
+    assert_eq!(services.0.lock().unwrap().listing_requests, [7]);
+    click(&mut session, &services, "back", None).await;
+    click(&mut session, &services, "list", None).await;
+    click(&mut session, &services, "manage_retainer", Some(7)).await;
+    assert_eq!(session.view, View::List);
+    click(
+        &mut session,
+        &services,
+        "manage_retainer",
+        Some(owned_id(7)),
+    )
+    .await;
+    assert_eq!(session.view, View::Saved);
+    click(&mut session, &services, "assign", None).await;
+    click(&mut session, &services, "pick_character", Some(3)).await;
+    assert_eq!(services.0.lock().unwrap().owned[&7].character_id, Some(3));
+    click(&mut session, &services, "remove", None).await;
+    click(&mut session, &services, "confirm_remove", None).await;
+    assert!(services.0.lock().unwrap().owned.is_empty());
 }

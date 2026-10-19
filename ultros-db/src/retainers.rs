@@ -11,7 +11,10 @@ use sea_orm::EntityTrait;
 use sea_orm::LoaderTrait;
 use sea_orm::QueryFilter;
 use sea_orm::Set;
-use sea_orm::{QueryOrder, QuerySelect, sea_query::OnConflict};
+use sea_orm::{
+    QueryOrder, QuerySelect,
+    sea_query::{Expr, ExprTrait, Func, LikeExpr, OnConflict},
+};
 use thiserror::Error;
 use tracing::info;
 use tracing::instrument;
@@ -59,7 +62,7 @@ impl UltrosDb {
     /// organize a user's list; they do not confer authority over a retainer.
     /// Fetch one extra row to let Discord distinguish a complete result set
     /// from one that needs a narrower search.
-    #[instrument(skip(self))]
+    #[instrument(skip(self, name))]
     pub async fn search_retainers_for_discord(
         &self,
         name: &str,
@@ -68,20 +71,39 @@ impl UltrosDb {
         if name.trim().is_empty() {
             return Ok(vec![]);
         }
-        let mut query = retainer::Entity::find().filter(retainer::Column::Name.like(format!(
+        let started = std::time::Instant::now();
+        // This expression matches idx_retainer_name_prefix. Lowercase both
+        // sides instead of assuming market data uses one capitalization style.
+        let pattern = format!(
             "{}%",
-            crate::group_roles::escape_like(&retainer_search_name(name))
-        )));
+            crate::group_roles::escape_like(&name.trim().to_lowercase())
+        );
+        let mut query = retainer::Entity::find().filter(
+            Expr::expr(Func::lower(Expr::col(retainer::Column::Name)))
+                .like(LikeExpr::new(pattern).escape('\\')),
+        );
         if let Some(world_id) = world_id {
             query = query.filter(retainer::Column::WorldId.eq(world_id));
         }
-        Ok(query
+        let results = query
             .order_by_asc(retainer::Column::Name)
             .order_by_asc(retainer::Column::WorldId)
             .order_by_asc(retainer::Column::Id)
             .limit(26)
             .all(&self.db)
-            .await?)
+            .await;
+        let elapsed = started.elapsed();
+        metrics::histogram!("ultros_discord_retainer_search_duration_seconds",
+            "world_filter" => if world_id.is_some() { "world" } else { "all" })
+        .record(elapsed.as_secs_f64());
+        tracing::debug!(target: "ultros_db::retainer_search",
+            duration_ms = elapsed.as_secs_f64() * 1000.0,
+            query_chars = name.chars().count(),
+            world_id,
+            result_count = results.as_ref().map(Vec::len).unwrap_or(0),
+            success = results.is_ok(),
+            "Discord retainer search completed");
+        Ok(results?)
     }
 
     pub async fn get_retainer(&self, id: i32) -> Result<Option<retainer::Model>> {
@@ -450,20 +472,6 @@ impl UltrosDb {
     }
 }
 
-fn retainer_search_name(name: &str) -> String {
-    name.trim()
-        .chars()
-        .enumerate()
-        .map(|(index, ch)| {
-            if index == 0 {
-                ch.to_ascii_uppercase()
-            } else {
-                ch.to_ascii_lowercase()
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -657,6 +665,23 @@ mod tests {
         assert_eq!(found.len(), 26, "25 choices plus one overflow marker");
         assert_eq!(found.first().unwrap().name, "Retainer01");
         assert_eq!(found.last().unwrap().name, "Retainer26");
+    }
+
+    #[tokio::test]
+    async fn discord_search_ignores_case_and_treats_like_wildcards_literally() {
+        let db = isolated_db().await;
+        for (id, name) in [
+            (1, "McX"),
+            (2, "Qaperf%literal"),
+            (3, "Qaperf_literal"),
+            (4, "Qaperf\\literal"),
+        ] {
+            retainer(&db, id, name, 10).await;
+        }
+        for (prefix, expected) in [("mCx", 1), ("qaperf%", 2), ("qaperf_", 3), ("qaperf\\", 4)] {
+            let results = db.search_retainers_for_discord(prefix, None).await.unwrap();
+            assert_eq!(results.iter().map(|r| r.id).collect::<Vec<_>>(), [expected]);
+        }
     }
 
     async fn test_db() -> UltrosDb {

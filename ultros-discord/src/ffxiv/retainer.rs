@@ -368,9 +368,11 @@ async fn add(
     ctx: Context<'_>,
     #[description = "Retainer name; leave blank to open setup"]
     #[autocomplete = "autocomplete_retainer"]
+    #[max_length = 100]
     retainer: Option<String>,
     #[description = "Search this world, or leave blank for all worlds"]
     #[autocomplete = "autocomplete_world"]
+    #[max_length = 100]
     world: Option<String>,
     #[description = "Optional character to group a new retainer under"]
     #[autocomplete = "autocomplete_character"]

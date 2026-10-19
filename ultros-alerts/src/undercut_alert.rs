@@ -240,7 +240,7 @@ impl UndercutTracker {
         let (retainer_ids, mut listings) =
             get_user_unique_retainer_ids_and_listing_ids_by_price(&self.db, self.discord_user_id)
                 .await?;
-        preserve_alerted_listings(&self.user_lowest_listings, &mut listings);
+        carry_over_alerted(&self.user_lowest_listings, &mut listings);
         self.retainer_ids = retainer_ids;
         self.user_lowest_listings = listings;
         Ok(())
@@ -399,19 +399,6 @@ impl UndercutTracker {
             EventType::Update(_) => {}
         }
         Ok(None)
-    }
-}
-
-fn preserve_alerted_listings(
-    previous: &HashMap<ListingKey, ListingValue>,
-    refreshed: &mut HashMap<ListingKey, ListingValue>,
-) {
-    for (key, value) in refreshed {
-        if let Some(old) = previous.get(key)
-            && old.lowest_price == value.lowest_price
-        {
-            value.has_alerted = old.has_alerted;
-        }
     }
 }
 
@@ -865,7 +852,7 @@ mod tests {
             (key(2), value(150, false)),
             (key(4), value(400, false)),
         ]);
-        preserve_alerted_listings(&previous, &mut refreshed);
+        carry_over_alerted(&previous, &mut refreshed);
         assert!(
             refreshed[&key(1)].has_alerted,
             "retrying an add must not duplicate an alert"

@@ -36,3 +36,22 @@ helper tests; they can adopt this boundary as their flows need coverage.
 The `test-auth` feature forwards the existing market-isolation switch used by
 the server's browser test fixtures. Gateway token/collector behavior still
 requires Discord smoke testing.
+
+## Local Discord QA
+
+Set `DISCORD_QA_GUILD_ID` and `DISCORD_QA_CHANNEL_ID` together to register
+commands only in that guild and accept commands only in that channel. Partial
+or invalid QA scope configuration stops bot startup instead of falling back
+to global registration. Leave both unset for normal bot behavior.
+
+Use a separate local database and keep credentials in the ignored `.env`.
+For fixture-based QA, build with `test-auth` and enable
+`ULTROS_TEST_MARKET_ISOLATION=true`; this blocks upstream market writers.
+
+Set `RUST_LOG=warn,ultros_discord=info,ultros_db::retainer_search=debug` to
+record commands and retainer query timings. Each search logs `duration_ms`,
+input length, world filter, result count, and success without logging the
+search text. Prometheus also records
+`ultros_discord_retainer_search_duration_seconds`, labeled by all-world or
+single-world searches. Compare broad, narrow, missing, and world-filtered
+prefixes while checking the query plan against a populated QA database.

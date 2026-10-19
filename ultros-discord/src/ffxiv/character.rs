@@ -22,8 +22,12 @@ pub(crate) async fn character(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command, prefix_command)]
 pub(crate) async fn register(
     ctx: Context<'_>,
-    #[description = "name of your ffxiv character"] name: String,
-    #[description = "world your character is on"] home_world: Option<String>,
+    #[description = "name of your ffxiv character"]
+    #[max_length = 100]
+    name: String,
+    #[description = "world your character is on"]
+    #[max_length = 100]
+    home_world: Option<String>,
 ) -> Result<(), Error> {
     super::retainer_setup::register_character(ctx, name, home_world).await
 }
