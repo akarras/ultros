@@ -1,5 +1,28 @@
 # Lists 2.0 promotion decision (#1510 soak gate)
 
+## Owner release approval (2026-10-19)
+
+Repository owner **@akarras** explicitly approved the scoped waiver and owner
+merge in this work session on 2026-10-19: **"Approve waiver and owner merge"**.
+The approval authorizes recording the decision in this file and on
+[#1510](https://github.com/akarras/ultros/issues/1510), and using the repository
+owner override **solely for the missing approving review** on
+[#1665](https://github.com/akarras/ultros/pull/1665). Required CI must pass on
+the final published head before merge; no branch-protection settings change.
+
+The reviewed candidate is `70b620a892dd71a0fea8c2035a97551b9cd0ddc5`, integrating
+`main` at `89b24c88`. All four hosted checks passed on that head. Its runtime
+implementation is frozen at `c908431d`; this approval update changes release
+records only. The local acceptance, deployed exercise attestation, all-23-list
+projection report and current-main bundle sanity result are retained below and
+in the [2026-10-19 QA record](qa/lists-promotion-2026-10-19.md).
+
+The scoped waiver is signed below. Post-deploy duties remain required and
+#1510 stays open to retain their evidence. Neither this approval nor the
+historical audit claims a completed seven-day production soak or an actual
+deployment of this candidate. The earlier blocked dispositions below are
+dated audit history, superseded by this explicit scoped decision.
+
 ## Current integration work (2026-10-19)
 
 The current candidate is `c908431d`, integrating #1665 with `main` at
@@ -23,9 +46,9 @@ dispositions below are not a request to repeat the owner's exercise.
 Hourly bounded site and GlitchTip monitoring is enabled. Private production
 server tracing and DB access are not established in this validation session;
 the post-deploy sync-warning review and 3–7-day projection check still require
-operator access. The scoped waiver remains unsigned and #1510 has not been
-closed. Main also requires an approving review. Tests and monitoring do not
-substitute for either decision.
+operator access. The owner approved the scoped waiver and the override solely
+for the missing approving review, as recorded above. #1510 remains open for
+the required post-deploy evidence; required CI remains a merge precondition.
 
 ## Earlier integration work (2026-10-18)
 
@@ -109,7 +132,7 @@ acceptance, closed), [#1479](https://github.com/akarras/ultros/issues/1479)
 (projection checker, closed via #1513),
 [#1512](https://github.com/akarras/ultros/issues/1512) (bundle budget, closed).
 
-## Decision: BLOCKED — not promotion-ready under #1510 as written
+## Historical decision (2026-10-13): BLOCKED under #1510 as written
 
 #1627 must not merge on #1510 evidence that does not exist. It may merge
 only after either (a) the blockers in “Remaining blockers” below are
@@ -256,12 +279,13 @@ and date in this file and on #1510 — not silence:
 Until that text (or equivalent) is signed, the disposition of this gate
 is **blocked**, and #1510 stays open.
 
-## Scoped waiver (chosen 2026-10-14 — awaiting signature)
+## Scoped waiver (chosen 2026-10-14 — approved 2026-10-19)
 
 On 2026-10-14 the owner chose a **scoped** waiver over the full waiver
 above. It keeps the two checks that can find real defects and waives the
-rest. It takes effect only when signed below and on #1510. Until then the
-decision above stays **blocked**.
+rest. It takes effect only when signed below and on #1510. The owner explicitly
+approved that signature and its recording on 2026-10-19; the matching #1510
+record and final-head CI must be in place before merging #1665.
 
 **Kept, as merge preconditions for #1627** (evidence goes on #1510):
 
@@ -327,9 +351,46 @@ stop every affected writer process and replica, including the bot and
 API/import writers, isolate traffic, retain evidence, and deploy a
 verified fix before restarting writers.
 
-> I accept the scoped waiver above for the Lists 2.0 promotion in #1627,
-> including risks (1)–(4) named in the full waiver text, with the kept
-> checks as merge preconditions. Signed: ________, ________.
+> I approve the scoped waiver above for the Lists 2.0 promotion from #1627,
+> integrated by #1665, retaining the hands-on and all-list projection
+> preconditions and the current-toolchain bundle sanity check. I accept the
+> remaining first-open bootstrap, offline preparation/cache cost, removed
+> legacy/Labs fallback and production-observation risks in light of the current
+> evidence. The historical failed browser attempts are resolved by the
+> documented fixture repairs and passing reruns; the final local bundle sanity
+> measurement is complete. This does not claim a completed seven-day soak or
+> production Docker acceptance.
+>
+> I authorize recording this decision here and on #1510, and the repository
+> owner override solely for the missing approving review. Required CI must
+> pass on the final published head before merge. Rationale: the retained
+> checks and current integration validation have passed; we choose the
+> documented post-deploy observation plan over a further seven-day pre-merge
+> soak. **Signed: @akarras, 2026-10-19, by explicit owner instruction recorded
+> by the agent ("Approve waiver and owner merge").**
+
+### Required post-deploy owners and evidence
+
+Dates start from the **observed deployment**, not this approval or merge:
+
+- **Agent:** hourly bounded public-site and authenticated GlitchTip checks,
+  with dated observations in the work thread. Record the deployed revision and
+  observation start before treating the monitoring window as started.
+- **Production operator @akarras:** daily private `ultros_lists::sync` warning
+  review for seven days after deployment. Retain one dated #1510 entry per day
+  with findings/resolutions, including the GlitchTip observations; "none" must
+  name the queries reviewed. Agent telemetry does not substitute for private
+  server logs, which are not accessible in this validation session.
+- **Production operator @akarras:** rerun the read-only checker over every
+  production account list 3–7 days after deployment. Retain the ID export,
+  report, build identity and investigated exceptions on #1510; private list
+  contents remain private. `missing_document` is allowed but is not verified
+  equality. Any `different` or `decode_error` requires the all-writer
+  containment procedure above, not merely the browser pause or old image.
+
+Keep #1510 open until those dated follow-ups are complete. The browser-only
+pause and rollback scope, and the requirement to stop every affected writer
+for suspected shared merge/projection corruption, remain unchanged.
 
 ## Historical draft #1510 comment (superseded by current integration evidence)
 

@@ -2,9 +2,10 @@
 
 This follows the [2026-10-18 record](lists-promotion-2026-10-18.md) for
 [PR #1665](https://github.com/akarras/ultros/pull/1665). Historical failed attempts
-and the unsigned [release decision](../lists-promotion-decision.md) remain part
-of the record. No merge, deployment, historical soak, or owner waiver signature
-is established by the local checks below.
+and the originally unsigned [release decision](../lists-promotion-decision.md)
+remain part of the record. Local checks alone establish no merge, deployment,
+historical soak or owner signature. The separate explicit owner approval on
+2026-10-19 is recorded in the release decision and the follow-up below.
 
 ## Candidate and local environment
 
@@ -276,11 +277,23 @@ server logs and database access are not established in this session.
 After deployment, the scoped proposal still calls for daily error/sync-warning
 review for a week and another production projection check in 3–7 days.
 
-## Remaining release work
+## Owner approval and remaining release work
 
 The broad browser run, optimized required acceptance and current-main bundle
-sanity pair have passed. Publish the updated candidate after the final local
-CI gate, then require hosted checks on its actual head. Main requires one
-approving review. The release decision explicitly
-requires the owner's scoped-waiver signature in the record and on #1510;
-that signature is still absent. Local tests and monitoring do not sign it.
+sanity pair have passed. The published integration at
+`70b620a892dd71a0fea8c2035a97551b9cd0ddc5` also passed all four hosted checks:
+`check`, `build`, `Lint, checks, and tests` and `Dependency security advisory
+report`. Current main remained `89b24c88` when readiness was rechecked.
+
+On 2026-10-19 the repository owner explicitly answered **"Approve waiver and
+owner merge"** to the scoped release decision. This authorizes recording the
+signature in the release document and #1510, and the owner override solely
+for the missing approving review. It does not waive required CI: the final
+published approval-record head must pass before merge. Runtime implementation
+remains identical to `c908431d`; this follow-up changes release records only.
+
+The [release decision](../lists-promotion-decision.md) names the agent's
+read-only monitoring duties and @akarras's operator-only daily log review and
+3–7-day all-list projection recheck. Their dates start from actual deployment;
+neither a deployment nor completed follow-up observations are claimed here.
+#1510 remains open for those dated findings and retained evidence.
