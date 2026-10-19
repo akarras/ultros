@@ -326,6 +326,7 @@ async fn merge_loaded(
     update: &[u8],
 ) -> Result<MergeOutcome, ListDocError> {
     let doc = ListDocument::from_snapshot(&stored.snapshot)?;
+    let version_before = doc.version();
     let rows_before = doc.rows();
     let meta_before = doc.meta();
     let report = doc.import(update).map_err(|error| match error {
@@ -344,7 +345,9 @@ async fn merge_loaded(
     }
     let rows_after = doc.rows();
     let meta_after = doc.meta();
-    if meta_after != meta_before && permission < ListPermission::Owner {
+    if permission < ListPermission::Owner
+        && (meta_after != meta_before || !doc.row_only_since(&version_before)?)
+    {
         return Err(ListDocError::MetaForbidden);
     }
     let list = project_meta(txn, list_id, &meta_before, &meta_after).await?;

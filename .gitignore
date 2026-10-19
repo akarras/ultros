@@ -1,4 +1,7 @@
 target/
+plugins/dalamud/**/bin/
+plugins/dalamud/**/obj/
+artifacts/dalamud/
 # Per-machine sparse checkouts of the upstream game-data sources (game-data-pack)
 .game-data-cache/
 .env

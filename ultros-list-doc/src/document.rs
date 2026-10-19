@@ -8,7 +8,7 @@
 //!                                            target: i64 (absent = none), acquired: Counter } }
 //! ```
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use loro::{
@@ -102,6 +102,15 @@ fn decode_version(bytes: &[u8]) -> Option<VersionVector> {
     VersionVector::decode(bytes).ok()
 }
 
+/// Loro's postcard map encoding permits different peer orders. Compare causal
+/// contents, including versions produced before Ultros canonicalized output.
+pub fn versions_equal(left: &[u8], right: &[u8]) -> bool {
+    left == right
+        || decode_version(left)
+            .zip(decode_version(right))
+            .is_some_and(|(left, right)| left == right)
+}
+
 fn value_string(value: Option<ValueOrContainer>) -> Option<String> {
     match value {
         Some(ValueOrContainer::Value(LoroValue::String(s))) => Some(s.to_string()),
@@ -143,12 +152,37 @@ impl ListDocument {
     }
 
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self, DocError> {
+        loro_kv_store::decode_budget::with_decode_budget(32 * 1024 * 1024, || {
+            Self::from_snapshot_bounded(bytes)
+        })
+    }
+
+    fn from_snapshot_bounded(bytes: &[u8]) -> Result<Self, DocError> {
+        if bytes.len() > 8 * 1024 * 1024 {
+            return Err(DocError::InvalidStructure("snapshot byte limit".into()));
+        }
         let document = Self::blank();
         if document.doc.import(bytes)?.pending.is_some() {
             return Err(DocError::IncompleteSnapshot);
         }
         crate::validation::validate(&document.doc)?;
+        document.validate_history_budget()?;
         Ok(document)
+    }
+
+    fn validate_history_budget(&self) -> Result<(), DocError> {
+        let version = self.doc.oplog_vv();
+        let root = self.doc.shallow_since_vv().to_vv();
+        let retained = version.iter().fold(0_u64, |sum, (peer, counter)| {
+            sum.saturating_add((*counter - root.get(peer).copied().unwrap_or(0)).max(0) as u64)
+        });
+        if version.len() > 4096 || retained > 100_000 {
+            return Err(DocError::InvalidStructure("retained history limit".into()));
+        }
+        // Force lazy history blocks through the decompression budget now, on
+        // an isolated document, rather than first expanding them during undo.
+        drop(self.doc.export_json_updates(&root, &version));
+        Ok(())
     }
 
     /// Build a document from relational rows: the server's first-touch path.
@@ -432,9 +466,25 @@ impl ListDocument {
         self.add_acquired(key, delta)
     }
 
-    /// The encoded version vector: what this document has seen.
+    /// The encoded version vector: what this document has seen. Sorted peers
+    /// keep tokens stable across merge order, snapshot reload and runtimes.
+    /// This remains the same postcard map accepted by Loro's decoder.
     pub fn version(&self) -> Vec<u8> {
-        self.doc.oplog_vv().encode()
+        let sorted: BTreeMap<_, _> = self
+            .doc
+            .oplog_vv()
+            .iter()
+            .map(|(&peer, &counter)| (peer, counter))
+            .collect();
+        postcard::to_allocvec(&sorted).expect("integer version map serializes")
+    }
+
+    /// Check operations, including losing/no-op metadata writes, rather than
+    /// only comparing the final projection when enforcing row-only grants.
+    pub fn row_only_since(&self, version: &[u8]) -> Result<bool, DocError> {
+        let start = decode_version(version)
+            .ok_or_else(|| DocError::InvalidStructure("invalid causal version".into()))?;
+        Ok(self.doc.export_json_updates(&start,&self.doc.oplog_vv()).changes.iter().all(|change|change.ops.iter().all(|op|!matches!(&op.container,loro::ContainerID::Root{name,..} if name.as_ref()!="rows"))))
     }
 
     /// Reconstruct the latest causally shared state from our durable operation
@@ -497,11 +547,17 @@ impl ListDocument {
     }
 
     pub fn import(&self, bytes: &[u8]) -> Result<ImportReport, DocError> {
+        if bytes.len() > 8 * 1024 * 1024 {
+            return Err(DocError::InvalidStructure("update byte limit".into()));
+        }
         // Never validate after mutating the live document: observers, undo and
         // persistence would already have seen a rejected partial projection.
         // Snapshot cloning also works for shallow documents (fork does not).
         let candidate = Self::from_snapshot(&self.export_snapshot()?)?;
-        let status = candidate.doc.import(bytes).map_err(|error| match error {
+        let status = loro_kv_store::decode_budget::with_decode_budget(32 * 1024 * 1024, || {
+            candidate.doc.import(bytes)
+        })
+        .map_err(|error| match error {
             // The bytes are well formed but hang off history a shallow
             // snapshot dropped. The caller answers with a fresh snapshot.
             loro::LoroError::ImportUpdatesThatDependsOnOutdatedVersion => {
@@ -512,8 +568,18 @@ impl ListDocument {
         if status.pending.is_some() {
             return Ok(ImportReport { pending: true });
         }
-        crate::validation::validate(&candidate.doc)?;
-        self.doc.import(bytes)?;
+        loro_kv_store::decode_budget::with_decode_budget(32 * 1024 * 1024, || {
+            crate::validation::validate(&candidate.doc)?;
+            candidate.validate_history_budget()
+        })?;
+        // Separate acceptable histories can become too large when combined.
+        // Validate the persisted merged form before touching the live peer.
+        drop(Self::from_snapshot(&candidate.export_snapshot()?)?);
+        // Each phase gets the same fresh limit. Spending the preflight's budget
+        // must not cause a valid live import to fail halfway through.
+        loro_kv_store::decode_budget::with_decode_budget(32 * 1024 * 1024, || {
+            self.doc.import(bytes)
+        })?;
         Ok(ImportReport { pending: false })
     }
 
@@ -650,6 +716,40 @@ mod tests {
         assert_eq!(copy.rows(), doc.rows());
         assert_eq!(copy.meta(), doc.meta());
         assert!(ListDocument::from_snapshot(b"not a snapshot").is_err());
+    }
+
+    #[test]
+    fn causal_versions_survive_opposite_merge_order_and_reopening() {
+        let base = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 100, 0)]);
+        let snapshot = base.export_snapshot().unwrap();
+        let mut updates = Vec::new();
+        for _ in 0..16 {
+            let peer = ListDocument::from_snapshot(&snapshot).unwrap();
+            peer.add_acquired(&RowKey::new(1, None), 1).unwrap();
+            updates.push(peer.export_since(&base.version()).unwrap());
+        }
+        let left = ListDocument::from_snapshot(&snapshot).unwrap();
+        let right = ListDocument::from_snapshot(&snapshot).unwrap();
+        for update in &updates {
+            left.import(update).unwrap();
+        }
+        for update in updates.iter().rev() {
+            right.import(update).unwrap();
+        }
+        let reopened = ListDocument::from_snapshot(&left.export_snapshot().unwrap()).unwrap();
+        assert_eq!(left.rows(), right.rows());
+        assert_eq!(left.version(), right.version());
+        assert_eq!(left.version(), reopened.version());
+        assert_eq!(
+            VersionVector::decode(&left.version()).unwrap(),
+            left.inner().oplog_vv()
+        );
+        assert!(matches!(
+            right
+                .sync_payload(&left.inner().oplog_vv().encode())
+                .unwrap(),
+            SyncPayload::UpToDate
+        ));
     }
 
     #[test]

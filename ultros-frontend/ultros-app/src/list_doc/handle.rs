@@ -417,26 +417,22 @@ impl ListDocHandle {
     /// Probe snapshot imports away from the live document. A parked/partial
     /// import must not alter the history or projection used to recover intent.
     pub fn import_server_snapshot(&self, bytes: &[u8]) -> Result<ImportReport, DocError> {
-        let probe = self.with_doc(|doc| -> Result<ImportReport, DocError> {
-            let server = ListDocument::from_snapshot(bytes)?;
-            if !server.can_export_since(&doc.version()) {
-                // Recover before importing: even an apparently successful
-                // shallow merge could resolve a same-field conflict and erase
-                // the local value the player needs to review.
-                return Ok(ImportReport { pending: true });
-            }
-            let copy = ListDocument::from_snapshot(&doc.export_snapshot()?)?;
-            copy.import(bytes)
-        });
-        match probe {
-            Some(Ok(ImportReport { pending: true }) | Err(DocError::OutdatedDependency)) => {
-                Ok(ImportReport { pending: true })
-            }
+        if self.incompatible() {
+            return Err(DocError::InvalidStructure(
+                "saved copy; export recovery and update Ultros".into(),
+            ));
+        }
+        if self.is_closed_or_disposed() {
+            return Ok(ImportReport { pending: false });
+        }
+        match self.with_doc(|doc| ultros_list_doc::client_sync::import_server_snapshot(doc, bytes))
+        {
             Some(Err(error)) => {
                 self.pause_incompatible_import(&error);
                 Err(error)
             }
-            _ => self.import(bytes),
+            Some(result) => result,
+            None => Ok(ImportReport { pending: false }),
         }
     }
 

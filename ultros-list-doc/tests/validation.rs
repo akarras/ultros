@@ -2,6 +2,32 @@
 //! or leave half of a rejected operation in the document.
 use ultros_list_doc::{DocError, ListDocument, MetaSnapshot, Quality, RowKey, RowSnapshot};
 
+#[test]
+fn hidden_compressed_history_is_rejected_before_it_can_expand_without_a_limit() {
+    let raw = loro::LoroDoc::new();
+    raw.get_map("meta")
+        .insert("schema", ultros_list_doc::SCHEMA_VERSION)
+        .unwrap();
+    raw.get_map("meta")
+        .insert("name", "x".repeat(20 * 1024 * 1024))
+        .unwrap();
+    raw.commit();
+    raw.get_map("meta")
+        .insert("name", "Small visible name")
+        .unwrap();
+    raw.commit();
+    let encoded = raw.export(loro::ExportMode::Snapshot).unwrap();
+    assert!(
+        encoded.len() < 8 * 1024 * 1024,
+        "compressed fixture should bypass a wire-only check"
+    );
+    let result = std::panic::catch_unwind(|| ListDocument::from_snapshot(&encoded));
+    assert!(
+        matches!(result, Ok(Err(_))),
+        "reject the compressed history through an error, not a panic"
+    );
+}
+
 fn seeded() -> ListDocument {
     let doc = ListDocument::new();
     doc.rename("Safe list").unwrap();

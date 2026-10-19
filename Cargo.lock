@@ -5553,8 +5553,6 @@ dependencies = [
 [[package]]
 name = "loro-kv-store"
 version = "1.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "841e206d3749fd14f23e64985be230dad2b2199da1d381c44c3dd0d2b9583fcc"
 dependencies = [
  "bytes",
  "ensure-cov",
@@ -10949,8 +10947,22 @@ name = "ultros-list-doc"
 version = "0.1.0"
 dependencies = [
  "loro",
+ "loro-kv-store",
+ "postcard",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "ultros-api-types",
+]
+
+[[package]]
+name = "ultros-list-doc-ffi"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "ultros-list-doc",
 ]
 
 [[package]]

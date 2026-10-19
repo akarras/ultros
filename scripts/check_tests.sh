@@ -23,6 +23,9 @@ cargo test --locked --workspace --exclude universalis --exclude ultros-client --
 # Loro upgrades; --lib --bins above does not execute them.
 cargo test --locked -p ultros-list-doc --tests
 
+# The pinned Loro decoder patch bounds compressed history before allocation.
+cargo test --locked --manifest-path vendor/loro-kv-store/Cargo.toml --lib --tests
+
 # Universalis mixes deterministic wire-format/status tests with six smoke tests
 # against its public API. Only those live tests are excluded from this gate:
 # availability and the current contents of Aether must not determine PR status.

@@ -10,6 +10,8 @@ use std::rc::{Rc, Weak};
 
 use leptos::prelude::*;
 use ultros_api_types::websocket::{ListDocPayload, ServerClient};
+use ultros_list_doc::client_sync::{HandshakePlan, handshake_plan};
+use ultros_list_doc::document::versions_equal;
 
 use crate::list_doc::handle::ListDocHandle;
 use crate::ws::realtime::{RealtimeClient, RealtimeSubscription};
@@ -221,17 +223,9 @@ pub fn start(
     // The last server version we answered with a diff, and the version we
     // already rebased for: see the state machine above.
     //
-    // M1: comparing `last_diff_version`/`rebased_for` to an incoming
-    // `version` is a byte-equality check on the *encoded* version vector,
-    // not a semantic "same causal version" check. That's sound only because
-    // the server always recomputes the bytes it sends from a freshly
-    // re-serialized stored snapshot/doc state — never replays the bytes it
-    // received — so two handshake replies that are causally the same
-    // version (in particular, the reply to a rejected diff and the reply to
-    // the rebase sent right after) always re-encode to the identical byte
-    // string. If the server ever started caching or forwarding a
-    // client-supplied version's raw bytes, this comparison would need to
-    // become a semantic one instead.
+    // Compare causal versions semantically: equivalent version vectors can
+    // have different encodings. Browser and native handshake decisions use
+    // the same shared comparison and bounded recovery guards.
     let last_diff_version: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
     let rebased_for: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
     // Set when the server refuses a non-owner's meta change; cleared by the
@@ -365,9 +359,7 @@ pub fn start(
                 handle.mark_content_ready();
 
                 if handle.is_ahead_of(&version) && handle.permission.get_untracked() >= 2 {
-                    let same_version =
-                        last_diff_version.borrow().as_deref() == Some(version.as_slice());
-                    if rebased_for.borrow().as_ref().is_some_and(|previous| previous != &version) {
+                    if rebased_for.borrow().as_ref().is_some_and(|previous| !versions_equal(previous, &version)) {
                         *rebased_for.borrow_mut() = None;
                     }
                     // F2: only give up when the server has actually
@@ -379,15 +371,14 @@ pub fn start(
                     // `Updates`/`UpToDate`, and must fall through to a
                     // normal diff retry instead of stranding the client
                     // "offline" over nothing.
-                    if rebased_for.borrow().as_deref() == Some(version.as_slice())
-                        && snapshot.is_some()
-                    {
+                    let plan=handshake_plan(last_diff_version.borrow().as_deref(),rebased_for.borrow().as_deref(),&version,snapshot.is_some(),true);
+                    if plan==HandshakePlan::Stop {
                         handle.set_status("offline");
                         log::error!("list {list_id}: server keeps rejecting local history");
                         return;
                     }
-                    match (same_version, snapshot) {
-                        (true, Some(bytes)) => {
+                    match (plan, snapshot) {
+                        (HandshakePlan::Recover, Some(bytes)) => {
                             let keep_meta = handle.permission.get_untracked() >= 3 && !meta_forbidden.get();
                             if let Err(error) = handle.rebase_onto_snapshot(&bytes, keep_meta) {
                                 handle.set_status("offline");

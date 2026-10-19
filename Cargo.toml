@@ -6,6 +6,7 @@ members = [
     "ultros-db",
     "ultros-api-types",
     "ultros-list-doc",
+    "ultros-list-doc-ffi",
     "ultros-game-sources",
     "ultros-server-core",
     "ultros-search",
@@ -53,7 +54,7 @@ members = [
 # Vendored, patched copy of `reactive_graph` (see `[patch.crates-io]` and
 # vendor/reactive_graph/ULTROS_PATCH.md). Not a workspace member: it keeps
 # upstream's own lint/test configuration and is only built through the patch.
-exclude = ["vendor/reactive_graph"]
+exclude = ["vendor/reactive_graph", "vendor/loro-kv-store"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -191,6 +192,7 @@ ironworks = { git = "https://github.com/ackwell/ironworks", rev = "3d5db8ff" }
 # panics SSR renders (`arc_memo.rs:334: called Option::unwrap() on a None
 # value`). Details and the upstream-shaped diff: vendor/reactive_graph/ULTROS_PATCH.md
 reactive_graph = { path = "vendor/reactive_graph" }
+loro-kv-store = { path = "vendor/loro-kv-store" }
 #leptos = { path = "../leptos/leptos" }
 # leptos_reactive = { git = "https://github.com/leptos-rs/leptos.git" }
 #leptos_reactive = {path = "../leptos/leptos_reactive"}
