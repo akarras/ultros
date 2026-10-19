@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Save your retainer roster from in game",
+  "blurb": "Retainers registered with the Ultros game plugin appear on your Retainers page, including retainers with no public listings yet.",
+  "link": "/retainers"
+}

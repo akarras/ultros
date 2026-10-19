@@ -8,6 +8,7 @@ pub(crate) mod item_card;
 mod list_market_fixture;
 pub(crate) mod list_permission;
 pub(crate) mod oauth;
+pub(crate) mod plugin;
 pub(crate) mod price_series_cache;
 pub(crate) mod shutdown;
 pub(crate) mod sitemap;
@@ -59,9 +60,7 @@ use ultros_api_types::user::group::{
     GroupSyncResponse, GroupSyncStatus, ImportDiscordRole, RenameGroupRole, UserGroup,
     UserGroupDetail, UserGroupMember, UserGroupSummary,
 };
-use ultros_api_types::user::{
-    AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
-};
+use ultros_api_types::user::{AssignRetainerCharacter, OwnedRetainer, UserData};
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{
@@ -1646,61 +1645,32 @@ pub(crate) async fn retainer_listings(
 pub(crate) async fn user_retainers(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-) -> Result<Json<UserRetainers>, ApiError> {
-    // load the retainer/character details from the database and then extract it into the shared API types.
-    let retainers = UserRetainers {
-        retainers: db
-            .get_all_owned_retainers_and_character(user.id)
-            .await?
-            .into_iter()
-            .map(|(character, retainers)| {
-                (
-                    character.map(FfxivCharacter::from),
-                    retainers
-                        .into_iter()
-                        .map(|(owned, retainer)| {
-                            (OwnedRetainer::from(owned), Retainer::from(retainer))
-                        })
-                        .collect(),
-                )
-            })
-            .collect(),
-    };
-    Ok(Json(retainers))
+) -> Result<impl IntoResponse, ApiError> {
+    Ok((
+        [(header::CACHE_CONTROL, "private, no-store")],
+        Json(db.website_retainers(user.id as i64).await?),
+    ))
+}
+
+async fn user_game_retainers(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+) -> Result<impl IntoResponse, plugin::PluginApiError> {
+    let characters = db.registered_game_characters(user.id as i64).await?;
+    Ok((
+        [(header::CACHE_CONTROL, "private, no-store")],
+        Json(characters),
+    ))
 }
 
 pub(crate) async fn user_retainer_listings(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-) -> Result<Json<UserRetainerListings>, ApiError> {
-    let db = &db;
-    // Get a list of all the user's retainers, convert them to the appropriate type for our API call, and get listings for each retainer
-    let retainers = db.get_all_owned_retainers_and_character(user.id).await?;
-    let listings_iter = retainers
-        .into_iter()
-        .map(|(character, retainers)| async move {
-            // collect intermediate results with try_join_all to cancel early if there's an error
-            let retainers_with_listings =
-                try_join_all(retainers.into_iter().map(|(_owned, retainer)| async move {
-                    let listings = db.get_retainer_listings(retainer.id).await;
-                    listings.map(|(_retainer, listings)| {
-                        (
-                            Retainer::from(retainer),
-                            listings
-                                .into_iter()
-                                .map(ActiveListing::from)
-                                .collect::<Vec<_>>(),
-                        )
-                    })
-                }))
-                .await;
-            retainers_with_listings.map(|r| (character.map(FfxivCharacter::from), r))
-        });
-    let listings = try_join_all(listings_iter).await?;
-    let retainers = UserRetainerListings {
-        retainers: listings,
-    };
-    Ok(Json(retainers))
+) -> Result<impl IntoResponse, ApiError> {
+    Ok((
+        [(header::CACHE_CONTROL, "private, no-store")],
+        Json(db.website_retainer_listings(user.id as i64).await?),
+    ))
 }
 
 pub(crate) async fn retainer_search(
@@ -3915,6 +3885,7 @@ fn api_router() -> Router<WebState> {
         .route("/api/v1/world_data", get(world_data))
         .route("/api/v1/current_user", get(current_user))
         .route("/api/v1/user/retainer", get(user_retainers))
+        .route("/api/v1/user/retainer/in-game", get(user_game_retainers))
         .route("/api/v1/retainer/reorder", post(reorder_retainer))
         .route(
             "/api/v1/retainer/{id}/character",
@@ -3954,7 +3925,10 @@ pub(crate) async fn start_web(
     // build our application with a route
     let worlds = state.world_helper.clone();
     let token = state.token.clone();
-    let api = api_router();
+    let api = api_router().merge(
+        plugin::router(&state.key, state.db.clone(), state.token.clone())
+            .expect("valid plugin configuration"),
+    );
     let ssr_api = ultros_app::ssr_api::SsrApi::new(api.clone().with_state(state.clone()));
     let app = api
         .route("/alerts/websocket", get(connect_websocket))
@@ -4012,7 +3986,7 @@ pub(crate) async fn start_web(
                 },
                 // The file/404 fallback doesn't have per-request bootstrap data; an
                 // empty script tag is harmless and the client falls back to HTTP.
-                |options| shell(options, String::new()),
+                |options| shell(options, String::new(), false),
             ),
         ))
         .with_state(state)
@@ -4087,7 +4061,7 @@ pub(crate) async fn start_web(
         // cross-origin, nothing on an HTTPS->HTTP downgrade. Stating it
         // explicitly pins the behaviour for older clients without changing
         // what third parties already receive.
-        .layer(SetResponseHeaderLayer::overriding(
+        .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::REFERRER_POLICY,
             HeaderValue::from_static("strict-origin-when-cross-origin"),
         ))
@@ -4095,12 +4069,13 @@ pub(crate) async fn start_web(
         // not additional protection — every browser we serve honours one or
         // the other. It is here so scanners stop flagging its absence.
         //
-        // CAREFUL: this claims the CSP header, and the layer is `overriding`.
+        // The plugin approval pages set a stricter CSP before this fallback.
+        // Ordinary app pages use the policy below.
         // Adding a directive here is not free — the app loads Google
         // Analytics, AdSense and Sentry from other origins, so a `script-src`
         // or `connect-src` added to this string silently kills all three.
         // Ship any new directive in report-only first.
-        .layer(SetResponseHeaderLayer::overriding(
+        .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("frame-ancestors 'none'"),
         ))
@@ -4113,18 +4088,25 @@ pub(crate) async fn start_web(
         .ok()
         .flatten()
         .unwrap_or(8080);
+    let bind_ip = std::env::var("HOSTNAME")
+        .ok()
+        .and_then(|origin| plugin::loopback_debug_address(&origin))
+        .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED.into());
     let metrics_token = token.clone();
     let (_main_app, _metrics_app) = futures::future::join(
         async move {
-            let addr = SocketAddr::from(([0, 0, 0, 0], port));
+            let addr = SocketAddr::from((bind_ip, port));
             tracing::info!("listening on {}", addr);
             let listener = TcpListener::bind(addr).await.unwrap();
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    token.cancelled().await;
-                })
-                .await
-                .unwrap();
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                token.cancelled().await;
+            })
+            .await
+            .unwrap();
         },
         start_metrics_server(prometheus_handle, metrics_token),
     )

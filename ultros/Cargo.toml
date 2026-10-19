@@ -10,6 +10,8 @@ license = "MIT or Apache-2.0"
 universalis = { path = "../universalis", features = ["websocket"] }
 ultros-db = { path = "../ultros-db", features = ["rkyv"] }
 ultros-list-doc = { path = "../ultros-list-doc" }
+ultros-calc = { path = "../ultros-frontend/ultros-calc" }
+uuid = { version = "1", features = ["v4"] }
 ultros-clickhouse = { path = "../ultros-clickhouse" }
 clickhouse = { workspace = true }
 sea-orm = { workspace = true }
@@ -133,4 +135,5 @@ jemalloc = ["dep:tikv-jemallocator"]
 # Exposes /test/login for E2E tests. Compile-time gated so prod binaries
 # physically cannot contain this route. Build with: --features test-auth
 test-auth = ["ultros-ingest/test-auth", "ultros-server-core/test-auth", "ultros-discord/test-auth"]
+plugin-localhost = []
 default = []

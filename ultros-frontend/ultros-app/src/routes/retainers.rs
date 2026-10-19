@@ -1,5 +1,5 @@
 use crate::api::{
-    UndercutData, get_login, get_retainer_listings, get_retainer_undercuts,
+    UndercutData, get_login, get_retainer_listing_view, get_retainer_undercuts,
     get_user_retainer_listings,
 };
 use crate::components::alert_drawer::{AlertDrawer, AlertKind};
@@ -11,7 +11,7 @@ use crate::components::data_table::{
 use crate::components::gil::*;
 use crate::components::icon::Icon;
 use crate::components::realtime_status::RealtimeStatus;
-use crate::components::skeleton::{BoxSkeleton, SkeletonCell, SkeletonColumn, TableSkeleton};
+use crate::components::skeleton::{SkeletonCell, SkeletonColumn, TableSkeleton};
 use crate::components::tool_help::{ActionableEmptyState, ToolHeader};
 use crate::components::{item_icon::*, meta::*, world_name::*};
 use crate::global_state::use_world_display_name;
@@ -26,11 +26,12 @@ use leptos::prelude::*;
 use leptos_i18n::I18nContext;
 use leptos_router::*;
 use std::sync::Arc;
-use ultros_api_types::{ActiveListing, FfxivCharacter, Retainer, world_helper::AnySelector};
+use ultros_api_types::user::{RetainerCharacter, RetainerListing, RetainerListingId};
+use ultros_api_types::{Retainer, world_helper::AnySelector};
 use xiv_gen::{ItemId, ItemSortCategoryId};
 
 /// Skeleton columns for [`RetainerTable`]: HQ flag, item, price, quantity,
-/// total — the same five columns the real `<table>` renders, in the same
+/// total and source — the same six columns the real `<table>` renders, in the same
 /// order, so the loading state has the real table's rhythm.
 fn listing_skeleton_columns() -> Vec<SkeletonColumn> {
     vec![
@@ -39,6 +40,7 @@ fn listing_skeleton_columns() -> Vec<SkeletonColumn> {
         SkeletonColumn::new("w-24 px-3 py-2", SkeletonCell::Number),
         SkeletonColumn::new("w-16 px-3 py-2", SkeletonCell::Number),
         SkeletonColumn::new("w-24 px-3 py-2", SkeletonCell::Number),
+        SkeletonColumn::new("w-32 px-3 py-2", SkeletonCell::Text),
     ]
 }
 
@@ -81,8 +83,8 @@ impl From<(ItemId, bool)> for ItemSortKey {
     }
 }
 
-impl From<&ActiveListing> for ItemSortKey {
-    fn from(listing: &ActiveListing) -> Self {
+impl From<&RetainerListing> for ItemSortKey {
+    fn from(listing: &RetainerListing) -> Self {
         ItemSortKey::from((ItemId(listing.item_id), listing.hq))
     }
 }
@@ -100,7 +102,8 @@ impl From<&ActiveListing> for ItemSortKey {
 struct RetainerRow {
     /// The listing's own id, so two otherwise identical listings on one
     /// retainer stay two rows.
-    listing_id: i64,
+    listing_id: RetainerListingId,
+    timestamp: chrono::NaiveDateTime,
     hq: bool,
     item_id: i32,
     price_per_unit: i32,
@@ -110,10 +113,11 @@ struct RetainerRow {
     undercut_by_one: Option<i32>,
 }
 
-impl From<&ActiveListing> for RetainerRow {
-    fn from(listing: &ActiveListing) -> Self {
+impl From<&RetainerListing> for RetainerRow {
+    fn from(listing: &RetainerListing) -> Self {
         Self {
             listing_id: listing.id,
+            timestamp: listing.timestamp,
             hq: listing.hq,
             item_id: listing.item_id,
             price_per_unit: listing.price_per_unit,
@@ -128,6 +132,7 @@ impl From<&UndercutData> for RetainerRow {
         let listing = &undercut_data.current;
         Self {
             listing_id: listing.id,
+            timestamp: listing.timestamp,
             hq: listing.hq,
             item_id: listing.item_id,
             price_per_unit: listing.price_per_unit,
@@ -138,8 +143,8 @@ impl From<&UndercutData> for RetainerRow {
 }
 
 /// The rows of a [`RetainerTable`], in display order.
-fn listing_rows(listings: &[ActiveListing]) -> Vec<RetainerRow> {
-    let mut listings: Vec<&ActiveListing> = listings.iter().collect();
+fn listing_rows(listings: &[RetainerListing]) -> Vec<RetainerRow> {
+    let mut listings: Vec<&RetainerListing> = listings.iter().collect();
     listings.sort_by_key(|listing| ItemSortKey::from(*listing));
     listings.into_iter().map(RetainerRow::from).collect()
 }
@@ -233,16 +238,32 @@ fn base_retainer_columns(
             TrackWidths::default(),
             ColumnHeader::content(move || view! { {t!(i18n, retainers_total)} }.into_any()),
             |row: &RetainerRow| {
-                let total = row.quantity * row.price_per_unit;
+                let total = i64::from(row.quantity) * i64::from(row.price_per_unit);
                 view! {
                     <td class="px-3 py-2 text-right tabular-nums">
-                        <Gil amount=total />
+                        <div class="flex items-center"><GilIcon />{thousands::Separable::separate_with_commas(&total)}</div>
                     </td>
                 }
                 .into_any()
             },
         )
         .header_class(TH),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(|| view! { "Source" }.into_any()),
+            |row: &RetainerRow| {
+                let unverified = matches!(row.listing_id, RetainerListingId::InGame { .. });
+                let timestamp = row.timestamp.format("%Y-%m-%d %H:%M UTC").to_string();
+                view! {
+                    <td class="px-3 py-2 text-xs" data-listing-source=if unverified { "in-game" } else { "universalis" }>
+                        <span class=if unverified { "text-amber-300" } else { "text-[color:var(--color-text-muted)]" } title=format!("{} {timestamp}", if unverified { "Captured in game" } else { "Observed by Universalis" })>
+                            {if unverified { "Awaiting confirmation" } else { "Universalis" }}
+                        </span>
+                        {unverified.then(|| view! { <span class="block text-[color:var(--color-text-muted)]">{timestamp}</span> })}
+                    </td>
+                }.into_any()
+            },
+        ).header_class(TH),
     ]
 }
 
@@ -266,9 +287,9 @@ fn retainer_table_panel(
     let is_empty = Memo::new(move |_| rows.with(|rows| rows.is_empty()));
     view! {
         <div id=format!("retainer-{retainer_id}") class="panel p-4 rounded-xl scroll-mt-20">
-            <span class="content-title">
+            <AppLink attr:class="content-title underline" href=format!("/retainers/listings/{retainer_id}")>
                 {retainer_name} " - " <WorldName id=AnySelector::World(world_id) />
-            </span>
+            </AppLink>
             <div class="overflow-x-auto">
                 <table class="w-full text-sm text-left">
                     <thead class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]">
@@ -342,7 +363,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Signal<Vec<UndercutData>>
 }
 
 #[component]
-fn RetainerTable(retainer: Retainer, listings: Signal<Vec<ActiveListing>>) -> impl IntoView {
+fn RetainerTable(retainer: Retainer, listings: Signal<Vec<RetainerListing>>) -> impl IntoView {
     let i18n = use_i18n();
     let world_name: Arc<str> = use_world_display_name(AnySelector::World(retainer.world_id))
         .unwrap_or_default()
@@ -363,7 +384,7 @@ fn RetainerTable(retainer: Retainer, listings: Signal<Vec<ActiveListing>>) -> im
 
 /// The user's retainers grouped by character, as both retainer pages'
 /// resources deliver them: `T` is the per-listing payload each page shows.
-type RetainerGroups<T> = Vec<(Option<FfxivCharacter>, Vec<(Retainer, Vec<T>)>)>;
+type RetainerGroups<T> = Vec<(Option<RetainerCharacter>, Vec<(Retainer, Vec<T>)>)>;
 
 /// Every character heading and retainer panel in `groups`, keyed at each
 /// level so a refetch that changes one listing touches one row: characters
@@ -389,7 +410,7 @@ where
                 character
                     .as_ref()
                     .map(|character| {
-                        (character.id, character.first_name.clone(), character.last_name.clone())
+                        (character.key(), character.name())
                     })
             }
             children=move |character| {
@@ -417,7 +438,8 @@ where
                             .map(|character| {
                                 view! {
                                     <span class="content-title font-semibold mt-2">
-                                        {character.first_name} " " {character.last_name}
+                                        {character.name()} " · " <WorldName id=AnySelector::World(character.world_id()) />
+                                        {character.is_unverified().then(|| view! { <span class="ml-2 text-sm text-amber-300">"Unverified"</span> })}
                                     </span>
                                 }
                             })}
@@ -623,50 +645,17 @@ pub fn RetainerUndercuts() -> impl IntoView {
 
 #[component]
 pub fn RetainersBasePath() -> impl IntoView {
-    let i18n = use_i18n();
-    let login = Resource::new(|| (), |_| async move { get_login().await });
-    view! {
-        <Suspense fallback=move || view! { <BoxSkeleton rows=2 /> }>
-            {move || match login.get() {
-                None => view! { <BoxSkeleton rows=2 /> }.into_any(),
-                Some(Err(_)) => {
-                    view! {
-                        <ActionableEmptyState
-                            title=t_string!(i18n, retainers_empty_title).to_string()
-                            body=t_string!(i18n, retainers_empty_body).to_string()
-                            action_href="/login?next=/retainers"
-                            action_label=t_string!(i18n, sign_in_discord).to_string()
-                            action_external=true
-                            secondary_action_href="/bot"
-                            secondary_action_label=t_string!(i18n, retainers_empty_secondary_label).to_string()
-                        />
-                    }.into_any()
-                }
-                Some(Ok(_)) => {
-                    view! {
-                        // The tab shell's `ToolHeader` already carries the
-                        // page's `<h1>`, so this landing pane is just the
-                        // orientation text for whoever hasn't picked a tab
-                        // yet.
-                        <p class="text-sm text-[color:var(--color-text-muted)]">
-                            {t!(i18n, retainers_base_path_description)}
-                        </p>
-                    }.into_any()
-                }
-            }}
-        </Suspense>
-    }
+    view! { <RetainerListings /> }
 }
 
 #[component]
 pub fn SingleRetainerListings() -> impl IntoView {
-    let i18n = use_i18n();
     let params = use_params_map();
     let retainer_listings = Resource::new(
         move || params().get("id").and_then(|id| id.parse::<i32>().ok()),
         move |id| async move {
             if let Some(id) = id {
-                Some(get_retainer_listings(id).await)
+                Some(get_retainer_listing_view(id).await)
             } else {
                 None
             }
@@ -674,10 +663,6 @@ pub fn SingleRetainerListings() -> impl IntoView {
     );
 
     view! {
-        <span>
-            {t!(i18n, retainers_claim_prompt_start)}
-            <AppLink href="/retainers/edit">{t!(i18n, retainers_claim_prompt_link)}</AppLink>
-        </span>
         <Suspense fallback=move || {
             view! {
                 <div class="panel p-4 rounded-xl">
@@ -691,25 +676,25 @@ pub fn SingleRetainerListings() -> impl IntoView {
                     .map(|r| {
                         r.and_then(|r| {
                             r.ok()
-                                .map(|r| {
+                                .map(|(retainer, listings)| {
                                     let world_name = use_world_display_name(
-                                            AnySelector::World(r.retainer.world_id),
+                                            AnySelector::World(retainer.world_id),
                                         )
                                         .unwrap_or_default();
                                     view! {
                                         <MetaTitle title=format!(
                                             "{} - 🌍{}",
-                                            &r.retainer.name,
+                                            &retainer.name,
                                             world_name,
                                         ) />
                                         <MetaDescription text=format!(
                                             "All of the listings for the retainer {} on the world {}",
-                                            &r.retainer.name,
+                                            &retainer.name,
                                             world_name,
                                         ) />
                                         <RetainerTable
-                                            retainer=r.retainer
-                                            listings=Signal::stored(r.listings)
+                                            retainer=retainer
+                                            listings=Signal::stored(listings)
                                         />
                                     }
                                 })
@@ -761,7 +746,7 @@ pub fn RetainerListings() -> impl IntoView {
     });
     let has_none = Memo::new(move |_| groups.with(|groups| groups.is_empty()));
     view! {
-        <MetaTitle title=t_string!(i18n, retainers_all_listings_title).to_string() />
+        <MetaTitle title=format!("{} • Ultros",t_string!(i18n, retainers_all_listings_title)) />
         <MetaDescription text=t_string!(i18n, retainers_all_listings_desc).to_string() />
         <Transition fallback=move || {
             view! { <TableSkeleton columns=listing_skeleton_columns() rows=5 /> }
@@ -835,7 +820,7 @@ pub fn RetainerListings() -> impl IntoView {
                                     Phase::Loaded => {
                                         view! {
                                             <Show when=move || has_none.get()>
-                                                <span>{t!(i18n, retainers_add_to_start)}</span>
+                                                <span>"No retainers saved yet. Register them in game or add them in Edit."</span>
                                             </Show>
                                             <div>
                                                 {retainer_groups_view(
@@ -894,6 +879,7 @@ pub fn Retainers() -> impl IntoView {
                     <span>{t!(i18n, retainers_undercuts_tab)}</span>
                 </AppLink>
             </div>
+            <p class="text-sm text-[color:var(--color-text-muted)] mb-4">"With uploads enabled, open a retainer’s selling list in game to see its items here immediately. In-game listings are private and marked Awaiting confirmation until Universalis reports them. Character verification is separate."</p>
             <Outlet />
         </div>
     }
@@ -903,7 +889,7 @@ pub fn Retainers() -> impl IntoView {
 #[cfg(test)]
 mod test {
 
-    use super::{ItemSortKey, watched_pairs};
+    use super::{ItemSortKey, RetainerListing, watched_pairs};
 
     /// The live subscription's `Memo` only holds still across a refetch if
     /// the watched set is order-independent and free of the duplicates a
@@ -937,6 +923,7 @@ mod test {
                 hq: true,
                 timestamp: NaiveDateTime::MIN,
             })
+            .map(RetainerListing::from)
             .collect();
         let original = item_vec.clone();
         item_vec.sort_by_key(|i| ItemSortKey::from(i));
@@ -954,15 +941,17 @@ mod test {
         use chrono::NaiveDateTime;
         use std::collections::HashSet;
         use ultros_api_types::ActiveListing;
-        let listing = |id: i64, price_per_unit: i32| ActiveListing {
-            id,
-            world_id: 34,
-            item_id: 30842,
-            retainer_id: 1,
-            price_per_unit,
-            quantity: 1,
-            hq: true,
-            timestamp: NaiveDateTime::MIN,
+        let listing = |id: i64, price_per_unit: i32| {
+            RetainerListing::from(ActiveListing {
+                id,
+                world_id: 34,
+                item_id: 30842,
+                retainer_id: 1,
+                price_per_unit,
+                quantity: 1,
+                hq: true,
+                timestamp: NaiveDateTime::MIN,
+            })
         };
         let before = listing_rows(&[listing(1, 1000), listing(2, 1000)]);
         assert_eq!(before.iter().collect::<HashSet<_>>().len(), 2);

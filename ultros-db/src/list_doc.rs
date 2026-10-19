@@ -11,8 +11,9 @@
 
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseTransaction, DbErr, EntityTrait,
-    IntoActiveModel, QueryFilter, QuerySelect, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseTransaction,
+    DbBackend, DbErr, EntityTrait, IntoActiveModel, QueryFilter, QuerySelect, Statement,
+    TransactionTrait,
 };
 use ultros_api_types::list::ListPermission;
 use ultros_api_types::world_helper::AnySelector;
@@ -30,6 +31,8 @@ pub const COMPACT_AFTER_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListDocError {
+    #[error("{0}")]
+    Plugin(#[from] crate::plugin::PluginError),
     #[error("update bytes are not a valid document update")]
     InvalidUpdate,
     #[error("update depends on history this server does not have; resync from a snapshot")]
@@ -460,6 +463,81 @@ impl UltrosDb {
                 Err(e)
             }
         }
+    }
+}
+
+/// Lock the actual permission evidence so unsharing/membership removal cannot
+/// race an authorized plugin merge. Row locks also conflict with existing deletes.
+async fn plugin_permission(
+    txn: &DatabaseTransaction,
+    list_id: i32,
+    user: i64,
+) -> Result<ListPermission, ListDocError> {
+    let list = txn
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT owner FROM list WHERE id=$1 FOR UPDATE",
+            [list_id.into()],
+        ))
+        .await?
+        .ok_or(ListError::NotFound)?;
+    if list.try_get::<i64>("", "owner")? == user {
+        return Ok(ListPermission::Owner);
+    }
+    let mut permission = ListPermission::None;
+    for sql in [
+        "SELECT permission FROM list_shared_user WHERE list_id=$1 AND user_id=$2 FOR SHARE",
+        "SELECT s.permission FROM list_shared_group s JOIN user_group_member m ON m.group_id=s.group_id JOIN user_group g ON g.id=s.group_id WHERE s.list_id=$1 AND m.user_id=$2 FOR SHARE OF s,m,g",
+        "SELECT s.permission FROM list_shared_group s JOIN user_group g ON g.id=s.group_id WHERE s.list_id=$1 AND g.owner_id=$2 FOR SHARE OF s,g",
+        "SELECT s.permission FROM list_shared_role s JOIN group_role r ON r.id=s.role_id JOIN group_role_member m ON m.role_id=r.id JOIN user_group g ON g.id=r.group_id WHERE s.list_id=$1 AND m.user_id=$2 FOR SHARE OF s,r,m,g",
+    ] {
+        for row in txn
+            .query_all_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                sql,
+                [list_id.into(), user.into()],
+            ))
+            .await?
+        {
+            permission =
+                permission.max(ListPermission::from(row.try_get::<i16>("", "permission")?));
+        }
+    }
+    Ok(permission)
+}
+
+impl UltrosDb {
+    pub async fn plugin_list_snapshot(
+        &self,
+        principal: &crate::plugin::PluginPrincipal,
+        list_id: i32,
+    ) -> Result<StoredDoc, ListDocError> {
+        let txn = self.db.begin().await?;
+        crate::plugin::auth::authorize(&txn, principal, Some("lists:read")).await?;
+        if plugin_permission(&txn, list_id, principal.owner).await? < ListPermission::Read {
+            return Err(ListError::Forbidden("Insufficient permissions to read list").into());
+        }
+        let stored = load_or_create(&txn, list_id).await?;
+        txn.commit().await?;
+        Ok(StoredDoc {
+            snapshot: stored.snapshot,
+            version: stored.version,
+        })
+    }
+    pub async fn apply_plugin_list_update(
+        &self,
+        principal: &crate::plugin::PluginPrincipal,
+        list_id: i32,
+        update: &[u8],
+    ) -> Result<MergeOutcome, ListDocError> {
+        let txn = self.db.begin().await?;
+        crate::plugin::auth::authorize(&txn, principal, Some("lists:write")).await?;
+        if plugin_permission(&txn, list_id, principal.owner).await? < ListPermission::Write {
+            return Err(ListError::Forbidden("Insufficient permissions to edit list").into());
+        }
+        let outcome = merge(&txn, list_id, ListPermission::Write, update).await?;
+        txn.commit().await?;
+        Ok(outcome)
     }
 }
 

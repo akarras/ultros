@@ -1098,6 +1098,8 @@ mod tests {
                 matched_listing_id: None,
                 matched_price: Some(100),
                 delivered: true,
+                accepted_at: None,
+                pending_destinations: 0,
                 delivery_error: None,
                 read_at: None,
                 title: Some("Title".to_string()),

@@ -54,6 +54,10 @@ mod m20260908_000002_group_sync_revision;
 mod m20260908_000003_market_sweep;
 
 pub struct Migrator;
+mod m20261018_000001_plugin_devices;
+mod m20261018_000002_plugin_retainer_links;
+mod m20261018_000003_plugin_pairing_links;
+mod m20261018_000004_game_retainer_listings;
 
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
@@ -113,6 +117,10 @@ impl MigratorTrait for Migrator {
             Box::new(m20260923_000001_active_listing_id_bigint::Migration),
             Box::new(m20260923_000002_sale_history_id_seq_wrap::Migration),
             Box::new(m20261018_000001_retainer_name_prefix::Migration),
+            Box::new(m20261018_000001_plugin_devices::Migration),
+            Box::new(m20261018_000002_plugin_retainer_links::Migration),
+            Box::new(m20261018_000003_plugin_pairing_links::Migration),
+            Box::new(m20261018_000004_game_retainer_listings::Migration),
         ]
     }
 }

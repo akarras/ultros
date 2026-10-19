@@ -9,7 +9,7 @@
 //! Rendered inside the signed-in branch of the account drop-up, which is what
 //! keeps the character request from firing for anonymous visitors.
 
-use crate::api::get_characters;
+use crate::api::{get_characters, get_registered_game_characters};
 use crate::components::world_name::WorldName;
 use crate::global_state::LocalWorldData;
 use crate::global_state::home_world::use_home_world;
@@ -21,7 +21,24 @@ use ultros_api_types::world_helper::AnySelector;
 pub fn CharacterSwitcher() -> impl IntoView {
     let i18n = use_i18n();
     let (homeworld, set_homeworld) = use_home_world();
-    let characters = Resource::new(|| (), |_| get_characters());
+    let characters = Resource::new(
+        || (),
+        |_| async move {
+            let mut characters = get_characters()
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|c| (format!("{} {}", c.first_name, c.last_name), c.world_id))
+                .collect::<Vec<_>>();
+            for c in get_registered_game_characters().await.unwrap_or_default() {
+                let entry = (c.name, c.home_world);
+                if !characters.contains(&entry) {
+                    characters.push(entry);
+                }
+            }
+            characters
+        },
+    );
 
     view! {
         <Suspense fallback=|| ()>
@@ -30,7 +47,7 @@ pub fn CharacterSwitcher() -> impl IntoView {
                 // "no characters" here — both mean there is nothing to switch
                 // between, and the account menu is not the place to surface a
                 // fetch error.
-                let characters = characters.get().and_then(|c| c.ok()).unwrap_or_default();
+                let characters = characters.get().unwrap_or_default();
                 (!characters.is_empty())
                     .then(|| {
                         view! {
@@ -38,8 +55,7 @@ pub fn CharacterSwitcher() -> impl IntoView {
                             <div class="menu-accordion">
                                 {characters
                                     .into_iter()
-                                    .map(|character| {
-                                        let world_id = character.world_id;
+                                    .map(|(name, world_id)| {
                                         let selected = move || {
                                             homeworld.get().is_some_and(|w| w.id == world_id)
                                         };
@@ -70,7 +86,7 @@ pub fn CharacterSwitcher() -> impl IntoView {
                                                 }
                                             >
                                                 <span class="truncate">
-                                                    {character.first_name} " " {character.last_name}
+                                                    {name}
                                                 </span>
                                                 <span class="menu-item-trailing">
                                                     <WorldName id=AnySelector::World(world_id) />

@@ -26,6 +26,26 @@ pub fn AppShell(children: Children) -> impl IntoView {
     let nav = provide_side_nav_settings();
     provide_search_overlay_state();
     let location = use_location();
+    let plugin_page = move || crate::routes::plugin::is_plugin_path(&location.pathname.get());
+    #[cfg(feature = "hydrate")]
+    Effect::new(move |_| {
+        if plugin_page() != ultros_frontend_core::plugin_browser::document_ready() {
+            let _ = window().location().reload();
+        }
+    });
+    let allow_ads = move || {
+        if plugin_page() {
+            return false;
+        }
+        #[cfg(feature = "hydrate")]
+        {
+            !ultros_frontend_core::plugin_browser::document_ready()
+        }
+        #[cfg(not(feature = "hydrate"))]
+        {
+            true
+        }
+    };
 
     // A new page gets a focus destination after dialogs have closed. Query-only
     // filter changes keep the user's current control focused.
@@ -63,6 +83,9 @@ pub fn AppShell(children: Children) -> impl IntoView {
 
     let shell_classes = move || {
         let mut classes = String::from("app-shell");
+        if plugin_page() {
+            classes.push_str(" app-shell-plugin");
+        }
         if collapsed.get() {
             classes.push_str(" app-shell-collapsed");
         }
@@ -91,9 +114,9 @@ pub fn AppShell(children: Children) -> impl IntoView {
 
             <MobileBar />
 
-            <div class="app-shell-ad-rail">
-                <DesktopAdRail />
-            </div>
+            <Show when=allow_ads>
+                <div class="app-shell-ad-rail"><DesktopAdRail /></div>
+            </Show>
 
             <SearchOverlay />
         </div>

@@ -5,7 +5,6 @@ use std::{
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use poise::serenity_prelude;
 use tokio::sync::Mutex;
 use tracing::{error, info, instrument, warn};
 use ultros_api_types::{
@@ -20,7 +19,7 @@ use ultros_db::{
     world_data::world_cache::{AnySelector as DbAnySelector, WorldCache},
 };
 
-use crate::alerts::delivery::{AlertKind, PushOptions, dispatch_alert};
+use crate::alerts::delivery::{AlertKind, PushOptions};
 use crate::alerts::inbox::{AlertFire, record_fire};
 use crate::event::{EventBus, EventProducer, EventType, NotificationEvent};
 
@@ -308,7 +307,6 @@ impl TrackerState {
 /// inbox didn't push the function's argument count past clippy's
 /// `too_many_arguments` threshold.
 pub struct PriceAlertServices {
-    pub ctx: serenity_prelude::Context,
     pub world_cache: Arc<WorldCache>,
     pub world_helper: Arc<WorldHelper>,
     pub notifications: EventProducer<NotificationEvent>,
@@ -333,7 +331,6 @@ impl PriceAlertListener {
         services: PriceAlertServices,
     ) -> Result<Self> {
         let PriceAlertServices {
-            ctx,
             world_cache,
             world_helper,
             notifications,
@@ -396,7 +393,6 @@ impl PriceAlertListener {
                                         &added,
                                         &state_for_loop,
                                         &db_for_loop,
-                                        &ctx,
                                         &world_helper,
                                         &notifications,
                                     )
@@ -442,7 +438,6 @@ async fn handle_added(
     added: &ListingEventData,
     state: &Arc<Mutex<TrackerState>>,
     db: &UltrosDb,
-    ctx: &serenity_prelude::Context,
     world_helper: &WorldHelper,
     notifications: &EventProducer<NotificationEvent>,
 ) {
@@ -458,7 +453,6 @@ async fn handle_added(
                     if !rule_matches_listing(rule, listing, world_helper, now) {
                         continue;
                     }
-                    rule.last_fired_at = Some(now);
                     to_fire.push((rule.clone(), listing.price_per_unit, listing.world_id));
                 }
             }
@@ -480,13 +474,6 @@ async fn handle_added(
                     }
                     to_fire_list.push((rule.clone(), listing.price_per_unit));
                 }
-                // Apply the cooldown update to every row sharing an alert_id
-                // we just fired, regardless of which row triggered.
-                for rule in list_rules.iter_mut() {
-                    if fired_alert_ids.contains(&rule.alert_id) {
-                        rule.last_fired_at = Some(now);
-                    }
-                }
             }
         }
     }
@@ -505,11 +492,7 @@ async fn handle_added(
         );
 
         let push = PushOptions::for_alert(AlertKind::Price, rule.alert_id, &click_url);
-        let delivery_result = dispatch_alert(rule.alert_id, &title, &body, &push, db, ctx).await;
-        let delivered = delivery_result.is_ok();
-        let delivery_error = delivery_result.err().map(|e| e.to_string());
-
-        record_fire(
+        let accepted = record_fire(
             db,
             notifications,
             AlertFire {
@@ -521,16 +504,12 @@ async fn handle_added(
                 title: &title,
                 body: &body,
                 click_url: &click_url,
-                delivered,
-                delivery_error,
+                push: &push,
             },
         )
         .await;
-        if delivered && let Err(e) = db.update_alert_last_fired(rule.alert_id).await {
-            error!(
-                "failed to update last_fired_at for alert {}: {e}",
-                rule.alert_id
-            );
+        if accepted {
+            mark_accepted(state, rule.alert_id, now).await;
         }
     }
 
@@ -547,11 +526,7 @@ async fn handle_added(
 
         let click_url = format!("/list/{}", rule.list_id);
         let push = PushOptions::for_alert(AlertKind::Price, rule.alert_id, &click_url);
-        let delivery_result = dispatch_alert(rule.alert_id, &title, &body, &push, db, ctx).await;
-        let delivered = delivery_result.is_ok();
-        let delivery_error = delivery_result.err().map(|e| e.to_string());
-
-        record_fire(
+        let accepted = record_fire(
             db,
             notifications,
             AlertFire {
@@ -563,16 +538,30 @@ async fn handle_added(
                 title: &title,
                 body: &body,
                 click_url: &click_url,
-                delivered,
-                delivery_error,
+                push: &push,
             },
         )
         .await;
-        if delivered && let Err(e) = db.update_alert_last_fired(rule.alert_id).await {
-            error!(
-                "failed to update last_fired_at for list-alert {}: {e}",
-                rule.alert_id
-            );
+        if accepted {
+            mark_accepted(state, rule.alert_id, now).await;
+        }
+    }
+}
+
+async fn mark_accepted(state: &Arc<Mutex<TrackerState>>, id: i32, now: DateTime<Utc>) {
+    let mut guard = state.lock().await;
+    for rules in guard.by_item.values_mut() {
+        for rule in rules {
+            if rule.alert_id == id {
+                rule.last_fired_at = Some(now);
+            }
+        }
+    }
+    for rules in guard.by_item_list_rules.values_mut() {
+        for rule in rules {
+            if rule.alert_id == id {
+                rule.last_fired_at = Some(now);
+            }
         }
     }
 }

@@ -49,6 +49,7 @@ uuid = { version = "1", features = [
     "js",
 ] }
 wasm-bindgen = { version = "0.2" }
+wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [
     "AbortSignal",
     "Window",

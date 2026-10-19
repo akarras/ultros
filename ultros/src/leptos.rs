@@ -50,6 +50,12 @@ async fn render_leptos(
     api: SsrApi,
 ) -> Response {
     info!("Custom handler");
+    let plugin_page = crate::web::plugin::browser::is_page(req.uri().path());
+    if plugin_page && !crate::web::plugin::browser::valid_page_request(&req) {
+        let mut response = axum::http::StatusCode::FORBIDDEN.into_response();
+        crate::web::plugin::browser::page_headers(&mut response);
+        return response;
+    }
     // The HTML now carries per-user data (region + current_user), so it must
     // never be cached by a shared proxy.
     let region_str = region.unwrap_or(Region::NorthAmerica).to_string();
@@ -90,7 +96,7 @@ async fn render_leptos(
         provide_context(ListsReadonly(lists_readonly));
         provide_context(api.clone());
     };
-    let app_fn = move || shell(options.clone(), bootstrap_script.clone());
+    let app_fn = move || shell(options.clone(), bootstrap_script.clone(), plugin_page);
     let mut response = match mode {
         StreamMode::OutOfOrder => {
             let handler = leptos_axum::render_app_to_stream_with_context_and_replace_blocks(
@@ -110,6 +116,9 @@ async fn render_leptos(
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, no-store"),
     );
+    if plugin_page {
+        crate::web::plugin::browser::page_headers(&mut response);
+    }
     response
 }
 
@@ -263,6 +272,9 @@ pub(crate) async fn create_leptos_app(
 
     // build our application with a route
     let mut router = Router::new()
+        // Axum's generated route list omits the empty child's trailing slash.
+        // Serve the guide through the same protected Leptos handler either way.
+        .route("/plugin/", axum::routing::get(in_order_handler))
         // `GET /` goes to `root`
         .nest_service(
             &["/", &leptos_options.site_pkg_dir].concat(),

@@ -164,7 +164,9 @@ const DISCORD_AUTH_SECURE: bool = !cfg!(feature = "test-auth");
 ///
 /// This is the server-side counterpart of the client-side fix in #1258.
 fn set_discord_auth_attributes(cookie: &mut Cookie<'static>) {
-    cookie.set_secure(DISCORD_AUTH_SECURE);
+    let debug_loopback =
+        std::env::var("HOSTNAME").is_ok_and(|origin| super::plugin::loopback_debug_origin(&origin));
+    cookie.set_secure(DISCORD_AUTH_SECURE && !debug_loopback);
     cookie.set_same_site(SameSite::Lax);
     cookie.set_http_only(true);
     cookie.set_path("/");

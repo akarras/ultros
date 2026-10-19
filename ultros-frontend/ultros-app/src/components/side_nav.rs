@@ -263,6 +263,9 @@ pub fn SideNav() -> impl IntoView {
             // along with the footer (see `.app-shell-collapsed .side-nav-info`);
             // expand the sidebar to reach them.
             <nav class="side-nav-info" aria-label=t_string!(i18n, help_label)>
+                <SideNavItem href="/plugin".to_string() section="plugin" icon=i::BsController>
+                    "Game plugin"
+                </SideNavItem>
                 <SideNavItem href="/bot".to_string() section="bot" icon=i::BsDiscord>
                     {t!(i18n, discord_bot)}
                 </SideNavItem>

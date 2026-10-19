@@ -26,6 +26,8 @@ use crate::UltrosDb;
 use crate::entity::*;
 use anyhow::Result;
 
+mod website;
+
 pub type FullRetainersList = Vec<(
     Option<final_fantasy_character::Model>,
     Vec<(owned_retainers::Model, retainer::Model)>,

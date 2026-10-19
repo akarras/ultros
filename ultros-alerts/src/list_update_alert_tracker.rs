@@ -2,7 +2,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use poise::serenity_prelude;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 use ultros_api_types::websocket::ListEventData;
@@ -10,7 +9,7 @@ use ultros_db::{UltrosDb, entity::alert};
 
 use crate::{
     alerts::{
-        delivery::{AlertKind, PushOptions, dispatch_alert},
+        delivery::{AlertKind, PushOptions},
         inbox::{AlertFire, record_fire},
         price_alert_tracker::is_off_cooldown_at,
     },
@@ -82,7 +81,6 @@ impl ListUpdateAlertListener {
         db: UltrosDb,
         mut list_events: EventBus<ListEventData>,
         mut alert_events: EventBus<alert::Model>,
-        ctx: serenity_prelude::Context,
         notifications: EventProducer<NotificationEvent>,
     ) -> Result<Self> {
         let state = Arc::new(Mutex::new(TrackerState::default()));
@@ -118,7 +116,7 @@ impl ListUpdateAlertListener {
                     msg = list_events.recv() => {
                         match msg {
                             Ok(event) => {
-                                handle_list_event(&event, &state_for_loop, &db_for_loop, &ctx, &notifications).await;
+                                handle_list_event(&event, &state_for_loop, &db_for_loop, &notifications).await;
                                 if let Err(e) = refresh_state(&state_for_loop, &db_for_loop).await {
                                     error!("list-update tracker refresh failed after list change: {e}");
                                 }
@@ -150,7 +148,6 @@ async fn handle_list_event(
     event: &EventType<Arc<ListEventData>>,
     state: &Arc<Mutex<TrackerState>>,
     db: &UltrosDb,
-    ctx: &serenity_prelude::Context,
     notifications: &EventProducer<NotificationEvent>,
 ) {
     let Some((list_id, item_id, title_hint, body_hint)) = describe_list_event(event) else {
@@ -165,7 +162,6 @@ async fn handle_list_event(
                 if !is_off_cooldown_at(rule.last_fired_at, rule.cooldown_seconds, now) {
                     continue;
                 }
-                rule.last_fired_at = Some(now);
                 to_fire.push(rule.clone());
             }
         }
@@ -179,11 +175,7 @@ async fn handle_list_event(
         );
         let click_url = format!("/list/{}", rule.list_id);
         let push = PushOptions::for_alert(AlertKind::ListUpdate, rule.alert_id, &click_url);
-        let delivery_result = dispatch_alert(rule.alert_id, &title, &body, &push, db, ctx).await;
-        let delivered = delivery_result.is_ok();
-        let delivery_error = delivery_result.err().map(|e| e.to_string());
-
-        record_fire(
+        let accepted = record_fire(
             db,
             notifications,
             AlertFire {
@@ -195,16 +187,19 @@ async fn handle_list_event(
                 title: &title,
                 body: &body,
                 click_url: &click_url,
-                delivered,
-                delivery_error,
+                push: &push,
             },
         )
         .await;
-        if delivered && let Err(e) = db.update_alert_last_fired(rule.alert_id).await {
-            error!(
-                "failed to update last_fired_at for list-update alert {}: {e}",
-                rule.alert_id
-            );
+        if accepted {
+            let mut guard = state.lock().await;
+            if let Some(rules) = guard.by_list.get_mut(&list_id) {
+                for current in rules {
+                    if current.alert_id == rule.alert_id {
+                        current.last_fired_at = Some(now);
+                    }
+                }
+            }
         }
     }
 }

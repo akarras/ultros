@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Alerts wait for their destinations",
+  "blurb": "Alert history now shows pending deliveries, and Ultros retries temporary delivery failures without losing the alert.",
+  "link": "/alerts"
+}

@@ -25,10 +25,7 @@ use ultros_clickhouse::ClickHouseClient;
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 
 use crate::{
-    alerts::alert_manager::{AlertManager, AlertManagerServices},
-    analyzer_service::AnalyzerService,
-    event::{EventReceivers, EventSenders},
-    item_update_service::UpdateService,
+    analyzer_service::AnalyzerService, event::EventSenders, item_update_service::UpdateService,
 };
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -202,7 +199,6 @@ pub struct DiscordServices {
     pub db: UltrosDb,
     pub list_sync: lists::ListSync,
     pub event_senders: EventSenders,
-    pub event_receivers: EventReceivers,
     pub analyzer_service: AnalyzerService,
     pub world_cache: Arc<WorldCache>,
     pub world_helper: Arc<WorldHelper>,
@@ -220,7 +216,6 @@ pub async fn start_discord(
         db,
         list_sync,
         event_senders,
-        event_receivers,
         analyzer_service,
         world_cache,
         world_helper,
@@ -235,7 +230,6 @@ pub async fn start_discord(
             return;
         }
     };
-    let setup_token = token.clone();
     let framework: poise::Framework<Data, Error> = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: commands(),
@@ -285,33 +279,6 @@ pub async fn start_discord(
                     tracing::error!("failed to register Discord application commands: {e}");
                 }
                 tracing::info!(qa = qa_scope.is_some(), "Discord bot ready for commands");
-                let (item_events, alert_events) = (
-                    (
-                        event_receivers.retainers.resubscribe(),
-                        event_receivers.listings.resubscribe(),
-                    ),
-                    (
-                        event_receivers.alerts.resubscribe(),
-                        event_receivers.retainer_undercut.resubscribe(),
-                    ),
-                );
-                tokio::spawn(AlertManager::start_manager(
-                    db.clone(),
-                    item_events,
-                    alert_events,
-                    (
-                        event_receivers.lists.resubscribe(),
-                        event_receivers.history.resubscribe(),
-                    ),
-                    AlertManagerServices {
-                        ctx: ctx.clone(),
-                        token: setup_token,
-                        world_cache: world_cache.clone(),
-                        world_helper: world_helper.clone(),
-                        notifications: event_senders.notifications.clone(),
-                        ch_client: ch_client.clone(),
-                    },
-                ));
                 Ok(Data {
                     qa_scope,
                     db,
