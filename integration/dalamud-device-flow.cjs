@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 "use strict";
+const {clientFetch:fetch}=require("./dalamud-client.cjs");
 // This harness uses the repository's test-auth workflow. Never point it at production.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");

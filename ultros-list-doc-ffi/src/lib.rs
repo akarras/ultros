@@ -1,11 +1,11 @@
-//! Prototype document/sync ABI. Document and response handles are checked integer IDs,
+//! Document/sync ABI. Document and response handles are checked integer IDs,
 //! never Rust addresses. Responses are immutable: sizing/copying does not repeat an edit.
 //! The caller owns its input/output buffers; no Rust allocation crosses the ABI.
 
 #![recursion_limit = "256"]
 
 #[cfg(panic = "abort")]
-compile_error!("The prototype C ABI requires panic=unwind to contain Rust panics.");
+compile_error!("The document C ABI requires panic=unwind to contain Rust panics.");
 
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -135,7 +135,7 @@ struct OnlineCheckpoint {
 impl Document {
     fn new(document: ListDocument) -> Result<Self, String> {
         if document.meta().name.chars().count() > 128 {
-            return Err("Snapshot name exceeds the prototype's 128-character limit".into());
+            return Err("Snapshot name exceeds the document's 128-character limit".into());
         }
         let undo = ListUndo::new(&document);
         Ok(Self {
@@ -194,7 +194,7 @@ impl Document {
                     .ok_or("Quantity overflow")?;
                 quantity(next, false)?;
                 if self.document.row(&key).is_none() && self.document.rows().len() >= MAX_ROWS {
-                    return Err("Prototype row limit reached".into());
+                    return Err("List row limit reached".into());
                 }
                 self.document.add_row(key, need, None)
             }
@@ -276,17 +276,17 @@ fn parse_quality(value: &str) -> Result<Quality, String> {
 fn quantity(value: i64, signed: bool) -> Result<(), String> {
     let min = if signed { -MAX_QUANTITY } else { 0 };
     if !(min..=MAX_QUANTITY).contains(&value) {
-        return Err("Prototype quantities must be within one million".into());
+        return Err("List quantities must be within one million".into());
     }
     Ok(())
 }
 
 fn validate_size(doc: &ListDocument) -> Result<(), String> {
     if doc.meta().name.chars().count() > 128 {
-        return Err("Snapshot name exceeds the prototype's 128-character limit".into());
+        return Err("Snapshot name exceeds the document's 128-character limit".into());
     }
     if doc.rows().len() > MAX_ROWS {
-        return Err("Snapshot exceeds the prototype's 256-row limit".into());
+        return Err("Snapshot exceeds the document's 256-row limit".into());
     }
     Ok(())
 }
@@ -325,7 +325,7 @@ impl State {
         match request {
             Request::OpenSync { checkpoint } => {
                 if self.documents.len() >= MAX_DOCUMENTS {
-                    return Err("Prototype document limit reached".into());
+                    return Err("Open document limit reached".into());
                 }
                 let (document, mut sync) = if let Some(checkpoint) = checkpoint {
                     if checkpoint.format != 1 {
@@ -483,7 +483,7 @@ impl State {
             }
             Request::Open { snapshot } => {
                 if self.documents.len() >= MAX_DOCUMENTS {
-                    return Err("Prototype document limit reached".into());
+                    return Err("Open document limit reached".into());
                 }
                 let document = match snapshot {
                     Some(bytes) => {
@@ -491,7 +491,7 @@ impl State {
                     }
                     None => {
                         let d = ListDocument::new();
-                        d.rename("Prototype cart").map_err(|e| e.to_string())?;
+                        d.rename("Cart").map_err(|e| e.to_string())?;
                         d
                     }
                 };

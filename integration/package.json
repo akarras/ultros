@@ -33,6 +33,7 @@
     "test:login": "node ./login.cjs",
     "test:delete-account": "node ./delete-account.cjs",
     "test:dalamud-direct-link": "node ./dalamud-direct-link.cjs",
+    "test:dalamud-releases": "node ./dalamud-releases.cjs",
     "test:dalamud": "node ./dalamud-device-flow.cjs",
     "test:dalamud-retainers": "cross-env DALAMUD_RETAINER_ONLY=1 node ./dalamud-device-flow.cjs",
     "test:plugin-link-bootstrap": "node --test ./plugin-link-bootstrap.test.cjs",

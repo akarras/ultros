@@ -3,6 +3,7 @@
 pub(crate) mod browser;
 mod flows;
 mod notifications;
+mod releases;
 pub(crate) fn wake_notifications(owner: i64) {
     notifications::wake(owner);
 }
@@ -31,11 +32,14 @@ use ultros_db::{
 use url::Url;
 
 const APPROVAL_COOKIE: &str = "ultros_game_approval";
+#[derive(Clone)]
 pub(super) struct PluginConfig {
     origin: String,
     keys: PluginKeys,
     local: bool,
     trusted_proxies: Vec<IpAddr>,
+    minimum_version: releases::Version,
+    release_root: Option<std::path::PathBuf>,
 }
 
 pub(crate) fn loopback_debug_origin(origin: &str) -> bool {
@@ -116,11 +120,26 @@ impl PluginConfig {
             .filter(|s| !s.trim().is_empty())
             .map(|s| s.trim().parse::<IpAddr>())
             .collect::<std::result::Result<Vec<_>, _>>()?;
+        let minimum_version = std::env::var("ULTROS_PLUGIN_MINIMUM_VERSION")
+            .unwrap_or_else(|_| releases::MINIMUM_VERSION.to_string())
+            .parse::<releases::Version>()
+            .map_err(|error| anyhow::anyhow!("invalid ULTROS_PLUGIN_MINIMUM_VERSION: {error}"))?;
+        anyhow::ensure!(
+            minimum_version >= releases::MINIMUM_VERSION,
+            "minimum plugin version must be at least {}",
+            releases::MINIMUM_VERSION
+        );
+        let release_root = std::env::var_os("ULTROS_PLUGIN_RELEASE_DIR")
+            .filter(|value| !value.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| local.then(|| "artifacts/dalamud/releases".into()));
         Ok(Some(Arc::new(Self {
             origin,
             keys,
             local,
             trusted_proxies,
+            minimum_version,
+            release_root,
         })))
     }
 }
@@ -199,6 +218,8 @@ async fn protect(
     mut request: axum::extract::Request,
     next: Next,
 ) -> Response {
+    let game_api = releases::is_game_api(request.uri().path());
+    let public_release = releases::is_public_release(request.uri().path());
     let browser = request.uri().path().starts_with("/api/v1/plugin/browser/")
         || matches!(
             request.uri().path(),
@@ -254,13 +275,21 @@ async fn protect(
         peer.map(|ip| ip.to_string())
             .unwrap_or_else(|| "internal".into()),
     ));
-    let mut response = if permitted {
-        next.run(request).await
-    } else {
+    let mut response = if !permitted {
         PluginApiError(PluginError::Denied).into_response()
+    } else if game_api && !releases::supported(request.headers(), config.minimum_version) {
+        releases::update_required(&config)
+    } else {
+        next.run(request).await
     };
     let headers = response.headers_mut();
-    headers.insert(header::CACHE_CONTROL, "private, no-store".parse().unwrap());
+    if public_release && permitted {
+        headers
+            .entry(header::CACHE_CONTROL)
+            .or_insert("public, max-age=60".parse().unwrap());
+    } else {
+        headers.insert(header::CACHE_CONTROL, "private, no-store".parse().unwrap());
+    }
     // Chromium serializes a form POST's Origin as "null" under no-referrer.
     // Preserve an exact Origin for CSRF checks while suppressing referrers to
     // other origins. Codes and consent nonces are never placed in URLs.
@@ -298,6 +327,9 @@ pub(crate) fn router(
                         localhost: false,
                         origin: String::new(),
                         download_url: None,
+                        repository_url: None,
+                        latest_version: None,
+                        minimum_version: None,
                     })
                 }),
             ));
@@ -308,23 +340,35 @@ pub(crate) fn router(
             tokio::select! { _=token.cancelled()=>break,_=interval.tick()=>{ if db.cleanup_plugin_data().await.is_err() { tracing::warn!("plugin retention cleanup unavailable"); } } }
         }
     });
-    let auth=Router::new()
-        .route("/api/v1/plugin/capabilities",get(||async{Json(serde_json::json!({"protocol":PROTOCOL_VERSION,"features":["device-authorization","lists-2","private-retainers","game-notifications","notification-stream"]}))}))
-        .route("/api/v1/plugin/pairings",post(create_pairing))
-        .route("/api/v1/plugin/pairings/poll",post(poll_pairing))
-        .route("/api/v1/plugin/session/refresh",post(refresh))
-        .route("/api/v1/plugin/session/revoke",post(disconnect))
-        .route("/api/v1/plugin/session/reauthorize",post(reauthorize))
-        .route("/api/v1/plugin/session",get(current_session))
-        .route("/api/v1/plugin/browser/info",get(browser::info))
-        .route("/api/v1/plugin/browser/approval",get(browser::approval))
-        .route("/api/v1/plugin/browser/link",post(browser::capture_link))
-        .route("/api/v1/plugin/browser/link/select",post(browser::select_link))
-        .route("/api/v1/plugin/download",get(browser::download))
-        .route("/api/v1/plugin/pairings/select",post(browser::select))
-        .route("/api/v1/plugin/pairings/approve",post(browser::approve))
-        .route("/api/v1/plugin/browser/devices",get(browser::devices))
-        .route("/api/v1/plugin/browser/devices/revoke",post(browser::revoke))
+    let auth = Router::new()
+        .route("/api/v1/plugin/capabilities", get(releases::capabilities))
+        .route("/api/v1/plugin/release", get(releases::current))
+        .route("/api/v1/plugin/repository.json", get(releases::repository))
+        .route(
+            "/api/v1/plugin/releases/{version}/download",
+            get(releases::download),
+        )
+        .route("/api/v1/plugin/pairings", post(create_pairing))
+        .route("/api/v1/plugin/pairings/poll", post(poll_pairing))
+        .route("/api/v1/plugin/session/refresh", post(refresh))
+        .route("/api/v1/plugin/session/revoke", post(disconnect))
+        .route("/api/v1/plugin/session/reauthorize", post(reauthorize))
+        .route("/api/v1/plugin/session", get(current_session))
+        .route("/api/v1/plugin/browser/info", get(browser::info))
+        .route("/api/v1/plugin/browser/approval", get(browser::approval))
+        .route("/api/v1/plugin/browser/link", post(browser::capture_link))
+        .route(
+            "/api/v1/plugin/browser/link/select",
+            post(browser::select_link),
+        )
+        .route("/api/v1/plugin/download", get(releases::latest_download))
+        .route("/api/v1/plugin/pairings/select", post(browser::select))
+        .route("/api/v1/plugin/pairings/approve", post(browser::approve))
+        .route("/api/v1/plugin/browser/devices", get(browser::devices))
+        .route(
+            "/api/v1/plugin/browser/devices/revoke",
+            post(browser::revoke),
+        )
         .layer(DefaultBodyLimit::max(8192));
     Ok(auth
         .merge(flows::router())

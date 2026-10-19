@@ -1,0 +1,16 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <Author>Ultros</Author>
+    <RepoUrl>https://github.com/akarras/ultros/tree/main/plugins/dalamud</RepoUrl>
+    <Name>Ultros</Name>
+    <IconUrl>https://ultros.app/static/android-chrome-512x512.png</IconUrl>
+    <Punchline>Ultros item search, lists, chat alerts and optional private retainer uploads.</Punchline>
+    <Description>Connect using browser approval, view item markets and lists, receive chat alerts, and optionally upload retainer listings. Open with /ultros. Purchases and game actions remain manual.</Description>
+    <Tags>market;shopping;lists;retainers;alerts</Tags>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../Ultros.Lists/Ultros.Lists.csproj" /></ItemGroup>
+</Project>
