@@ -20,9 +20,12 @@ internal static class NativeShadowChecks
         File.Copy(Path.Combine(nativeDirectory,"ultros_list_doc_ffi.dll"),original,true);
         document.Edit(new{kind="add_acquired",item_id=8,quality="any",delta=2});
         if(document.View.Rows.Single().Acquired!=2)throw new Exception("Replacing the package broke a resident document.");
-        _=Native.CacheLibrary(original,cache);
-        if(Directory.GetFiles(cache,"*.dll").Length!=1)throw new Exception("An unchanged library was copied twice.");
-        var invalidFixture=Path.Combine(invalid,Path.GetFileName(Native.CacheLibrary(original,cache)));
+        var cached=Native.CacheLibrary(original,cache);
+        // Prior releases may legitimately remain in this stable cache folder.
+        var cachedFiles=Directory.GetFiles(cache,"*.dll").Order().ToArray();
+        if(Native.CacheLibrary(original,cache)!=cached||!cachedFiles.SequenceEqual(Directory.GetFiles(cache,"*.dll").Order()))
+            throw new Exception("An unchanged library was copied twice.");
+        var invalidFixture=Path.Combine(invalid,Path.GetFileName(cached));
         if(File.Exists(invalidFixture))File.Delete(invalidFixture);
         var corrupted=Native.CacheLibrary(original,invalid);
         File.WriteAllBytes(corrupted,[1,2,3]);
