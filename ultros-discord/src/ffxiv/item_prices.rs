@@ -6,8 +6,8 @@ use xiv_gen::ItemId;
 
 use crate::ffxiv::ULTROS_COLOR;
 use crate::ffxiv::helpers::{
-    discord_locale_to_xiv_language, localized_item_matches, localized_item_name,
-    name_matches_lowered, top_n_cheapest_listings,
+    autocomplete_response, discord_locale_to_xiv_language, localized_item_matches,
+    localized_item_name, name_matches_lowered, top_n_cheapest_listings,
 };
 
 use super::{Context, Error};
@@ -18,27 +18,31 @@ pub(crate) async fn prices(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-async fn autocomplete_item<'a>(
+async fn autocomplete_item(
     ctx: Context<'_>,
-    partial: &'a str,
-) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> + 'a {
+    partial: &str,
+) -> poise::serenity_prelude::CreateAutocompleteResponse {
     let user_lang = discord_locale_to_xiv_language(ctx.locale());
-    localized_item_matches(partial, user_lang)
-        .into_iter()
-        .map(|m| poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id))
+    autocomplete_response(
+        localized_item_matches(partial, user_lang)
+            .into_iter()
+            .map(|m| poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id)),
+    )
 }
 
-async fn autocomplete_world<'a>(
-    ctx: Context<'a>,
-    partial: &'a str,
-) -> impl Iterator<Item = String> + 'a {
+async fn autocomplete_world(
+    ctx: Context<'_>,
+    partial: &str,
+) -> poise::serenity_prelude::CreateAutocompleteResponse {
     let partial = partial.to_lowercase();
-    ctx.data()
-        .world_cache
-        .get_all_results()
-        .filter(move |w| name_matches_lowered(w.get_name(), &partial))
-        .map(|w| w.get_name().to_string())
-        .take(99)
+    autocomplete_response(
+        ctx.data()
+            .world_cache
+            .get_all_results()
+            .filter(|w| name_matches_lowered(w.get_name(), &partial))
+            .map(|w| poise::serenity_prelude::AutocompleteChoice::new(w.get_name(), w.get_name()))
+            .take(99),
+    )
 }
 
 /// Get the real time prices from highest to lowest

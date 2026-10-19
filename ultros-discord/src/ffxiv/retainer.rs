@@ -1,6 +1,7 @@
 use crate::EventType;
 use crate::ffxiv::helpers::{
-    discord_locale_to_xiv_language, localized_item_name, name_matches_lowered_ascii, truncate_100,
+    autocomplete_response, discord_locale_to_xiv_language, localized_item_name,
+    name_matches_lowered_ascii, truncate_100,
 };
 use poise::serenity_prelude::Color;
 use std::fmt::Write;
@@ -48,7 +49,7 @@ async fn list(ctx: Context<'_>) -> Result<(), Error> {
     super::retainer_setup::list(ctx).await
 }
 
-async fn autocomplete_retainer(
+async fn autocomplete_retainer_choices(
     ctx: Context<'_>,
     partial: &str,
 ) -> Vec<poise::serenity_prelude::AutocompleteChoice> {
@@ -102,7 +103,7 @@ async fn autocomplete_retainer(
     }
 }
 
-async fn autocomplete_world(ctx: Context<'_>, partial: &str) -> Vec<String> {
+async fn autocomplete_world_names(ctx: Context<'_>, partial: &str) -> Vec<String> {
     let partial = partial.to_ascii_lowercase();
     let mut worlds: Vec<_> = ctx
         .data()
@@ -116,7 +117,7 @@ async fn autocomplete_world(ctx: Context<'_>, partial: &str) -> Vec<String> {
     worlds
 }
 
-async fn autocomplete_character(
+async fn autocomplete_character_choices(
     ctx: Context<'_>,
     partial: &str,
 ) -> Vec<poise::serenity_prelude::AutocompleteChoice> {
@@ -381,7 +382,7 @@ async fn add(
     super::retainer_setup::add(ctx, retainer, world, character).await
 }
 
-async fn owned_retainer_auto_complete(
+async fn owned_retainer_auto_complete_choices(
     ctx: Context<'_>,
     partial: &str,
 ) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> {
@@ -431,4 +432,43 @@ async fn remove(
         .retainers
         .send(EventType::removed(removed));
     Ok(())
+}
+
+// poise 0.7 takes a `CreateAutocompleteResponse` from an autocomplete callback
+// instead of any serializable iterator. These wrappers keep the suggestion
+// logic above untouched (including its ordering and 25-item truncation) and
+// only adapt the return type, so the `#[autocomplete = "..."]` attributes keep
+// naming the same functions.
+
+async fn autocomplete_retainer(
+    ctx: Context<'_>,
+    partial: &str,
+) -> poise::serenity_prelude::CreateAutocompleteResponse {
+    autocomplete_response(autocomplete_retainer_choices(ctx, partial).await)
+}
+
+async fn autocomplete_world(
+    ctx: Context<'_>,
+    partial: &str,
+) -> poise::serenity_prelude::CreateAutocompleteResponse {
+    autocomplete_response(
+        autocomplete_world_names(ctx, partial)
+            .await
+            .into_iter()
+            .map(|name| poise::serenity_prelude::AutocompleteChoice::new(name.clone(), name)),
+    )
+}
+
+async fn autocomplete_character(
+    ctx: Context<'_>,
+    partial: &str,
+) -> poise::serenity_prelude::CreateAutocompleteResponse {
+    autocomplete_response(autocomplete_character_choices(ctx, partial).await)
+}
+
+async fn owned_retainer_auto_complete(
+    ctx: Context<'_>,
+    partial: &str,
+) -> poise::serenity_prelude::CreateAutocompleteResponse {
+    autocomplete_response(owned_retainer_auto_complete_choices(ctx, partial).await)
 }

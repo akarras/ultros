@@ -188,9 +188,9 @@ async fn click(
 }
 
 fn description(session: &Session) -> String {
-    let reply = session.reply(|id| format!("World {id}"));
-    assert_eq!(reply.ephemeral, Some(true));
-    serde_json::to_value(&reply.embeds[0]).unwrap()["description"]
+    let reply = reply_json(session.reply(|id| format!("World {id}")));
+    assert!(is_ephemeral(&reply));
+    reply["embeds"][0]["description"]
         .as_str()
         .unwrap()
         .to_owned()
