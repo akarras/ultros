@@ -238,6 +238,32 @@ pub struct RetainerSnapshot {
     pub listings: Vec<PrivateListing>,
 }
 
+/// Private, owner-scoped price comparison; never a public market upload.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RetainerPriceLookup {
+    pub retainer_id: String,
+    pub name: String,
+    pub world_id: i32,
+    pub world_name: String,
+    pub source: String,
+    pub observed_at: Option<DateTime<Utc>>,
+    pub fetched_at: DateTime<Utc>,
+    pub listings: Vec<RetainerPriceQuote>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RetainerPriceQuote {
+    pub slot: u8,
+    pub item_id: i32,
+    pub hq: bool,
+    pub quantity: i32,
+    pub current_price: i64,
+    pub competitor_price: Option<i64>,
+    pub market_checked_at: Option<DateTime<Utc>>,
+    pub suggested_price: Option<i64>,
+    pub status: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NotificationAction {

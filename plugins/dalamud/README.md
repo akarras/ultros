@@ -8,6 +8,14 @@ Visit **https://ultros.app/plugin/** for availability and setup. The backend ser
 
 For migration from the development prototype, disable every old Ultros dev-plugin entry before installing. The internal name is now **Ultros**, so this is a fresh plugin installation and needs a new connection. Preserve any unsynchronized local work before removing old files. Website lists and retainer registrations stay with your account.
 
+## Retainer price assistance
+
+Under **Characters & retainers**, choose **Listings & prices** beside a registered retainer. The separate window can sit beside its in-game Markets window. It displays the last private capture, or cached Universalis rows if no capture exists. Enable both uploader permissions and open Markets to replace a capture; the helper does not independently detect sales or edits.
+
+Comparisons use the same quality on the retainer's home world and exclude all retainers saved to your account. Suggestions are one gil below the lowest other price, with a one-gil floor. Unknown, future-dated or more-than-30-minute-old market reviews do not produce suggestions; displayed suggestions also expire while the window stays open. There may be better pricing strategies, and cached data cannot guarantee a sale.
+
+Use **Copy** to copy a unit price, then enter and confirm it in game. No game actions or price changes are automated. Selecting an item opens its market view using that retainer's world. Retainer reading can be approved without registration or upload permission after the retainers have been saved.
+
 ## Build and load
 
 Requires Windows, PowerShell 7, .NET 10, the repository's Rust/MSVC toolchain, and Dalamud API 15 references. The SDK normally finds them in the XIVLauncher Dalamud dev directory.

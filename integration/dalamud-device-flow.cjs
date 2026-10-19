@@ -146,6 +146,13 @@ async function main() {
     await page.goto(new URL("/retainers/listings",base).href,{waitUntil:"networkidle0"});
     const capture={capture_id:crypto.randomUUID().replaceAll("-",""),base_revision:retainer.revision,capture_epoch:current.capture_epoch,observed_at:new Date().toISOString(),complete:true,listings:[{slot:0,item_id:8,hq:false,quantity:5,unit_price:100},{slot:1,item_id:8,hq:false,quantity:5,unit_price:100}]};
     assert.equal((await api("POST","/api/v1/plugin/retainers/"+retainer.id+"/listings",capture,access)).status,200);
+    const pricePath="/api/v1/plugin/retainers/"+retainer.id+"/prices";
+    assert.equal((await api("GET",pricePath)).status,401,"price lookup needs a scoped game credential");
+    const prices=await api("GET",pricePath,undefined,access);
+    assert.equal(prices.status,200);assert.match(prices.headers.get("cache-control"),/no-store/);
+    assert.equal(prices.data.retainer_id,retainer.id);assert.equal(prices.data.world_id,63);
+    assert.equal(prices.data.source,"in_game");assert.equal(prices.data.listings.length,2,"price lookup must preserve identical stacks");
+    assert(prices.data.listings.every(row=>row.item_id===8&&row.current_price===100&&row.quantity===5));
     await page.waitForSelector('[data-listing-source="in-game"]',{timeout:15000});
     const ownListings=await api("GET","/api/v1/user/retainer/listings",undefined,undefined,{Cookie:cookies});
     assert.match(ownListings.headers.get("cache-control"),/private.*no-store/);
@@ -169,6 +176,9 @@ async function main() {
     assert.equal((await api("POST","/api/v1/plugin/characters/"+character.id+"/uploads",{enabled:false,delete_snapshots:true},access)).status,200);
     const deleted=await api("GET","/api/v1/user/retainer/listings",undefined,undefined,{Cookie:cookies});
     assert(deleted.data.retainers.flatMap(([,retainers])=>retainers.flatMap(([,rows])=>rows)).every(row=>row.id.source!=="in_game"),"deleting private captures must remove their website rows");
+    const emptyPrices=await api("GET",pricePath,undefined,access);
+    assert.equal(emptyPrices.status,200);assert.equal(emptyPrices.data.source,"universalis");
+    assert.equal(emptyPrices.data.listings.length,0,"price lookup cannot retain a deleted private capture");
     if(process.env.DALAMUD_RETAINER_ONLY==="1"){
       console.log("PASS: integrated onboarding and consent, real retainer registration, normal unverified-character grouping, immediate private listings in SSR/hydrated All Listings and individual views, separate identical stacks, Undercuts, account isolation, public-table separation and deletion.");
       return;

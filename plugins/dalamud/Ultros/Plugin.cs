@@ -46,10 +46,13 @@ public sealed class Plugin : IDalamudPlugin
         capture=new RetainerCapture(worker,config);
         inventoryProgress=new InventoryAcquisition(worker,capture,config);
         window=new MainWindow(worker,capture,inventoryProgress,config);
+        var retainerPrices=new RetainerPricesWindow(worker,window);
+        window.OpenRetainerPrices=retainerPrices.Show;
         gameNotifications=new GameNotifications(worker,config,capture);
         itemShortcuts=new ItemShortcuts(worker,window,endpoint);
         testNotifications=gameNotifications.Test;
         windows.AddWindow(window);
+        windows.AddWindow(retainerPrices);
         openLab=ShowLab;
         Commands.AddHandler("/ultros", new CommandInfo(OnCommand) { HelpMessage = "Open Ultros: connect, shop, register retainers and receive alerts." });
         if(UltrosEndpoint.LocalhostAvailable)Commands.AddHandler("/ultroslab",new CommandInfo((_,_)=>ShowLab()){HelpMessage="Open the local CRDT merge experiment."});

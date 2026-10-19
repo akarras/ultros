@@ -23,6 +23,7 @@ pub(super) fn router() -> Router<super::WebState> {
         .route("/api/v1/plugin/retainers/register", post(register))
         .route("/api/v1/plugin/characters/{id}/uploads", post(consent))
         .route("/api/v1/plugin/retainers/{id}/listings", post(upload))
+        .route("/api/v1/plugin/retainers/{id}/prices", get(retainer_prices))
         .route("/api/v1/plugin/retainers/snapshots", get(snapshots))
         .route("/api/v1/plugin/notifications", get(notifications))
         .route(
@@ -150,6 +151,18 @@ async fn snapshots(
     PluginUser(user): PluginUser,
 ) -> Result<Json<Vec<RetainerSnapshot>>, PluginApiError> {
     Ok(Json(db.plugin_retainer_snapshots(&user).await?))
+}
+async fn retainer_prices(
+    State(db): State<UltrosDb>,
+    PluginUser(user): PluginUser,
+    Path(id): Path<i64>,
+) -> Result<Json<RetainerPriceLookup>, PluginApiError> {
+    if id <= 0 {
+        return Err(ultros_db::plugin::PluginError::Invalid("invalid_retainer").into());
+    }
+    db.plugin_rate_limit(&format!("retainer-prices:{}", user.session.id), 30, 60)
+        .await?;
+    Ok(Json(db.plugin_retainer_prices(&user, id).await?))
 }
 async fn notifications(
     State(db): State<UltrosDb>,

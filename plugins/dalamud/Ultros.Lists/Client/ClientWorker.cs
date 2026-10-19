@@ -8,7 +8,8 @@ public sealed record CartEstimate(string Version, string Scope, DateTimeOffset O
 public sealed record EstimateLine(int ItemId, bool? Hq, int Remaining, int PricedUnits, long Total, string Status);
 public sealed record ClientView(bool Connected, string Status, string StorageMode, string? HumanCode, string VerificationUrl,
     DeviceSession? Session, ListAccess[] Lists, int? SelectedList, CartView? Cart, bool CanEdit, UnverifiedCharacter[] Characters,
-    GameDelivery[] Inbox, MarketView? Market, SaleRow[] Sales, CartEstimate? Estimate, string[] Scopes, string PriceRegion = "", string NotificationTransport = "Polling", string RosterStatus = "", bool Registering = false, string? ApprovalUrl = null)
+    GameDelivery[] Inbox, MarketView? Market, SaleRow[] Sales, CartEstimate? Estimate, string[] Scopes, string PriceRegion = "", string NotificationTransport = "Polling", string RosterStatus = "", bool Registering = false, string? ApprovalUrl = null,
+    RetainerPriceLookup? RetainerPrices = null, string RetainerPriceStatus = "")
 {
     public override string ToString() => $"ClientView {{ Connected = {Connected}, pairing credentials redacted }}";
 }
@@ -40,6 +41,9 @@ public sealed class ClientWorker : IDisposable
     private int notificationWake,feedReady;
     private string status = "Starting…";
     private string rosterStatus = "";
+    private RetainerPriceLookup? retainerPrices;
+    private string retainerPriceStatus="";
+    private string? pricesDevice,pricesAccount;
     private bool registering;
     private DateTimeOffset nextNotifications, nextLists, nextCart;
     private string? loadedDevice;
@@ -60,13 +64,13 @@ public sealed class ClientWorker : IDisposable
         running=Task.Run(Run);
     }
     private bool Offer(Func<Task> action) => commands.Writer.TryWrite(action);
-    public bool Pair(string label, bool editLists, bool register, bool upload)
+    public bool Pair(string label, bool editLists, bool register, bool upload, bool readRetainers=false)
     {
         CancelQueuedInventory();
         return Offer(async () => {
         var scopes=new List<string>(Protocol.DefaultScopes);
         if(editLists)scopes.Add("lists:write");
-        if(register||upload)scopes.Add("retainers:read");
+        if(readRetainers||register||upload)scopes.Add("retainers:read");
         if(register)scopes.Add("retainers:register");
         if(upload)scopes.Add("retainers:upload");
         await connection!.BeginPairing(label,scopes.ToArray(),stop.Token);
@@ -76,6 +80,7 @@ public sealed class ClientWorker : IDisposable
     public bool Disconnect(){CancelQueuedInventory();return Offer(async()=>{
         await StopFeed();
         await connection!.Disconnect();cart?.Dispose();cart=null;lists=[];characters=[];inbox.Clear();shown.Clear();loadedDevice=null;estimate=null;rosterStatus="";
+        ClearRetainerPrices();
         while(toasts.TryDequeue(out _)){}queuedToasts.Clear();CancelQueuedCaptures();
         status="Disconnected. Saved cart work remains bound to its original account and server.";
     });}
@@ -193,6 +198,29 @@ public sealed class ClientWorker : IDisposable
         _=await connection!.Send<bool>(HttpMethod.Post,"/api/v1/plugin/notifications/ack",new{ids=new[]{id}},stop.Token);
     });
     public bool TryToast(out GameDelivery? delivery)=>toasts.TryDequeue(out delivery);
+    private void ClearRetainerPrices(){retainerPrices=null;retainerPriceStatus="";pricesDevice=pricesAccount=null;}
+    public bool LookupRetainer(string retainer)
+    {
+        var session=View.Session;
+        if(!View.Connected||session is null||!session.Scopes.Contains("retainers:read"))return false;
+        return Offer(async()=>{
+            if(connection?.Connected!=true||connection.Session?.Id!=session.Id
+                ||connection.Session.AccountId!=session.AccountId||!connection.HasScope("retainers:read"))return;
+            retainerPrices=null;pricesDevice=session.Id;pricesAccount=session.AccountId;
+            retainerPriceStatus="Loading this retainer's captured listings and same-world comparisons…";Publish();
+            try {
+                retainerPrices=await connection.Send<RetainerPriceLookup>(HttpMethod.Get,$"/api/v1/plugin/retainers/{PositiveId(retainer)}/prices",null,stop.Token);
+                retainerPriceStatus="Suggestions use cached prices for the same quality on this retainer's world. Your saved retainers are excluded.";
+            }
+            catch(ApiFailure e){
+                retainerPriceStatus=e.Code=="retainer_registration_required"
+                    ? "Save this retainer to your Ultros account, then refresh. Its website assignment may have changed."
+                    : e.Status==429?"Too many refreshes. Wait a minute, then retry.":e.Message;
+                throw;
+            }
+            catch(Exception e){retainerPriceStatus=SafeError(e);throw;}
+        });
+    }
     public bool FetchItem(int item,string scope)=>Offer(async()=>{
         if(item<=0||scope.Length is <1 or >64)throw new ArgumentException("Select an item and price zone.");
         using var response=await connection!.Public<JsonDocument>($"/api/v1/listings/{Uri.EscapeDataString(scope)}/{item}",stop.Token);
@@ -298,8 +326,11 @@ public sealed class ClientWorker : IDisposable
     private void Publish()
     {
         var connected=connection?.Connected==true;
+        var showPrices=connected&&connection!.HasScope("retainers:read")
+            &&pricesDevice==connection.Session?.Id&&pricesAccount==connection.Session?.AccountId;
         Volatile.Write(ref view,new ClientView(connected,status,connection?.StorageMode??"",connection?.HumanCode,connection?.VerificationUrl??endpoint.At("/plugin/verify").AbsoluteUri,
-            connection?.Session,connected?lists:[],cart?.Id,cart?.Document.View,CanEdit(),connected?characters:[],connected?inbox.ToArray():[],market,sales,estimate,connection?.Session?.Scopes??[],priceRegion,Volatile.Read(ref feedReady)!=0?"Live notifications (SSE)":"Polling fallback",connected?rosterStatus:"",registering,connection?.ApprovalUrl));
+            connection?.Session,connected?lists:[],cart?.Id,cart?.Document.View,CanEdit(),connected?characters:[],connected?inbox.ToArray():[],market,sales,estimate,connection?.Session?.Scopes??[],priceRegion,Volatile.Read(ref feedReady)!=0?"Live notifications (SSE)":"Polling fallback",connected?rosterStatus:"",registering,connection?.ApprovalUrl,
+            showPrices?retainerPrices:null,showPrices?retainerPriceStatus:""));
     }
     private async Task Run()
     {
@@ -313,7 +344,7 @@ public sealed class ClientWorker : IDisposable
                 {
                     try{await command();}
                     catch(OperationCanceledException)when(stop.IsCancellationRequested){throw;}
-                    catch(ApiFailure e){status=e.Message;if(e.Status==401){characters=[];lists=[];}}
+                    catch(ApiFailure e){status=e.Message;if(e.Status==401){characters=[];lists=[];ClearRetainerPrices();}}
                     catch(Exception e){status=SafeError(e);}
                     Publish();
                 }
@@ -322,7 +353,7 @@ public sealed class ClientWorker : IDisposable
                     if(await connection.PollPairing(stop.Token)){status=connection.Status;nextLists=nextNotifications=nextCart=DateTimeOffset.MinValue;}
                     if(connection.Connected)
                     {
-                        if(loadedDevice!=connection.Session!.Id){CancelQueuedInventory();await StopFeed();cart?.Dispose();cart=null;estimate=null;rosterStatus="";LoadInbox();nextLists=nextNotifications=DateTimeOffset.MinValue;}
+                        if(loadedDevice!=connection.Session!.Id){CancelQueuedInventory();await StopFeed();cart?.Dispose();cart=null;estimate=null;rosterStatus="";ClearRetainerPrices();LoadInbox();nextLists=nextNotifications=DateTimeOffset.MinValue;}
                         if(DateTimeOffset.UtcNow>=nextLists)await RefreshAccount();
                         if(connection.HasScope("notifications:read"))await UpdateFeed();
                         if(DateTimeOffset.UtcNow>=nextNotifications&&connection.HasScope("notifications:read"))await PollNotifications();

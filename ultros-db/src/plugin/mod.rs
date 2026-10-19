@@ -3,6 +3,7 @@
 pub(crate) mod auth;
 pub(crate) mod crypto;
 mod notifications;
+mod prices;
 mod retainers;
 #[cfg(test)]
 mod tests;
