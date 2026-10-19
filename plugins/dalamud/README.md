@@ -73,6 +73,12 @@ Development ZIPs stay local. The web server advertises only indexed release pack
 
 After pairing, a bearer-authenticated SSE connection wakes the durable notification fetch immediately for events on that server. It reconnects automatically; scoped HTTP fetch/ack and 60-second polling recover missed or cross-instance signals. Unpaired clients do not open a notification stream. Remote list changes still poll up to 60 seconds; local edits sync immediately.
 
+### Optional inventory progress
+
+In Settings, enable **Automatically mark new inventory items acquired** for the active writable list. It defaults off and requires matching packaged client structs and explicit re-enablement after a game build change. A complete, stable snapshot of player bags, crystals, armoury and equipment establishes the baseline; existing items are not counted. Later positive net gains fill exact-quality rows first, then any-quality rows, up to each row's remaining need. Bag/equipment moves do not count, and consumption does not reduce progress. Transfers from retainers/saddlebags into the tracked inventories count as incoming items.
+
+Changing list/account/character, disabling the option, loading incomplete inventory or entering recovery discards the old observation context and queued work. Deltas run on the same background document worker as manual edits and use the CRDT acquisition counter. Inventory snapshots and character identifiers remain in memory; only matching list progress is saved/synchronized. Transient gains consumed between stable observations can be missed; manual progress controls remain available.
+
 ## Credentials and saved work
 
 - Discord credentials never enter the plugin. Access tokens stay in memory. Rotating refresh tokens use verified Windows CurrentUser DPAPI and a user-only directory ACL. Wine/unverified storage uses memory only. This does not isolate credentials from other code running as your OS user or inside the game.

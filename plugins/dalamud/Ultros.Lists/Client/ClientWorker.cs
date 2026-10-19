@@ -47,6 +47,9 @@ public sealed class ClientWorker : IDisposable
     private int queuedCaptures;
     private int captureGeneration;
     public void CancelQueuedCaptures()=>Interlocked.Increment(ref captureGeneration);
+    private int inventoryGeneration;
+    public int InventoryGeneration=>Volatile.Read(ref inventoryGeneration);
+    public void CancelQueuedInventory()=>Interlocked.Increment(ref inventoryGeneration);
     private ClientView view;
     public ClientView View => Volatile.Read(ref view);
     private sealed record SavedInbox(GameDelivery[] Entries, string[] Shown);
@@ -57,26 +60,30 @@ public sealed class ClientWorker : IDisposable
         running=Task.Run(Run);
     }
     private bool Offer(Func<Task> action) => commands.Writer.TryWrite(action);
-    public bool Pair(string label, bool editLists, bool register, bool upload) => Offer(async () =>
+    public bool Pair(string label, bool editLists, bool register, bool upload)
     {
+        CancelQueuedInventory();
+        return Offer(async () => {
         var scopes=new List<string>(Protocol.DefaultScopes);
         if(editLists)scopes.Add("lists:write");
         if(register||upload)scopes.Add("retainers:read");
         if(register)scopes.Add("retainers:register");
         if(upload)scopes.Add("retainers:upload");
         await connection!.BeginPairing(label,scopes.ToArray(),stop.Token);
-    });
+        });
+    }
     public bool CancelPairing()=>Offer(()=>{connection!.CancelPairing();return Task.CompletedTask;});
-    public bool Disconnect()=>Offer(async()=>{
+    public bool Disconnect(){CancelQueuedInventory();return Offer(async()=>{
         await StopFeed();
         await connection!.Disconnect();cart?.Dispose();cart=null;lists=[];characters=[];inbox.Clear();shown.Clear();loadedDevice=null;estimate=null;rosterStatus="";
         while(toasts.TryDequeue(out _)){}queuedToasts.Clear();CancelQueuedCaptures();
         status="Disconnected. Saved cart work remains bound to its original account and server.";
-    });
+    });}
     public bool Refresh()=>Offer(async()=>{await RefreshAccount();nextNotifications=DateTimeOffset.MinValue;nextCart=DateTimeOffset.MinValue;});
-    public bool SelectList(int id)=>Offer(()=>OpenList(id));
+    public bool SelectList(int id){CancelQueuedInventory();return Offer(()=>OpenList(id));}
     private async Task OpenList(int id)
     {
+        CancelQueuedInventory();
         if(!lists.Any(l=>l.List.Id==id))throw new InvalidOperationException("Refresh the available lists first.");
         if(cart?.Document.View.AwaitingPersist==true)cart.Save();
         cart?.Dispose();cart=null;estimate=null;
@@ -103,6 +110,23 @@ public sealed class ClientWorker : IDisposable
             cart!.Edit(new{kind="add",item_id=item,quality,need=quantity});
             estimate=null;nextCart=DateTimeOffset.MinValue;
             status="Item added to the selected list. Saved locally; synchronizing…";
+            return Task.CompletedTask;
+        });
+    }
+    public bool ApplyInventoryGains(ListEditTarget target,int generation,InventoryGain[] gains)
+    {
+        if(generation!=InventoryGeneration||!target.Matches(View)||gains.Length>4096)return false;
+        var pending=gains.ToArray();
+        return Offer(()=>{
+            if(generation!=InventoryGeneration||!target.Matches(connection?.Session,cart?.Id,CanEdit()))return Task.CompletedTask;
+            var deltas=InventoryProgress.Allocate(cart!.Document.View.Rows,pending);
+            long applied=0;
+            foreach(var delta in deltas) {
+                if(generation!=InventoryGeneration)break;
+                cart.Edit(new{kind="add_acquired",item_id=delta.ItemId,quality=delta.Quality,delta=delta.Quantity});
+                applied+=delta.Quantity;
+            }
+            if(applied>0){estimate=null;nextCart=DateTimeOffset.MinValue;status=$"Marked {applied:N0} units acquired from inventory. Saved locally; synchronizing…";}
             return Task.CompletedTask;
         });
     }
@@ -298,7 +322,7 @@ public sealed class ClientWorker : IDisposable
                     if(await connection.PollPairing(stop.Token)){status=connection.Status;nextLists=nextNotifications=nextCart=DateTimeOffset.MinValue;}
                     if(connection.Connected)
                     {
-                        if(loadedDevice!=connection.Session!.Id){await StopFeed();cart?.Dispose();cart=null;estimate=null;rosterStatus="";LoadInbox();nextLists=nextNotifications=DateTimeOffset.MinValue;}
+                        if(loadedDevice!=connection.Session!.Id){CancelQueuedInventory();await StopFeed();cart?.Dispose();cart=null;estimate=null;rosterStatus="";LoadInbox();nextLists=nextNotifications=DateTimeOffset.MinValue;}
                         if(DateTimeOffset.UtcNow>=nextLists)await RefreshAccount();
                         if(connection.HasScope("notifications:read"))await UpdateFeed();
                         if(DateTimeOffset.UtcNow>=nextNotifications&&connection.HasScope("notifications:read"))await PollNotifications();
@@ -330,7 +354,7 @@ public sealed class ClientWorker : IDisposable
     };
     public void Dispose()
     {
-        commands.Writer.TryComplete();stop.Cancel();
+        CancelQueuedInventory();commands.Writer.TryComplete();stop.Cancel();
         try{running.Wait(TimeSpan.FromSeconds(5));}catch(AggregateException){}
         // The worker retains ownership until its finally block completes.
     }

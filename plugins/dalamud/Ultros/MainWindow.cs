@@ -11,6 +11,7 @@ internal sealed class MainWindow : Window
 {
     private readonly ClientWorker worker;
     private readonly RetainerCapture capture;
+    private readonly InventoryAcquisition inventoryProgress;
     private readonly Configuration config;
     private string label="My game client";
     private bool editLists,register,upload;
@@ -24,9 +25,9 @@ internal sealed class MainWindow : Window
     private readonly Dictionary<string,(int Need,int Acquired)> drafts=[];
     private static readonly string[] Qualities=["any","nq","hq"];
     private string uiStatus="";
-    internal MainWindow(ClientWorker worker,RetainerCapture capture,Configuration config):base($"Ultros v{ClientBuild.Version.ToString(4)}###UltrosConnected")
+    internal MainWindow(ClientWorker worker,RetainerCapture capture,InventoryAcquisition inventoryProgress,Configuration config):base($"Ultros v{ClientBuild.Version.ToString(4)}###UltrosConnected")
     {
-        this.worker=worker;this.capture=capture;this.config=config;
+        this.worker=worker;this.capture=capture;this.inventoryProgress=inventoryProgress;this.config=config;
         localhost=config.Localhost;localOrigin=config.LocalOrigin;profile=config.Profile;
         Size=new Vector2(920,670);SizeCondition=ImGuiCond.FirstUseEver;
         SizeConstraints=new WindowSizeConstraints{MinimumSize=new Vector2(650,440),MaximumSize=new Vector2(float.MaxValue)};
@@ -304,6 +305,20 @@ internal sealed class MainWindow : Window
     }
     private void Settings()
     {
+        var automatic=config.InventoryProgressEnabled;
+        var canEnable=capture.Compatible&&capture.GameBuild is not null;
+        ImGui.BeginDisabled(!canEnable&&!automatic);
+        if(ImGui.Checkbox("Automatically mark new inventory items acquired",ref automatic)) {
+            config.InventoryProgressEnabled=automatic;config.InventoryProgressGameBuild=automatic?capture.GameBuild:null;
+            worker.CancelQueuedInventory();Plugin.Interface.SavePluginConfig(config);
+        }
+        ImGui.EndDisabled();
+        if(automatic&&canEnable&&config.InventoryProgressGameBuild!=capture.GameBuild&&ImGui.Button("Enable inventory progress for this game build")) {
+            config.InventoryProgressGameBuild=capture.GameBuild;worker.CancelQueuedInventory();Plugin.Interface.SavePluginConfig(config);
+        }
+        ImGui.TextWrapped(inventoryProgress.Status);
+        ImGui.TextWrapped("Active writable list only. Existing inventory is the baseline. Transfers from retainers or saddlebags count as incoming items; moves within bags, armoury and equipment do not. Consuming items does not undo progress.");
+        ImGui.Separator();
         ImGui.InputText("Game-process profile",ref profile,32);
         if(UltrosEndpoint.LocalhostAvailable)ImGui.Checkbox("Target localhost development server",ref localhost);
         if(localhost)ImGui.InputText("Local origin",ref localOrigin,128);
