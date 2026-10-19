@@ -66,11 +66,14 @@ async fn render_leptos(
         world_data: &'a ultros_api_types::world::WorldData,
         region: &'a str,
         current_user: &'a Option<UserData>,
+        lists_readonly: bool,
     }
+    let lists_readonly = ultros_server_core::lists_readonly::lists_readonly();
     let bootstrap_json = serde_json::to_string(&BootstrapRef {
         world_data: worlds.world_data(),
         region: &region_str,
         current_user: &current_user,
+        lists_readonly,
     })
     .unwrap_or_else(|_| "null".to_string());
     let bootstrap_script = format!(
@@ -84,6 +87,7 @@ async fn render_leptos(
         provide_context(LocalWorldData(Ok(worlds.clone())));
         provide_context(GuessedRegion(region_for_ctx.clone()));
         provide_context(BootstrapUser(current_user_for_ctx.clone()));
+        provide_context(ListsReadonly(lists_readonly));
         provide_context(api.clone());
     };
     let app_fn = move || shell(options.clone(), bootstrap_script.clone());
@@ -237,6 +241,7 @@ pub(crate) async fn create_leptos_app(
         provide_context(LocalWorldData(worlds));
         provide_context(GuessedRegion("North-America".to_string()));
         provide_context(BootstrapUser(None));
+        provide_context(ListsReadonly(false));
         view! { <App /> }
     });
 

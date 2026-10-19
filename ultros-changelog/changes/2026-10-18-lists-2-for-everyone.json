@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "high",
+  "title": "Lists 2.0 is ready for everyone",
+  "blurb": "Build lists with inline item and recipe search, undo your edits, and plan your shopping in Shop. Start a list on this device without signing in, or keep an online list synced with your account and friends. Rows keep their price-alert bell and mark-as-acquired check, items that cannot be sold say so, and the estimate can break its cost down by datacenter and world. One change to expect: the Build estimate now prices only the units you still need, so its total can be lower than the old estimate, which priced whole stacks. Shop still plans whole-stack trips.",
+  "link": "/list"
+}

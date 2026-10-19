@@ -49,7 +49,7 @@ async function runCompanionLifecycle({ base, userId, createList, ownerApi, recor
       window.__companionHydrated = false;
       addEventListener("ultros:hydrated", () => { window.__companionHydrated = true; });
     });
-    await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"]]
+    await page.setCookie(...[["HIDE_ADS", "true"], ["i18n_pref_locale", "en"]]
       .map(([name, value]) => ({ name, value, url: base, path: "/" })));
     const projection = response => [response[0], response[1].map(([row]) => row)];
     for (const event of ["revoke", "delete", "signout"]) {

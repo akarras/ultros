@@ -14,7 +14,7 @@ async function main() {
   page.setDefaultTimeout(60000);
   page.setDefaultNavigationTimeout(60000);
   await page.setCacheEnabled(false);
-  await page.setViewport({ width: 1280, height: 900 });
+  await page.setViewport({ width: 1920, height: 900 });
   const errors = [];
   let lookups = 0;
   page.on("pageerror", error => {
@@ -55,7 +55,7 @@ async function main() {
     const worlds = await api("GET", "/api/v1/world_data");
     const world = worlds.regions[0].datacenters[0].worlds[0];
     await page.setCookie(...[
-      ["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["HOME_WORLD", world.name], ["i18n_pref_locale", "en"],
+      ["HIDE_ADS", "true"], ["HOME_WORLD", world.name], ["i18n_pref_locale", "en"],
     ].map(([name, value]) => ({ name, value, url: base, path: "/" })));
     const name = `Shared estimate supply ${Date.now()}`;
     await api("POST", "/api/v1/list/create", { name, wdr_filter: { World: world.id } });
@@ -110,7 +110,7 @@ async function main() {
     await waitCosts({ any: 80, hq: 10, nq: 60 }, false);
     await page.waitForFunction(() => document.querySelector('[data-testid="cart-pricing-detail"]')?.textContent.includes("covers 4 of 4"));
     assert.deepEqual((await state()).rows.find(row => row.quality === "any").units, [2, 2], "details must update the units of the same listing id");
-    await page.waitForFunction(() => document.querySelector('[data-testid="account-list-save-state"]')?.textContent.includes("Saved on this device"));
+    await page.waitForFunction(() => document.querySelector('[data-testid="account-list-save-state"]')?.textContent.includes("Local copy saved"));
     await page.reload({ waitUntil: "domcontentloaded" });
     await waitCosts({ any: 80, hq: 10, nq: 60 }, false);
     await page.setViewport({ width: 390, height: 844 });

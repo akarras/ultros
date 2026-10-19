@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Keep typing after starting a shopping trip",
+  "blurb": "Starting a shopping trip no longer pulls keyboard focus away from a quantity you have already begun editing.",
+  "link": "/list"
+}

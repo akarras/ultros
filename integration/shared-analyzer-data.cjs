@@ -62,20 +62,36 @@ async function main() {
   async function filter(column, operator, value = '') {
     await menu(column);
     const selector = `[data-metric-filter="${column}"]`;
-    await page.select(`${selector} select`, operator);
-    if (!['missing', 'present'].includes(operator)) {
-      await page.click(`${selector} input`, { count: 3 });
-      await page.type(`${selector} input`, value);
+    await page.waitForSelector(selector);
+    if (['missing', 'present'].includes(operator)) {
+      const index = operator === 'present' ? 1 : 2;
+      const button = `${selector} .grid-filter-presence button:nth-child(${index})`;
+      if (await page.$eval(button, button => button.getAttribute('aria-pressed')) !== 'true') await page.click(button);
+    } else if (operator === 'gte') {
+      await page.click(`${selector} input[aria-label="Max"]`, { count: 3 });
+      await page.keyboard.press('Backspace');
+      await page.click(`${selector} input[aria-label="Min"]`, { count: 3 });
+      await page.type(`${selector} input[aria-label="Min"]`, value);
+    } else {
+      await page.select(`${selector} select[aria-label="Filter values"]`, operator);
+      await page.click(`${selector} input[aria-label="Value"]`, { count: 3 });
+      await page.type(`${selector} input[aria-label="Value"]`, value);
     }
     await page.click(`${selector} button[type="submit"]`);
-    await page.waitForFunction((column, operator) =>
-      JSON.parse(new URL(location.href).searchParams.get('gf') || '{}')[column]?.op === operator,
-    {}, column, operator);
+    const expected = { op: operator === 'gte' ? 'range' : operator, value: operator === 'gte' ? `${value},` : value };
+    await page.waitForFunction((column, expected, operator, value) => {
+      const query = new URL(location.href).searchParams;
+      const actual = JSON.parse(query.get('gf') || '{}')[column];
+      if (column === 'amount' && operator === 'gte') {
+        return query.get('min-amount') === value && !query.has('max-amount') && !actual;
+      }
+      return actual?.op === expected.op && actual.value === expected.value;
+    }, {}, column, expected, operator, value);
     await page.keyboard.press('Escape');
   }
   async function menuAction(label) {
     for (const button of await page.$$('.grid-menu-panel button')) {
-      if ((await button.evaluate(element => element.textContent.trim())) === label) {
+      if ((await button.evaluate(element => (element.getAttribute('aria-label') || element.textContent).trim())) === label) {
         await button.click();
         return;
       }
@@ -106,7 +122,7 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector('.virtual-grid-heading[data-column="amount"]'));
     await count(99);
     // The hidden column's filter is still a chip in the shared bar (#1351).
-    assert.match(await page.$eval('[data-registered-filter="amount"]', element => element.textContent), /At least 150/);
+    assert.match(await page.$eval('[data-registered-filter="amount"]', element => element.textContent), /≥\s*150/);
     assert.equal(await page.$('[data-grid-query-summary]'), null, 'the grid renders no filter strip of its own');
     const saved = page.url();
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -193,17 +209,17 @@ async function main() {
     assert.equal(await page.$('[data-grid-query-summary]'), null, 'one filter surface');
     await page.click('[data-registered-filter="amount"] .filter-chip-value');
     await page.waitForSelector('[data-registered-editor]');
-    assert.equal(await page.$eval('[data-registered-editor] select', el => el.value), 'between');
-    assert.equal(await page.$eval('[data-registered-editor] input[aria-label="Upper bound"]', el => el.value), '20');
-    await page.click('[data-registered-editor] input[aria-label="Upper bound"]', { count: 3 });
-    await page.type('[data-registered-editor] input[aria-label="Upper bound"]', '25');
+    assert.equal(await page.$eval('[data-registered-editor] input[aria-label="Min"]', el => el.value), '10');
+    assert.equal(await page.$eval('[data-registered-editor] input[aria-label="Max"]', el => el.value), '20');
+    await page.click('[data-registered-editor] input[aria-label="Max"]', { count: 3 });
+    await page.type('[data-registered-editor] input[aria-label="Max"]', '25');
     await page.click('[data-registered-editor] button[type="submit"]');
     await count(16);
-    assert.equal(new URL(page.url()).searchParams.has('min-amount'), false);
-    assert.equal(new URL(page.url()).searchParams.has('max-amount'), false);
+    assert.equal(new URL(page.url()).searchParams.get('min-amount'), '10');
+    assert.equal(new URL(page.url()).searchParams.get('max-amount'), '25');
     await filter('amount', 'gte', '240');
     await count(9);
-    assert.match(await page.$eval('[data-registered-filter="amount"]', el => el.textContent), /At least 240/);
+    assert.match(await page.$eval('[data-registered-filter="amount"]', el => el.textContent), /≥\s*240/);
     await page.click('[data-registered-filter="amount"] .filter-chip-x');
     await count(250);
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -219,9 +235,11 @@ async function main() {
     await count(250);
     await page.click('[data-registered-editor] button[type="submit"]');
     assert.equal(new URL(page.url()).searchParams.has('gf'), false, 'blank numeric input cannot apply');
-    await page.select('[data-registered-editor] select', 'between');
-    await page.type('[data-registered-editor] input[aria-label="Value"]', '20');
-    await page.type('[data-registered-editor] input[aria-label="Upper bound"]', '40');
+    await page.waitForSelector('[data-registered-editor]', { hidden: true });
+    await addMenu();
+    await page.click('[data-add-filter="amount"]');
+    await page.type('[data-registered-editor] input[aria-label="Min"]', '20');
+    await page.type('[data-registered-editor] input[aria-label="Max"]', '40');
     await page.click('[data-registered-editor] button[type="submit"]');
     await count(21);
     await addMenu();
@@ -771,7 +789,7 @@ async function checkTrends({ page, fixture, world, open, heading, sortLink, sort
   await page.$eval('.virtual-grid', element => { element.scrollLeft = 0; });
   // The legacy Min sales chip is the hidden sales metric's filter.
   await page.waitForSelector('[data-registered-filter="sales"]');
-  assert.match(await page.$eval('[data-registered-filter="sales"]', el => el.textContent), /At least 40/);
+  assert.match(await page.$eval('[data-registered-filter="sales"]', el => el.textContent), /≥\s*40/);
   if (fixture) {
     await rows(2); // 30-sale row excluded
     await firstItem(5); // 900 units before 2,500

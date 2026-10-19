@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "List world and datacenter exclusions are visible again",
+  "blurb": "Old list links could silently leave out worlds or datacenters with no way to see or undo it. Lists now show those exclusions next to Buy from, where you can add, remove, or clear them.",
+  "link": "/list"
+}

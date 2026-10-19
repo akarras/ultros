@@ -1,0 +1,7 @@
+{
+    "category": "bug_fixes",
+    "importance": "medium",
+    "title": "Keep simultaneous changes during a list’s first sync",
+    "blurb": "Opening the same list in several places no longer risks losing an item added or removed at the same time.",
+    "link": "/list"
+}

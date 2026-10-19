@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Bulk deletion follows your current selection",
+  "blurb": "Changing the selected items now resets the delete confirmation, even when you select the same number of different rows.",
+  "link": "/list"
+}

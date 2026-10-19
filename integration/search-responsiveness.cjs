@@ -132,13 +132,21 @@ async function main() {
             window.__searchRequests.at(-1).finish('Selection target', 200, destination);
           }, destination);
           await expectResult('Selection target');
+          const language = await page.evaluate(() => new URL(location.href).searchParams.get('lang'));
           if (method === 'Enter') {
             await page.keyboard.press('Enter');
           } else {
             await page.click('#search-results [role="option"]');
           }
           await page.waitForSelector('.search-overlay', {hidden: true});
-          await page.waitForFunction(destination => location.pathname + location.search === destination, {}, destination);
+          // The locale provider keeps ?lang= in the URL. Preserve it while
+          // checking the selected path and every destination query parameter.
+          await page.waitForFunction(({destination, language}) => {
+            const current = new URL(location.href);
+            if (current.searchParams.get('lang') !== language) return false;
+            current.searchParams.delete('lang');
+            return current.pathname + current.search === destination;
+          }, {}, {destination, language});
           assert.equal(await page.$('dialog.search-overlay[open]'), null, 'search modal is dismissed');
           await page.keyboard.down('Control');
           await page.keyboard.press('KeyK');

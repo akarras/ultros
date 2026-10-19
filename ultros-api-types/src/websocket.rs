@@ -339,12 +339,17 @@ pub enum ClientMessage {
         #[serde(default)]
         subscription_id: Option<u64>,
         list_id: i32,
+        /// Account owning the browser snapshot. Omitted by older clients.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_user_id: Option<i64>,
         #[serde(with = "base64_bytes")]
         version: Vec<u8>,
     },
     /// The bytes of one local commit.
     ListDocUpdate {
         list_id: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_user_id: Option<i64>,
         #[serde(with = "base64_bytes")]
         update: Vec<u8>,
     },
@@ -791,6 +796,7 @@ mod tests {
         let subscribe = ClientMessage::SubscribeListDoc {
             subscription_id: Some(3),
             list_id: 9,
+            expected_user_id: Some(42),
             version: bytes.clone(),
         };
         let text = serde_json::to_string(&subscribe).unwrap();
@@ -830,6 +836,39 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn list_document_account_binding_is_optional_for_legacy_clients() {
+        for text in [
+            r#"{"SubscribeListDoc":{"list_id":9,"version":""}}"#,
+            r#"{"ListDocUpdate":{"list_id":9,"update":""}}"#,
+        ] {
+            let message: ClientMessage = serde_json::from_str(text).unwrap();
+            assert!(matches!(
+                message,
+                ClientMessage::SubscribeListDoc {
+                    expected_user_id: None,
+                    ..
+                } | ClientMessage::ListDocUpdate {
+                    expected_user_id: None,
+                    ..
+                }
+            ));
+        }
+        let message = ClientMessage::ListDocUpdate {
+            list_id: 9,
+            expected_user_id: Some(42),
+            update: vec![1],
+        };
+        let encoded = serde_json::to_string(&message).unwrap();
+        assert!(matches!(
+            serde_json::from_str::<ClientMessage>(&encoded).unwrap(),
+            ClientMessage::ListDocUpdate {
+                expected_user_id: Some(42),
+                ..
+            }
+        ));
     }
 
     #[test]

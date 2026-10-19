@@ -44,11 +44,15 @@ async function main() {
     return response ? request.respond(response) : request.continue();
   });
   async function navigate(route) {
+    // Exercise the fixture's rows independently of recommended landing filters
+    // or an automatically restored view from a previous tool visit.
+    const target = new URL(route, BASE);
+    target.searchParams.set('v', '1');
     await page.goto(`${BASE}/__test/shared-analyzer-data?lang=en`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__hydrated);
     await page.evaluate(href => {
       const a = document.createElement('a'); a.href = href; document.querySelector('main').prepend(a); a.click();
-    }, `${BASE}${route}`);
+    }, target.href);
     await page.waitForFunction(pathname => location.pathname === pathname, {}, new URL(`${BASE}${route}`).pathname);
     await page.waitForSelector('[data-item-actions] .clipboard');
   }

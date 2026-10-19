@@ -1,4 +1,4 @@
-//! Labs list workspace: inline construction and a stable shopping companion,
+//! List workspace: inline construction and a stable shopping companion,
 //! backed by the local document and account synchronization.
 
 #[cfg(any(feature = "hydrate", test))]
@@ -21,12 +21,14 @@ use ultros_api_types::{
     result::ApiError,
 };
 
-use crate::api::{get_list_activity, get_list_items_with_listings};
+use crate::api::{
+    get_list_activity, get_list_items_with_listings, get_list_items_with_listings_for_user,
+};
 use crate::components::list_workspace_shell::ListWorkspaceShell;
 use crate::components::{
-    cart::{ListCart, use_legacy_cart},
+    cart::ListCart,
     item_icon::*,
-    list::{auto_mark_purchases::AutoMarkPurchases, filter_row::SortSpec, list_summary::*},
+    list::{auto_mark_purchases::AutoMarkPurchases, sort::SortSpec},
     list_subscribe_drawer::ListSubscribeDrawer,
     loading::*,
     make_place_importer::*,
@@ -35,14 +37,12 @@ use crate::components::{
     skeleton::TableSkeleton,
 };
 use crate::error::AppError;
-use crate::global_state::labs::{LAB_LISTS_SYNC, use_lab};
 use crate::i18n::*;
 use crate::list_doc::adapter::Edit;
 use crate::list_doc::handle::{ListDocHandle, RecoveryState, SaveState};
 use crate::query_defaults::filter_query_signal;
-use crate::routes::list_view::{
-    ActivityFeed, IdList, ListView, ListViewResult, NameList, filter_excluded,
-    list_item_table_skeleton_columns, remaining_quantity, sort_list_items,
+use crate::routes::list_common::{
+    ActivityFeed, ListViewResult, filter_excluded, list_item_table_skeleton_columns,
 };
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 #[cfg(feature = "hydrate")]
@@ -124,8 +124,7 @@ where
 /// Inline composer shared by account and device lists. One panel, two modes:
 /// the Items mode searches the catalog, the Recipes mode previews a recipe's
 /// finished items or ingredients. The mode is the source's `recipe_open`
-/// signal, so the legacy toolbar button and the guest follow guard keep
-/// their meaning.
+/// signal, shared with the guest follow guard.
 #[component]
 pub fn InlineListAdd(
     list_id: Signal<i32>,
@@ -376,82 +375,6 @@ pub fn InlineRecipeAdd(list_id: Signal<i32>, on_add: Callback<Vec<ListItem>>) ->
     }
 }
 
-/// Commit-on-change grid: typing never writes or reorders the document.
-#[component]
-pub fn BuildListRow(
-    item: Signal<ListItem>,
-    #[prop(default = Signal::derive(|| None))] current_price: Signal<Option<i32>>,
-    selected_items: RwSignal<HashSet<i32>>,
-    on_edit: Callback<ListItem>,
-    on_delete: Callback<i32>,
-    can_write: Signal<bool>,
-    #[prop(default = Signal::derive(|| false))] highlighted: Signal<bool>,
-) -> impl IntoView {
-    let i18n = use_i18n();
-    let initial = item.get_untracked();
-    let name = tracked_data()
-        .items
-        .get(&ItemId(initial.item_id))
-        .map(|i| i.name.to_string())
-        .unwrap_or_else(|| {
-            t_string!(i18n, lists_workspace_item_fallback, id = initial.item_id).to_string()
-        });
-    let can_hq = tracked_data()
-        .items
-        .get(&ItemId(initial.item_id))
-        .is_some_and(|i| i.can_be_hq);
-    let row = item;
-    let id = initial.id;
-    let numeric = move |label: String, field: u8| {
-        let value = Memo::new(move |_| {
-            let item = row.get();
-            match field {
-                0 => item.quantity.unwrap_or(1).to_string(),
-                1 => item.acquired.unwrap_or(0).to_string(),
-                _ => item.target_price.map(|v| v.to_string()).unwrap_or_default(),
-            }
-        });
-        view! {
-            <input class="input w-24" type="number" min=if field == 0 { "1" } else { "0" } aria-label=t_string!(i18n, lists_workspace_field_named, label = label.clone(), name = name.clone()) prop:value=move || value.get() data-committed=move || value.get() readonly=move || !can_write.get()
-                on:keydown=move |ev| {
-                    // Only the keys this cell handles stop here; Ctrl+Z must
-                    // reach the window listener, which decides between native
-                    // text undo (a draft) and document undo (a clean cell) from
-                    // `data-committed` (#1430).
-                    if ev.key() == "Enter" { ev.stop_propagation(); let _ = event_target::<web_sys::HtmlInputElement>(&ev).blur(); }
-                    if ev.key() == "Escape" { ev.stop_propagation(); event_target::<web_sys::HtmlInputElement>(&ev).set_value(&value.get_untracked()); }
-                }
-                on:change=move |ev| {
-                    let entered = event_target_value(&ev);
-                    let mut updated = row.get_untracked();
-                    let valid = if field == 2 && entered.is_empty() { updated.target_price = None; true }
-                    else if field == 2 { entered.parse::<i64>().ok().filter(|v| *v >= 0).map(|v| updated.target_price = Some(v)).is_some() }
-                    else { entered.parse::<i32>().ok().filter(|v| *v >= if field == 0 {1} else {0}).map(|v| if field == 0 { updated.quantity = Some(v); } else { updated.acquired = Some(v); }).is_some() };
-                    if valid && can_write.get_untracked() { on_edit.run(updated); } else { event_target::<web_sys::HtmlInputElement>(&ev).set_value(&value.get_untracked()); }
-                } />
-        }
-    };
-    let needed = numeric(t_string!(i18n, lists_workspace_needed).to_string(), 0);
-    let owned = numeric(t_string!(i18n, lists_workspace_owned).to_string(), 1);
-    let target = numeric(t_string!(i18n, lists_workspace_target_price).to_string(), 2);
-    let display_name = tracked_data()
-        .items
-        .get(&ItemId(initial.item_id))
-        .map(|i| i.name.to_string())
-        .unwrap_or_else(|| {
-            t_string!(i18n, lists_workspace_item_fallback, id = initial.item_id).to_string()
-        });
-    view! {
-        <tr class="hover:bg-[color:var(--color-background-panel)] transition-colors" class:ring-2=highlighted class:ring-brand-400=highlighted data-item-id=initial.item_id>
-            <td class="p-3"><input type="checkbox" aria-label=t_string!(i18n, lists_workspace_select_named, name = display_name.clone()) disabled=move || !can_write.get() prop:checked=move || selected_items.with(|s| s.contains(&id)) on:change=move |_| selected_items.update(|s| { if !s.remove(&id) {s.insert(id);} }) /></td>
-            <td class="p-3"><div class="flex items-center gap-3"><ItemIcon item_id=initial.item_id icon_size=IconSize::Small /><span class="font-semibold">{display_name}</span></div></td>
-            <td class="p-3"><select class="input min-w-24" aria-label=t_string!(i18n, lists_workspace_item_quality) disabled=move || !can_write.get() prop:value=move || match row.get().hq {Some(true) => "hq", Some(false) => "nq", None => "any"} on:change=move |ev| {let mut updated = row.get_untracked(); updated.hq = match event_target_value(&ev).as_str() {"hq" if can_hq => Some(true), "nq" => Some(false), _ => None}; on_edit.run(updated);}><option value="any">{t!(i18n, lists_workspace_any)}</option><option value="nq">{t!(i18n, lists_workspace_nq)}</option><option value="hq" disabled=!can_hq>{t!(i18n, lists_workspace_hq)}</option></select></td>
-            <td class="p-3">{needed}</td><td class="p-3">{owned}</td><td class="p-3 tabular-nums">{move || current_price.get().map(|price| t_string!(i18n, lists_workspace_gil, price = price).to_string()).unwrap_or_else(|| "—".to_string())}</td><td class="p-3">{target}</td>
-            <td class="p-3"><button class="btn-ghost" disabled=move || !can_write.get() on:click=move |_| on_delete.run(id)>{t!(i18n, lists_workspace_remove)}</button></td>
-        </tr>
-    }
-}
-
 #[component]
 pub fn ListWorkspaceModes(
     shop: Signal<bool>,
@@ -539,124 +462,13 @@ pub struct ListWorkspaceSource {
     pub set_sort: Callback<Option<SortSpec>>,
 }
 
-/// The grid is mounted once, independently of resource revisions. Row identity is
-/// the document row key; each cell reads its current value from its own memo.
-#[component]
-pub fn ListBuildWorkspace(
-    source: ListWorkspaceSource,
-    selected_items: RwSignal<HashSet<i32>>,
-    #[prop(default = Signal::derive(HashSet::new))] highlighted: Signal<HashSet<i32>>,
-) -> impl IntoView {
-    let i18n = use_i18n();
-    let filter = RwSignal::new(String::new());
-    let editing = RwSignal::new(false);
-    let grid = NodeRef::<leptos::html::Div>::new();
-    let visible = Memo::new(
-        move |previous: Option<&Vec<(ListItem, Vec<ActiveListing>)>>| {
-            let query = filter.get().to_lowercase();
-            let data = tracked_data();
-            let pinned: HashSet<i32> = if editing.get() {
-                previous
-                    .into_iter()
-                    .flatten()
-                    .map(|(item, _)| item.id)
-                    .collect()
-            } else {
-                HashSet::new()
-            };
-            let mut rows = source
-                .rows
-                .get()
-                .into_iter()
-                .filter(|(item, _)| {
-                    !source.hide_acquired.get()
-                        || remaining_quantity(item) > 0
-                        || pinned.contains(&item.id)
-                })
-                .filter(|(item, _)| {
-                    query.is_empty()
-                        || data
-                            .items
-                            .get(&ItemId(item.item_id))
-                            .is_some_and(|i| i.name.to_lowercase().contains(&query))
-                        || item.item_id.to_string().contains(&query)
-                })
-                .collect::<Vec<_>>();
-            if editing.get()
-                && let Some(previous) = previous
-            {
-                let positions: HashMap<_, _> = previous
-                    .iter()
-                    .enumerate()
-                    .map(|(index, (item, _))| (item.id, index))
-                    .collect();
-                rows.sort_by_key(|(item, _)| {
-                    positions.get(&item.id).copied().unwrap_or(usize::MAX)
-                });
-            }
-            rows
-        },
-    );
-    // The whole cart, not the filtered view: a filter narrows what the grid
-    // shows, never what the list will cost. Rows already track the document
-    // revision and the listings cache, so quantity, quality, list and market
-    // changes all reprice through this one memo.
-    let estimate = source.estimate;
-    view! {
-        <section class="space-y-3" data-testid="list-build-workspace">
-            <Show when=move || source.can_write.get()>
-                <InlineListAdd list_id=source.list_id on_add=source.add on_add_many=source.add_many recipe_mode=source.recipe_open toggle_recipe=source.toggle_recipe pending=source.pending feedback=source.feedback />
-            </Show>
-            <input class="input w-full" aria-label=t_string!(i18n, lists_workspace_filter_label) placeholder=t_string!(i18n, lists_workspace_filter_placeholder) prop:value=move || filter.get() data-committed="" on:input=move |ev| filter.set(event_target_value(&ev)) />
-            <Show when=move || source.estimate_available.get()>
-                <crate::components::list_estimate_summary::ListEstimateSummary estimate feed=source.market scope=source.scope_name />
-            </Show>
-            <div class="overflow-x-auto panel rounded-xl" node_ref=grid on:focusin=move |_| editing.set(true) on:focusout=move |ev| {
-                #[cfg(feature = "hydrate")]
-                {
-                use wasm_bindgen::JsCast;
-                let inside = ev.related_target().and_then(|target| target.dyn_into::<web_sys::Node>().ok()).is_some_and(|target| grid.get().is_some_and(|grid| grid.contains(Some(&target))));
-                if !inside { editing.set(false); }
-                }
-                #[cfg(not(feature = "hydrate"))]
-                { let _ = ev; }
-            }>
-                <table class="w-full min-w-[880px] text-sm"><thead><tr class="text-left border-b border-[color:var(--color-outline)]">
-                    <th class="p-3">{t!(i18n, lists_workspace_select)}</th><th class="p-3">{t!(i18n, lists_workspace_item)}</th><th class="p-3">{t!(i18n, lists_workspace_quality)}</th><th class="p-3">{t!(i18n, lists_workspace_needed)}</th><th class="p-3">{t!(i18n, lists_workspace_owned)}</th><th class="p-3">{t!(i18n, lists_workspace_current_price)}</th><th class="p-3">{t!(i18n, lists_workspace_target_price)}</th><th class="p-3">{t!(i18n, lists_workspace_actions)}</th>
-                </tr></thead><tbody>
-                    <For each=move || { visible.get().into_iter().map(|(item, _)| item).collect::<Vec<_>>() } key=|item| item.id children=move |initial| {
-                        let id = initial.id;
-                        let fallback = StoredValue::new(initial);
-                        // ⚡ Bolt Optimization: Batch O(N) searches into a single Memo and use Signal::derive for projections
-                        let row_data = Memo::new(move |_| {
-                            source.rows.with(|rows| {
-                                rows.iter()
-                                    .find(|(item, _)| item.id == id)
-                                    .map(|(item, listings)| {
-                                        let min_price = listings
-                                            .iter()
-                                            .filter(|listing| item.hq.is_none_or(|hq| listing.hq == hq))
-                                            .map(|listing| listing.price_per_unit)
-                                            .min();
-                                        (item.clone(), min_price)
-                                    })
-                            })
-                        });
-                        let item = Signal::derive(move || row_data.with(|data| data.as_ref().map(|(item, _)| item.clone()).unwrap_or_else(|| fallback.get_value())));
-                        let price = Signal::derive(move || row_data.with(|data| data.as_ref().and_then(|(_, price)| *price)));
-                        view! { <BuildListRow item=item current_price=price selected_items on_edit=source.edit on_delete=source.remove can_write=source.can_write highlighted=Signal::derive(move || highlighted.with(|items| items.contains(&id))) /> }
-                    } />
-                </tbody></table>
-            </div>
-        </section>
-    }
-}
-
 /// Prices for the rows, fetched once per list and again only when the market
 /// subscription or an import says so. The document — not this cache —
 /// supplies the rows themselves, so a local edit never refetches prices.
 #[derive(Clone)]
 struct ListingsCache {
+    /// None means fetched before an account-bound handle existed.
+    viewer: Option<i64>,
     list_id: i32,
     version: u32,
     /// The value of the page's `revalidate_version` this entry was fetched
@@ -699,6 +511,8 @@ struct ListResponseOrder {
 struct ListReads {
     cache: StoredValue<Option<ListingsCache>>,
     responses: StoredValue<ListResponseOrder>,
+    account_changed: RwSignal<bool>,
+    detached: RwSignal<Option<ListDocHandle>>,
 }
 
 impl ListReads {
@@ -706,7 +520,19 @@ impl ListReads {
         Self {
             cache: StoredValue::new(None),
             responses: StoredValue::new(ListResponseOrder::default()),
+            account_changed: RwSignal::new(false),
+            detached: RwSignal::new(None),
         }
+    }
+
+    fn detach_account(self, handle: RwSignal<Option<ListDocHandle>>) {
+        if let Some(doc) = handle.get_untracked() {
+            doc.close();
+            self.detached.set(Some(doc));
+        }
+        self.account_changed.set(true);
+        self.cache.set_value(None);
+        handle.set(None);
     }
 
     fn begin(self) -> u64 {
@@ -751,7 +577,8 @@ impl ListReads {
             .map(|(item, listings)| (item.item_id, listings))
             .collect();
         handle
-            .with_doc(|doc| crate::list_doc::adapter::view_result(&list, doc, &listings))
+            .display_document()
+            .map(|doc| crate::list_doc::adapter::view_result(&list, &doc, &listings))
             .ok_or_else(|| AppError::ListDoc("document is closed".into()))
     }
 }
@@ -832,7 +659,7 @@ fn note_fetch(prices: PriceStatus, outcome: Option<FetchedPrices<'_>>) {
 
 /// How long a burst of relayed list broadcasts is allowed to coalesce into
 /// a single revalidation. Every row edit on a shared list comes back to us
-/// as a `ListItem` broadcast, and the Labs page already has those rows from
+/// as a `ListItem` broadcast, and the editor already has those rows from
 /// its document — the revalidation exists only so a *permission* change
 /// (Global Constraint 2) is noticed by an idle page, so paying one REST
 /// fetch per remote keystroke would be pure waste.
@@ -1025,7 +852,10 @@ fn revalidate(
             return;
         }
         let request = reads.begin();
-        let result = get_list_items_with_listings(list_id).await;
+        let result = match handle.get_untracked() {
+            Some(doc) => get_list_items_with_listings_for_user(list_id, doc.user_id).await,
+            None => get_list_items_with_listings(list_id).await,
+        };
         if !request_is_current(active_list, list_id, handle, expected) {
             return;
         }
@@ -1034,6 +864,10 @@ fn revalidate(
             return;
         }
         match result {
+            Err(error) if is_account_change(&error) => {
+                reads.detach_account(handle);
+                finished(false);
+            }
             Ok((list, items)) => {
                 let permission = list.permission;
                 if let Some(doc_handle) = handle.get_untracked() {
@@ -1104,6 +938,11 @@ fn is_denial(error: &AppError) -> bool {
         error,
         AppError::BadList | AppError::ApiError(ApiError::Forbidden | ApiError::NotFound)
     )
+}
+
+fn is_account_change(error: &AppError) -> bool {
+    matches!(error, AppError::ApiError(ApiError::BadRequest(message))
+        if message == "signed-in account changed; reload to continue")
 }
 
 /// Every write goes through the document; there is no REST fallback. A
@@ -1213,6 +1052,7 @@ async fn load_view(
         );
         if let Ok((list, items)) = &result {
             cache.set_value(Some(ListingsCache {
+                viewer: None,
                 list_id: id,
                 version: listings_version,
                 revalidate: revalidate_version,
@@ -1240,9 +1080,10 @@ async fn load_view(
         .collect();
     // A document that has never recorded a scope prices against whatever
     // the server scoped the cached listings to; one that has must match.
-    let wanted_scope = doc_handle.meta().scope;
+    let wanted_scope = doc_handle.display_meta().scope;
     let cached = cache.get_value().filter(|c| {
         c.list_id == id
+            && c.viewer == Some(doc_handle.user_id)
             && c.version == listings_version
             && c.revalidate == revalidate_version
             && wanted_ids.is_subset(&c.covered)
@@ -1252,7 +1093,7 @@ async fn load_view(
         Some(cached) => cached,
         None => {
             let request = reads.begin();
-            let result = get_list_items_with_listings(id).await;
+            let result = get_list_items_with_listings_for_user(id, doc_handle.user_id).await;
             if !request_is_current(list_id, id, handle, expected) {
                 return Err(stale());
             }
@@ -1265,6 +1106,7 @@ async fn load_view(
                     let covered = covered_ids(&items);
                     note_fetch(prices, Some((&list, &items)));
                     let fresh = ListingsCache {
+                        viewer: Some(doc_handle.user_id),
                         list_id: id,
                         version: listings_version,
                         revalidate: revalidate_version,
@@ -1286,6 +1128,10 @@ async fn load_view(
                 // Forbidden or deleted: the local copy must not outlive the
                 // server's answer. Clearing the handle also drops the sync
                 // subscription (the Effect that owns it reads this signal).
+                Err(error) if is_account_change(&error) => {
+                    reads.detach_account(handle);
+                    return Err(error);
+                }
                 Err(error) if is_denial(&error) => {
                     doc_handle.purge();
                     cache.set_value(None);
@@ -1299,11 +1145,15 @@ async fn load_view(
                     // estimate reports that prices are unavailable. Either
                     // way the document keeps rendering and editing.
                     note_fetch(prices, None);
-                    match cache.get_value().filter(|c| c.list_id == id) {
+                    match cache
+                        .get_value()
+                        .filter(|c| c.list_id == id && c.viewer == Some(doc_handle.user_id))
+                    {
                         // Stale prices beat no page.
                         Some(stale) => stale,
                         None => match offline_list(id, doc_handle) {
                             Some(list) => ListingsCache {
+                                viewer: Some(doc_handle.user_id),
                                 list_id: id,
                                 version: listings_version,
                                 revalidate: revalidate_version,
@@ -1321,7 +1171,8 @@ async fn load_view(
     };
     // `ListDocument` clones share the underlying document, so this hands
     // `view_result` a reference without holding the stored value across it.
-    let Some(doc) = doc_handle.with_doc(|doc| doc.clone()) else {
+    doc_handle.remember_permission(base.list.permission as i16);
+    let Some(doc) = doc_handle.display_document() else {
         // The page was torn down while this fetch was in flight; there is no
         // document left to render and nothing to render it into.
         return Err(AppError::ListDoc("document is closed".to_string()));
@@ -1338,7 +1189,7 @@ async fn load_view(
 /// permission says this user never had access, so an empty document can't
 /// masquerade as a readable list.
 fn offline_list(id: i32, handle: ListDocHandle) -> Option<ListWithPermission> {
-    let meta = handle.meta();
+    let meta = handle.display_meta();
     let permission = ListPermission::from(handle.permission.get_untracked());
     if permission == ListPermission::None {
         return None;
@@ -1370,8 +1221,8 @@ pub fn ListViewSync() -> impl IntoView {
     // never be built on the SSR half (repo issue #1332), and its browser
     // storage is scoped to the signed-in user — so it can only open on the
     // client, once `get_login` has resolved. Until then, and forever for an
-    // anonymous visitor, this stays `None` and the page is the same
-    // read-only REST render the non-Labs page produces.
+    // anonymous visitor, this stays `None` and the page renders read-only
+    // data from REST.
     let handle: RwSignal<Option<ListDocHandle>> = RwSignal::new(None);
     provide_context(handle);
 
@@ -1415,7 +1266,7 @@ pub fn ListViewSync() -> impl IntoView {
 
     let edit_item = Action::new(move |item: &ListItem| {
         // `Edit::Edit` finds the row by the id it was rendered with, so the
-        // item arrives exactly as `ListItemRow` hands it back — original id
+        // item arrives exactly as `CartRow` hands it back — original id
         // included, even when the edit changes its quality.
         let edit = Edit::Edit(item.clone());
         async move { apply_edit(handle, edit) }
@@ -1690,6 +1541,9 @@ pub fn ListViewSync() -> impl IntoView {
         // otherwise close a document the page is still using. `None` means
         // login hasn't resolved; `Some(None)` means signed out or no list.
         let doc_target = Memo::new(move |_| {
+            if listings_cache.account_changed.get() {
+                return Some(None);
+            }
             let id = list_id.get();
             let login = user_resource.get()?;
             Some(match login {
@@ -1802,6 +1656,10 @@ pub fn ListViewSync() -> impl IntoView {
                     // that never refetches (and so still reads "signed in"
                     // for exactly the cookie that just expired).
                     use crate::list_doc::sync::ErrorKind;
+                    if kind == ErrorKind::AccountChanged {
+                        listings_cache.detach_account(handle);
+                        return;
+                    }
                     let purge = matches!(kind, ErrorKind::Denied | ErrorKind::NotFound);
                     let Some(denied) = handle.try_get_untracked().flatten() else {
                         return;
@@ -1849,33 +1707,33 @@ pub fn ListViewSync() -> impl IntoView {
         buying_view.get() || previous.copied().unwrap_or(false)
     });
 
-    // Still honoured from shared links; narrowing worlds is Shop's job now,
-    // so nothing on this page writes these two params.
-    let (excluded_worlds_param, _) = filter_query_signal::<IdList>("excluded-worlds");
-    let excluded_worlds = Memo::new(move |_| {
-        excluded_worlds_param
-            .get()
-            .map(|list| list.0.into_iter().collect::<HashSet<i32>>())
-            .unwrap_or_default()
-    });
-    let (excluded_datacenters_param, _) = filter_query_signal::<NameList>("excluded-datacenters");
-    let excluded_datacenters = Memo::new(move |_| {
-        excluded_datacenters_param
-            .get()
-            .map(|list| list.0.into_iter().collect::<HashSet<String>>())
-            .unwrap_or_default()
-    });
-    // Editor-owned travel limit (#1480): narrows the served rows both Build
-    // and Shop price, and travels with the URL like the exclusions above.
+    // Editor-owned travel limit and world/datacenter exclusions (#1480):
+    // `use_list_travel` is the one reader *and* writer of the `travel`,
+    // `excluded-worlds` and `excluded-datacenters` params, and the travel
+    // panel renders them, so a legacy bookmark's exclusions stay visible
+    // and removable here. They narrow the served rows both Build and Shop
+    // price.
     let travel = crate::components::list_travel_state::use_list_travel();
+    let excluded_worlds = Memo::new(move |_| {
+        travel
+            .excluded_worlds
+            .get()
+            .into_iter()
+            .collect::<HashSet<i32>>()
+    });
+    let excluded_datacenters = Memo::new(move |_| {
+        travel
+            .excluded_datacenters
+            .get()
+            .into_iter()
+            .collect::<HashSet<String>>()
+    });
 
     let (hide_acquired_param, set_hide_acquired_param) =
         filter_query_signal::<bool>("hide-acquired");
     let hide_acquired = Memo::new(move |_| hide_acquired_param.get().unwrap_or(false));
 
     let (sort_spec, set_sort_spec) = filter_query_signal::<SortSpec>("sort");
-
-    let game_items = &tracked_data().items;
 
     type RowSnapshot = std::collections::HashMap<i32, (Option<i32>, Option<i32>)>;
     let recently_changed: RwSignal<HashSet<i32>> = RwSignal::new(HashSet::new());
@@ -1927,16 +1785,22 @@ pub fn ListViewSync() -> impl IntoView {
                         doc.list_id == list_id.get() && doc.has_readable_content()
                     }) =>
             {
-                ListCapabilities::from(list_with_perm.permission)
+                let permission = if handle.get().is_some_and(|doc| {
+                    doc.recovery_state.track();
+                    doc.writes_rejected()
+                }) {
+                    ListPermission::Read
+                } else {
+                    list_with_perm.permission
+                };
+                ListCapabilities::from(permission)
             }
             _ => ListCapabilities::default(),
         };
         view_caps.set(next);
     });
 
-    let legacy_cart = use_legacy_cart();
-    // The cart sorts its own rows (so an active editor can pin its row);
-    // only the legacy grid still expects them pre-sorted.
+    // The cart sorts its own rows so an active editor can pin its row.
     let build_rows = Signal::derive(move || {
         let snapshot = list_view
             .get()
@@ -1958,7 +1822,7 @@ pub fn ListViewSync() -> impl IntoView {
                         .map(|(item, rows)| (item.item_id, rows))
                         .collect()
                 });
-            doc.rows()
+            doc.display_rows()
                 .iter()
                 .filter_map(|row| crate::list_doc::adapter::to_list_item(list_id.get(), row))
                 .map(|item| {
@@ -1979,13 +1843,6 @@ pub fn ListViewSync() -> impl IntoView {
         let travel_policy = travel.policy.get();
         if travel_policy.narrows() {
             rows = travel_policy.filter_rows(&rows);
-        }
-        if legacy_cart.get()
-            && let Some(spec) = sort_spec.get()
-        {
-            sort_list_items(&mut rows, spec, |id| {
-                game_items.get(&ItemId(id)).map(|item| item.name.as_str())
-            });
         }
         rows
     });
@@ -2096,7 +1953,7 @@ pub fn ListViewSync() -> impl IntoView {
             .filter(|doc| doc.list_id == list_id.get() && !doc.is_closed_or_disposed())
             .map(|doc| {
                 doc.revision.track();
-                doc.meta().name
+                doc.display_meta().name
             })
             .or_else(|| {
                 list_view
@@ -2117,7 +1974,7 @@ pub fn ListViewSync() -> impl IntoView {
             .get()
             .filter(|doc| doc.list_id == list_id.get() && !doc.is_closed_or_disposed())?;
         doc.revision.track();
-        doc.meta().scope.or_else(|| {
+        doc.display_meta().scope.or_else(|| {
             list_view
                 .get()
                 .and_then(Result::ok)
@@ -2189,7 +2046,7 @@ pub fn ListViewSync() -> impl IntoView {
         if matches!(delete_action.value().get(), Some(Ok(_)))
             || matches!(leave_action.value().get(), Some(Ok(_)))
         {
-            navigate("/list?labs=lists-sync", Default::default());
+            navigate("/list", Default::default());
         }
     });
     let danger_error = move || {
@@ -2213,7 +2070,7 @@ pub fn ListViewSync() -> impl IntoView {
             .filter(|doc| doc.list_id == list_id.get() && !doc.is_closed_or_disposed())
             .map(|handle| {
                 handle.revision.track();
-                handle.meta()
+                handle.display_meta()
             });
         let title = local_meta
             .as_ref()
@@ -2279,6 +2136,21 @@ pub fn ListViewSync() -> impl IntoView {
             // price row. The scope picker exists on the client alone (the
             // document that carries it does), so the first server render
             // matches the hydrating client: neither shows it.
+            <Show when=move || listings_cache.account_changed.get()>
+                <section role="alert" class="panel rounded-lg p-4 space-y-3" data-testid="list-account-changed">
+                    <h1 class="text-xl font-semibold">{t!(i18n, list_account_changed_title)}</h1>
+                    <p>{t!(i18n, list_account_changed_help)}</p>
+                    <button type="button" class="btn-primary" data-testid="list-account-reload"
+                        on:click=move |_| {
+                            #[cfg(feature="hydrate")]
+                            if let Some(window) = web_sys::window() { let _ = window.location().reload(); }
+                        }>{t!(i18n, list_account_reload)}</button>
+                </section>
+            </Show>
+            // Keep the workspace owner alive until route teardown. Detaching
+            // the document also notifies its cart; disposing that subtree in
+            // this notification turn leaves queued cart effects with dead memos.
+            <div class:hidden=move || listings_cache.account_changed.get()>
             <ListWorkspaceShell
                 name=list_name
                 can_rename=Signal::derive(move || can_admin.get() && open_doc().is_some())
@@ -2462,18 +2334,7 @@ pub fn ListViewSync() -> impl IntoView {
                         {move || list_view.get().and_then(|result| result.err()).map(|e| view! {
                             <div class="panel rounded-lg p-4">{format!("{}\n{}", t_string!(i18n, list_view_failed_to_get_items), workspace_error(i18n, &e))}</div>
                         })}
-                        {move || if legacy_cart.get() {
-                            view! { <ListBuildWorkspace source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) /> }.into_any()
-                        } else {
-                            view! { <ListCart source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) /> }.into_any()
-                        }}
-                        // The compact cart owns its remaining-unit estimate. Only
-                        // the legacy grid uses the whole-stack per-world summary.
-                        <Show when=move || legacy_cart.get()>
-                            <div class="panel rounded-lg p-4 mt-3">
-                                {move || list_view.get().and_then(Result::ok).map(|(_, items)| view! { <ListSummary items excluded_worlds=&[] excluded_datacenters /> })}
-                            </div>
-                        </Show>
+                        <ListCart source=build_source selected_items highlighted=Signal::derive(move || recently_changed.get()) />
                         // Collaboration history, closed by default: present
                         // without competing with the cart.
                         <details class="panel rounded-lg p-4 mt-3" data-testid="list-activity">
@@ -2494,28 +2355,22 @@ pub fn ListViewSync() -> impl IntoView {
                     })}
                 </Show>
             </ListWorkspaceShell>
+            </div>
         </div>
     }.into_any()
 }
 
-/// Picks the page for `/list/:id`. The `LABS` cookie is server-visible, so
-/// the server and the hydrating client make the same choice. The id is
-/// tracked so moving between lists builds a fresh page and document.
+/// Rebuild the editor when the list ID changes, but never while leaving the route.
 #[component]
 pub fn ListRoute() -> impl IntoView {
-    // Decided once per mount, not tracked: the Labs flag only changes
-    // together with a route change (every `?labs=` link targets another
-    // route, and the cookie is set on the Labs page). Tracking it made the
-    // route view rebuild a whole list page while the router was already
-    // leaving `/list/:id` for a URL that carried the flag; that page's owner
-    // was disposed at once, but its `<Title>` stayed on leptos_meta's stack
-    // and panicked the client on the next navigation (GlitchTip #7389).
-    let sync = use_lab(LAB_LISTS_SYNC).get_untracked();
     let params = use_params_map();
+    let readonly = crate::global_state::lists_readonly::use_lists_readonly();
     let id = Memo::new(move |_| params.with(|p| p.get("id").unwrap_or_default()));
-    move || match list_route_view(id.try_get(), sync) {
+    move || match list_route_view(id.try_get(), readonly) {
         ListRouteView::Sync => view! { <ListViewSync /> }.into_any(),
-        ListRouteView::Legacy => view! { <ListView /> }.into_any(),
+        ListRouteView::ReadOnly => {
+            view! { <crate::routes::list_readonly::ListReadOnly /> }.into_any()
+        }
         ListRouteView::Leaving => ().into_any(),
     }
 }
@@ -2524,7 +2379,9 @@ pub fn ListRoute() -> impl IntoView {
 #[derive(Debug, PartialEq, Eq)]
 enum ListRouteView {
     Sync,
-    Legacy,
+    /// The operator kill-switch (`ULTROS_LISTS_READONLY`) is on: show the
+    /// REST projection read-only and never open the list document.
+    ReadOnly,
     /// The router is on its way out of this route: its params already
     /// describe the next match (no `id`), or the route's own memo is gone.
     /// Rebuilding a list page here is wasted work at best; at worst it
@@ -2532,10 +2389,10 @@ enum ListRouteView {
     Leaving,
 }
 
-fn list_route_view(id: Option<String>, sync: bool) -> ListRouteView {
+fn list_route_view(id: Option<String>, readonly: bool) -> ListRouteView {
     match id {
-        Some(id) if !id.is_empty() && sync => ListRouteView::Sync,
-        Some(id) if !id.is_empty() => ListRouteView::Legacy,
+        Some(id) if !id.is_empty() && readonly => ListRouteView::ReadOnly,
+        Some(id) if !id.is_empty() => ListRouteView::Sync,
         _ => ListRouteView::Leaving,
     }
 }
@@ -2549,18 +2406,29 @@ mod tests {
     #[test]
     fn list_route_builds_nothing_once_the_router_is_leaving() {
         assert_eq!(
-            list_route_view(Some("24".into()), true),
+            list_route_view(Some("24".into()), false),
             ListRouteView::Sync
         );
         assert_eq!(
-            list_route_view(Some("24".into()), false),
-            ListRouteView::Legacy
+            list_route_view(Some(String::new()), false),
+            ListRouteView::Leaving
         );
+        assert_eq!(list_route_view(None, false), ListRouteView::Leaving);
+    }
+
+    /// The kill-switch swaps the editor for the read-only projection view,
+    /// but leaving still wins so no page is built on the way out.
+    #[test]
+    fn list_route_is_readonly_while_the_kill_switch_is_on() {
+        assert_eq!(
+            list_route_view(Some("24".into()), true),
+            ListRouteView::ReadOnly
+        );
+        assert_eq!(list_route_view(None, true), ListRouteView::Leaving);
         assert_eq!(
             list_route_view(Some(String::new()), true),
             ListRouteView::Leaving
         );
-        assert_eq!(list_route_view(None, true), ListRouteView::Leaving);
     }
 
     fn permission_reply(permission: ListPermission) -> ListViewResult {

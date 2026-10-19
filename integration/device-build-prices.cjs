@@ -129,8 +129,8 @@ async function main() {
     const worlds = data.regions.flatMap(region => region.datacenters.flatMap(dc => dc.worlds));
     [world, secondWorld] = worlds;
     assert(world && secondWorld, "two worlds required for scope replacement");
-    await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"], ["HOME_WORLD", world.name], ["PRICE_ZONE", world.name]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
-    await load(`${base}/list?labs=lists-sync`);
+    await page.setCookie(...[["HIDE_ADS", "true"], ["i18n_pref_locale", "en"], ["HOME_WORLD", world.name], ["PRICE_ZONE", world.name]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
+    await load(`${base}/list`);
     await page.click(tid("list-new")); await replace(tid("device-list-name"), `Device prices ${Date.now()}`); await page.click(tid("device-list-create"));
     await page.waitForSelector(tid("device-list-editor")); const deviceUrl = page.url();
     console.log("Device editor ready; adding catalog items");
@@ -177,7 +177,17 @@ async function main() {
     await page.waitForSelector('input[aria-label="Needed for Maple Log"]');
     const laterItem = await page.$eval('input[aria-label="Needed for Maple Log"]', el => Number(el.closest("[data-item-id]").dataset.itemId));
     await expectState(laterItem, "not-requested"); await expectTotal("10 gil");
-    await page.click(`${row(laterItem)} button[aria-label="Remove Maple Log"]`);
+    // Item-added toasts can cover the last row. Expose the real pointer target
+    // before clicking, just as a user would scroll or wait for the toast.
+    const removeLater = `${row(laterItem)} button[aria-label="Remove Maple Log"]`;
+    await page.waitForFunction(selector => {
+      const button = document.querySelector(selector);
+      if (!button) return false;
+      button.scrollIntoView({ block: "center" });
+      const rect = button.getBoundingClientRect();
+      return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+    }, {}, removeLater);
+    await page.click(removeLater);
     await page.waitForFunction(id => !document.querySelector(`[data-item-id="${id}"]`), {}, laterItem);
     const originalFreshness = await text(tid("list-estimate-freshness")); assert(originalFreshness.includes(world.name));
     await chooseScope(secondWorld.name);
@@ -202,7 +212,7 @@ async function main() {
     await page.setOfflineMode(false); await load(deviceUrl);
     // A reopened list prices itself against the scope it saved.
     await expectState(item, "priced"); await expectTotal("120 gil");
-    assert((await text(tid("device-price-controls"))).includes(secondWorld.name), "reopen restores selected scope");
+    assert.equal(await page.$eval(`${tid("device-price-controls")} input[role="combobox"]`, input => input.value), secondWorld.name, "reopen restores selected scope");
     assert.equal(await page.$eval(`${row(item)} input[aria-label="Needed for Bronze Ingot"]`, el => el.value), "4");
     await page.click(`${row(item)} button[aria-label="Details for Bronze Ingot"]`);
     await setNumber(`${row(item)} input[aria-label="Owned for Bronze Ingot"]`, 4);
@@ -223,7 +233,7 @@ async function main() {
     accountId = (await api("GET", "/api/v1/list")).find(entry => entry.list.name === name).list.id;
     await api("POST", `/api/v1/list/${accountId}/add/item`, { id: 0, list_id: accountId, item_id: item, hq: null, quantity: 2, acquired: 0 });
     cookie = (await page.cookies()).map(entry => `${entry.name}=${entry.value}`).join("; ");
-    const accountUrl = `${base}/list/${accountId}?labs=lists-sync`;
+    const accountUrl = `${base}/list/${accountId}`;
     const holdInitial = await page.evaluateOnNewDocument(id => { window.__holdInitialPriceDoc = id; window.__heldInitialPriceDocs = []; }, accountId);
     await load(accountUrl);
     await page.waitForFunction(() => window.__heldInitialPriceDocs?.length > 0);
@@ -282,9 +292,15 @@ async function main() {
     const rowBeforeCycle = (await api("GET", "/api/v1/list/" + accountId))[1].find(row => row.item_id === item);
     await page.evaluate(selector => { window.__priceCycleInput = document.querySelector(selector); window.__priceCycleNext = document.querySelector('[data-testid="shop-next-world"]'); window.__priceCycleUpdateCount = window.__priceDocUpdates.length; }, quantityInput);
     unavailableAccount = true;
+    const deniedPrices = page.waitForResponse(response => new URL(response.url()).pathname === `/api/v1/list/${accountId}/listings` && response.status() === 200);
     await api("POST", "/api/v1/list/item/edit", { ...rowBeforeCycle, target_price: (rowBeforeCycle.target_price || 0) + 1 });
+    // A refetch's Suspense fallback also detaches the cached editor. Wait for
+    // its response to settle so this probes denied availability, not loading.
+    assert.equal((await (await deniedPrices).json())[0].permission, "None");
+    await page.waitForFunction(() => !document.querySelector('[data-testid="list-price-controls"] input[role="combobox"]'));
     await page.waitForFunction(() => !document.querySelector('[data-testid="shop-cart-summary"]'));
     assert.equal(await page.$(quantityInput), null, "unavailable purchase controls leave the active document");
+    assert.equal(await page.evaluate(() => window.__priceCycleInput.isConnected), false, "held unavailable state detaches the purchase editor");
     await page.evaluate(() => window.__priceCycleNext?.click());
     assert.equal(await page.evaluate(() => window.__priceDocUpdates.length), await page.evaluate(() => window.__priceCycleUpdateCount), "unavailable controls send no purchase updates");
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -316,7 +332,7 @@ async function main() {
     await api("POST", "/api/v1/list/create", { name: secondName, wdr_filter: { World: secondWorld.id } });
     secondAccountId = (await api("GET", "/api/v1/list")).find(entry => entry.list.name === secondName).list.id;
     await api("POST", `/api/v1/list/${secondAccountId}/add/item`, { id: 0, list_id: secondAccountId, item_id: item, hq: null, quantity: 2, acquired: 0 });
-    await load(`${base}/list/${secondAccountId}?labs=lists-sync`); await expectTotal("60 gil");
+    await load(`${base}/list/${secondAccountId}`); await expectTotal("60 gil");
     await load(accountUrl); await expectTotal("40 gil");
     failAccount = true; holdAccount = true;
     await page.evaluate(id => {
@@ -328,7 +344,7 @@ async function main() {
       };
       requestAnimationFrame(sample);
       window.__priceRouteToken = "same-document";
-      const link = document.createElement("a"); link.href = `/list/${id}?labs=lists-sync`; link.textContent = "Other list";
+      const link = document.createElement("a"); link.href = `/list/${id}`; link.textContent = "Other list";
       document.body.append(link); link.click(); link.remove();
     }, secondAccountId);
     await page.waitForFunction(id => location.pathname === `/list/${id}`, {}, secondAccountId);

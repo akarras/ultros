@@ -90,7 +90,6 @@ async function main() {
   page.setDefaultTimeout(timeout);
   await page.setViewport({ width: 1280, height: 900 });
   await page.setCookie(
-    { name: "LABS", value: "lists-sync", url: base, path: "/" },
     { name: "HIDE_ADS", value: "true", url: base, path: "/" },
     { name: "i18n_pref_locale", value: "en", url: base, path: "/" },
   );
@@ -129,6 +128,40 @@ async function main() {
     await page.waitForFunction(selector =>
       document.querySelector(selector)?.textContent.includes("Saved on this device"),
     {}, testId("device-list-status"));
+  }
+  async function cartFitsPanel() {
+    // Container queries settle on the next layout after a viewport resize.
+    // Measure the painted layout rather than its intermediate grid placement.
+    await page.evaluate(() => new Promise(resolve =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const layout = await page.evaluate(() => {
+      const row = document.querySelector('[data-testid="cart-rows"] > li[data-item-id="5056"]');
+      const name = row.querySelector('[data-testid="cart-item-name"]');
+      const bounds = row.getBoundingClientRect();
+      const outside = [...row.querySelectorAll("input, select, button")].filter(control => {
+        const box = control.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && (box.left < bounds.left - 1 || box.right > bounds.right + 1);
+      }).map(control => control.getAttribute("aria-label") || control.textContent);
+      return {
+        nameWidth: name.getBoundingClientRect().width,
+        nameFits: name.scrollWidth <= name.clientWidth + 1,
+        panelWidth: document.querySelector('[data-testid="list-cart-rows-column"]').getBoundingClientRect().width,
+        rowWidth: bounds.width,
+        columns: getComputedStyle(row).gridTemplateColumns,
+        itemWidth: name.parentElement.parentElement.parentElement.getBoundingClientRect().width,
+        fontSize: getComputedStyle(document.documentElement).fontSize,
+        outside,
+        pageFits: document.documentElement.scrollWidth <= innerWidth + 1,
+      };
+    });
+    if (!layout.nameFits || layout.nameWidth < 80 || layout.outside.length || !layout.pageFits) {
+      const artifacts = path.join(__dirname, "artifacts", "lists-v2");
+      fs.mkdirSync(artifacts, { recursive: true });
+      await capture(page, { path: path.join(artifacts, "cart-layout-failure.png"), fullPage: true }).catch(() => {});
+    }
+    assert(layout.nameWidth >= 80 && layout.nameFits, `the item name stays readable: ${JSON.stringify(layout)}`);
+    assert.deepEqual(layout.outside, [], "row controls stay inside the cart panel");
+    assert(layout.pageFits, "the cart does not cause horizontal page overflow");
   }
   async function offlineReady() {
     await page.waitForFunction(() => typeof window.__ULTROS_GUEST_OFFLINE_READY__ === "boolean");
@@ -211,6 +244,30 @@ async function main() {
       document.activeElement === button && button.getAttribute("aria-expanded") === "false"), true,
     "Escape closes the details panel and focus returns to the row's toggle");
 
+    // Restored legacy row actions: one click marks the row acquired (and
+    // back), and the bell opens a price alert preset to the row's item.
+    const markAcquired = 'button[aria-label="Mark Bronze Ingot as acquired"]';
+    const markUnacquired = 'button[aria-label="Mark Bronze Ingot as not acquired"]';
+    await page.click(markAcquired);
+    await page.waitForSelector(markUnacquired, { visible: true });
+    assert.equal(await page.$eval(markUnacquired, button => button.getAttribute("aria-pressed")), "true",
+      "the acquired toggle reports its pressed state");
+    await saved();
+    await openDetails();
+    await waitValue(owned, 6);
+    await page.click(markUnacquired);
+    await waitValue(owned, 0);
+    await page.click(details);
+    await page.waitForFunction(selector => document.querySelector(selector) === null, {}, owned);
+    console.log("[ok] one click marks a row acquired and unacquired without typing Owned");
+    await page.click('button[aria-label="Create price alert for Bronze Ingot"]');
+    await page.waitForSelector('[role="dialog"]', { visible: true });
+    assert.match(await page.$eval('[role="dialog"]', element => element.textContent), /Bronze Ingot/,
+      "the row's price alert opens preset to the row's item");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.querySelector('[role="dialog"]') === null);
+    console.log("[ok] the row bell opens a price alert for the row's item");
+
     // A second row for selection, bulk quality and sorting checks.
     const mapleNeeded = 'input[aria-label="Needed for Maple Log"]';
     const mapleQuality = 'select[aria-label="Quality for Maple Log"]';
@@ -223,12 +280,33 @@ async function main() {
     assert.equal(await page.$(testId("cart-selection-bar")), null, "bulk controls stay hidden until something is selected");
     await page.click('input[aria-label="Select Bronze Ingot"]');
     await page.waitForSelector(testId("cart-selection-bar"), { visible: true });
+    await page.click(testId("cart-bulk-delete"));
+    await page.waitForFunction(() => document.querySelector('[data-testid="cart-bulk-delete"]')?.dataset.confirming === "true");
+    // Change the identities in one browser task, leaving the count at one.
+    // Watching only the count would keep deletion armed for the wrong row.
+    await page.evaluate(() => {
+      document.querySelector('input[aria-label="Select Bronze Ingot"]').click();
+      document.querySelector('input[aria-label="Select Maple Log"]').click();
+    });
+    await page.waitForFunction(() => document.querySelector('[data-testid="cart-bulk-delete"]')?.dataset.confirming === "false");
+    await page.click(testId("cart-bulk-delete"));
+    await page.waitForFunction(() => document.querySelector('[data-testid="cart-bulk-delete"]')?.dataset.confirming === "true");
+    assert.notEqual(await page.$(needed), null, "changing selection preserves the previously selected row");
+    assert.notEqual(await page.$(mapleNeeded), null, "a replacement selection requires its own deletion confirmation");
+    await page.evaluate(() => [...document.querySelectorAll('[data-testid="cart-selection-bar"] button')].find(b => /Clear selection/.test(b.textContent))?.click());
+    await page.waitForFunction(() => document.querySelector('[data-testid="cart-selection-bar"]') === null);
+    await page.click('input[aria-label="Select Bronze Ingot"]');
+    await page.waitForSelector(testId("cart-selection-bar"), { visible: true });
+    console.log("[ok] changing selected rows disarms bulk deletion even when the count stays the same");
     await page.click('input[aria-label="Select Maple Log"]');
     await page.waitForFunction(() => /2 selected/.test(document.querySelector('[data-testid="cart-selection-bar"]')?.textContent || ""));
+    await page.click(testId("cart-bulk-delete"));
+    await page.waitForFunction(() => document.querySelector('[data-testid="cart-bulk-delete"]')?.dataset.confirming === "true");
     await page.click(testId("cart-bulk-hq"));
     // Set HQ only touches rows whose item can be HQ: Bronze Ingot flips,
     // Maple Log (no HQ variant since 7.0) keeps "any".
     await page.waitForFunction((a, b) => document.querySelector(a)?.value === "hq" && document.querySelector(b)?.value === "any", {}, quality, mapleQuality);
+    await page.waitForFunction(() => document.querySelector('[data-testid="cart-bulk-delete"]')?.dataset.confirming === "false");
     await page.click(testId("cart-bulk-any"));
     await page.waitForFunction((a, b) => document.querySelector(a)?.value === "any" && document.querySelector(b)?.value === "any", {}, quality, mapleQuality);
     await saved();
@@ -241,6 +319,11 @@ async function main() {
     console.log("[ok] selecting rows reveals bulk quality actions that apply to every selected row");
 
     // Sorting by quantity must not relocate a row whose editor holds a draft.
+    // Header sorting is offered when the rows panel has enough space; a
+    // narrower split pane uses the same sort choices in its select instead.
+    await page.setViewport({ width: 1920, height: 900 });
+    await page.waitForSelector('button[aria-label="Sort by Qty"]', { visible: true });
+    await cartFitsPanel();
     const rowIndex = name => page.evaluate(name =>
       Array.from(document.querySelectorAll('[data-testid="cart-rows"] > li')).findIndex(li => li.textContent.includes(name)), name);
     await page.click('button[aria-label="Sort by Qty"]');
@@ -263,11 +346,17 @@ async function main() {
     await replace(needed, 6);
     await page.keyboard.press("Enter");
     await waitValue(needed, 6);
+    await page.setViewport({ width: 1280, height: 900 });
     console.log("[ok] header sorting waits for the active editor to commit");
 
-    // Bulk delete clears the selection; Undo brings the row back.
+    // Bulk delete asks twice: the first click only arms the confirm,
+    // the second deletes. Deleting clears the selection; Undo brings
+    // the row back.
     await page.click('input[aria-label="Select Maple Log"]');
     await page.waitForSelector(testId("cart-selection-bar"), { visible: true });
+    await page.click(testId("cart-bulk-delete"));
+    await page.waitForFunction(selector => document.querySelector(selector)?.dataset.confirming === "true", {}, testId("cart-bulk-delete"));
+    assert.notEqual(await page.$(mapleNeeded), null, "the first delete click only arms the confirm");
     await page.click(testId("cart-bulk-delete"));
     await page.waitForFunction(selector => document.querySelector(selector) === null, {}, mapleNeeded);
     assert.equal(await page.$(testId("cart-selection-bar")), null, "deleting the selection clears it");
@@ -330,6 +419,7 @@ async function main() {
     console.log("[ok] inline add, duplicate quantities, focus, Escape and edited values survive reload");
     const shots = path.join(__dirname, "artifacts", "lists-v2");
     fs.mkdirSync(shots, { recursive: true });
+    await cartFitsPanel();
     await capture(page, { path: path.join(shots, "cart-desktop.png"), fullPage: true }).catch(() => {});
     await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
     // Changing isMobile/hasTouch reloads the page: wait for the cart itself
@@ -345,6 +435,7 @@ async function main() {
     await page.click(testId("cart-composer-toggle"));
     assert.equal(await page.$eval(search, node => node.value), "Iron Ore", "closing the composer retains the search draft");
     await page.click(testId("cart-composer-toggle"));
+    await cartFitsPanel();
     await capture(page, { path: path.join(shots, "cart-mobile.png"), fullPage: true }).catch(() => {});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
       "the compact cart fits a 390px viewport without horizontal scroll");
@@ -499,7 +590,7 @@ async function main() {
     // Use the router link rather than a document navigation: component
     // cleanup must close the companion even when pagehide never fires.
     await page.bringToFront();
-    await page.$eval('a[href="/list?labs=lists-sync"]', link => link.click());
+    await page.$eval('a[href="/list"]', link => link.click());
     await page.waitForFunction(() => location.pathname === "/list");
     const closedByDeadline = await Promise.race([
       popup.isClosed() ? Promise.resolve(true) : new Promise(resolve => popup.once("close", () => resolve(true))),
