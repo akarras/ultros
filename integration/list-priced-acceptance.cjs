@@ -12,7 +12,10 @@ const READER = 990000001479;
 const tid = id => `[data-testid="${id}"]`;
 
 async function main() {
-  const browser = await require("puppeteer").launch({ headless: true });
+  const args = process.env.E2E_BLOCK_EXTERNAL === "1"
+    ? ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost"]
+    : [];
+  const browser = await require("puppeteer").launch({ headless: true, args });
   let page;
   const errors = [];
   const failedRequests = [];

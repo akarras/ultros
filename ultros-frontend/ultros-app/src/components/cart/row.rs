@@ -359,11 +359,16 @@ pub fn CartRow(
             </div>
             <div class="order-4 col-span-2 col-start-2 flex flex-wrap items-center gap-1 @min-[48rem]/cart:contents">
                 <div class="w-20 shrink-0 @min-[48rem]/cart:order-3 @min-[48rem]/cart:w-auto">{quantity}</div>
-                <select class="input w-auto min-w-20 flex-1 @min-[48rem]/cart:min-w-0 @min-[48rem]/cart:order-4" aria-label=t_string!(i18n, lists_workspace_field_named, label = t_string!(i18n, lists_workspace_quality).to_string(), name = quality_name) disabled=move || !can_write.get() prop:value=move || match row.get().hq {Some(true) => "hq", Some(false) => "nq", None => "any"} on:change=move |ev| {let mut updated = row.get_untracked(); updated.hq = match event_target_value(&ev).as_str() {"hq" if can_hq => Some(true), "nq" => Some(false), _ => None}; on_edit.run(updated);}>
+                // Keep grid placement on a real cell. A native select under
+                // display:contents can retain stale container-query ordering
+                // after the cart grows from its compact layout.
+                <div class="min-w-20 flex-1 @min-[48rem]/cart:min-w-0 @min-[48rem]/cart:order-4">
+                <select class="input w-full min-w-0" aria-label=t_string!(i18n, lists_workspace_field_named, label = t_string!(i18n, lists_workspace_quality).to_string(), name = quality_name) disabled=move || !can_write.get() prop:value=move || match row.get().hq {Some(true) => "hq", Some(false) => "nq", None => "any"} on:change=move |ev| {let mut updated = row.get_untracked(); updated.hq = match event_target_value(&ev).as_str() {"hq" if can_hq => Some(true), "nq" => Some(false), _ => None}; on_edit.run(updated);}>
                     <option value="any">{t!(i18n, lists_workspace_any)}</option>
                     <option value="nq">{t!(i18n, lists_workspace_nq)}</option>
                     {can_hq.then(|| view! { <option value="hq">{t!(i18n, lists_workspace_hq)}</option> })}
                 </select>
+                </div>
                 <button type="button" class="btn-ghost inline-flex h-10 w-10 shrink-0 items-center justify-center p-0 text-[color:var(--color-text-muted)] hover:text-green-200 @min-[48rem]/cart:order-6" class:text-green-300=move || row_is_acquired(&row.get()) data-testid="cart-toggle-acquired" aria-pressed=move || row_is_acquired(&row.get()).to_string() aria-label=move || if row_is_acquired(&row.get()) { t_string!(i18n, cart_mark_unacquired_named, name = acquired_name.clone()).to_string() } else { t_string!(i18n, cart_mark_acquired_named, name = acquired_name.clone()).to_string() } title=move || if row_is_acquired(&row.get()) { t_string!(i18n, list_view_mark_unacquired).to_string() } else { t_string!(i18n, list_item_row_mark_acquired).to_string() } disabled=move || !can_write.get() on:click=move |_| on_edit.run(toggled_acquired(&row.get_untracked()))>
                     <Icon icon=Signal::derive(move || if row_is_acquired(&row.get()) { i::BsCheckCircle } else { i::BiCheckRegular }) />
                 </button>
