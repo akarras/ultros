@@ -19,10 +19,10 @@ pub fn ListRecovery(doc: ListDocHandle) -> impl IntoView {
                         <p class="mt-2">{t!(i18n, list_compatibility_help)}</p>
                         <button type="button" class="btn-secondary mt-3" data-testid="list-compatibility-export" on:click=move |_| doc.download_recovery()>{t!(i18n, account_list_save_export)}</button>
                     }.into_any()
-                } else if doc.recovery_state.try_get() == Some(RecoveryState::Review) {
+                } else if matches!(doc.recovery_state.try_get(), Some(RecoveryState::Review | RecoveryState::WriteDenied)) {
                     view! {
-                        <h3 role="alert" class="font-semibold">{t!(i18n, list_recovery_title)}</h3>
-                        <p class="mt-2">{t!(i18n, list_recovery_help)}</p>
+                        <h3 role="alert" class="font-semibold">{move || if doc.writes_rejected() { t_string!(i18n, list_readonly_recovery_title).to_string() } else { t_string!(i18n, list_recovery_title).to_string() }}</h3>
+                        <p class="mt-2">{move || if doc.writes_rejected() { t_string!(i18n, list_readonly_recovery_help).to_string() } else { t_string!(i18n, list_recovery_help).to_string() }}</p>
                         <div class="mt-3 overflow-x-auto">
                             <table class="w-full text-left">
                                 <thead><tr>
@@ -72,8 +72,12 @@ pub fn ListRecovery(doc: ListDocHandle) -> impl IntoView {
                         </div>
                         <div class="mt-3 flex flex-wrap gap-2">
                             <button type="button" class="btn-secondary" on:click=move |_| doc.download_recovery()>{t!(i18n, account_list_save_export)}</button>
-                            <button type="button" class="btn-secondary" data-testid="list-recovery-retry" on:click=move |_| doc.retry_recovery()>{t!(i18n, list_recovery_retry)}</button>
-                            <button type="button" class="btn-secondary max-w-full whitespace-normal" data-testid="list-recovery-use-server" on:click=move |_| doc.use_server_version()>{t!(i18n, list_recovery_use_server)}</button>
+                            <Show when=move || { !doc.writes_rejected() || doc.permission.get() >= 2 }>
+                                <button type="button" class="btn-secondary" data-testid="list-recovery-retry" on:click=move |_| doc.retry_recovery()>{t!(i18n, list_recovery_retry)}</button>
+                            </Show>
+                            <Show when=move || !doc.writes_rejected()>
+                                <button type="button" class="btn-secondary max-w-full whitespace-normal" data-testid="list-recovery-use-server" on:click=move |_| doc.use_server_version()>{t!(i18n, list_recovery_use_server)}</button>
+                            </Show>
                         </div>
                     }.into_any()
                 } else {

@@ -76,7 +76,15 @@ async function main() {
     await ssr.setJavaScriptEnabled(false);
     await ssr.goto(`${BASE}/fc-crafting-analyzer/Gilgamesh${QUERY}`, {waitUntil: 'domcontentloaded', timeout: 90000});
     assert.equal(await ssr.$eval(`${PICKER} input[role="combobox"]`, el => el.value), 'Gilgamesh');
-    assert((await ssr.$eval('[data-testid="analyzer-price-scope"]', el => el.textContent)).includes('North-America'));
+    // Out-of-order SSR leaves this resource's controls in a template until its
+    // inline swap script runs. Inspect that streamed content with JS disabled.
+    const serverScope = await ssr.evaluate(() => {
+      const selector = '[data-testid="analyzer-price-scope"] select';
+      const select = document.querySelector(selector) || [...document.querySelectorAll('template')]
+        .map(template => template.content.querySelector(selector)).find(Boolean);
+      return select?.selectedOptions[0]?.textContent.trim();
+    });
+    assert.equal(serverScope, 'North-America', 'streamed SSR uses the route world region');
     await ssr.close();
     await page.goto(`${BASE}/fc-crafting-analyzer/Gilgamesh${QUERY}`, {waitUntil: 'domcontentloaded', timeout: 90000});
     await ready('Gilgamesh', 'North-America');

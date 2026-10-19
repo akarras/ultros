@@ -17,6 +17,23 @@ const MAX_LISTS: usize = 20;
 const DOC_PREFIX: &str = "ultros.listdoc.v1.";
 const INDEX_PREFIX: &str = "ultros.listdoc.index.v1.";
 const GENERATION_PREFIX: &str = "ultros.listdoc.generation.v1.";
+const WRITE_PAUSED_PREFIX: &str = "ultros.listdoc.write-paused.v1.";
+
+pub fn writes_paused(storage: &impl Storage, user: i64, list: i32) -> bool {
+    storage
+        .get(&format!("{WRITE_PAUSED_PREFIX}{user}.{list}"))
+        .as_deref()
+        == Some("1")
+}
+
+/// Independent of the snapshot/index so ordinary saves and fresh permissions
+/// cannot silently resume a previously rejected offline branch after reload.
+pub fn set_writes_paused(storage: &impl Storage, user: i64, list: i32, paused: bool) -> bool {
+    storage.set(
+        &format!("{WRITE_PAUSED_PREFIX}{user}.{list}"),
+        if paused { "1" } else { "0" },
+    )
+}
 
 pub trait Storage {
     fn get(&self, key: &str) -> Option<String>;
@@ -419,6 +436,7 @@ pub fn remember_permission(
 /// Drop one list's cached snapshot and index entry, e.g. once the server
 /// says forbidden / not found / deleted.
 pub fn purge_snapshot(storage: &impl Storage, user_id: i64, list_id: i32) {
+    storage.remove(&format!("{WRITE_PAUSED_PREFIX}{user_id}.{list_id}"));
     let Ok(current) = checked_generation(storage, user_id, list_id) else {
         storage.remove(&doc_key(user_id, list_id));
         return;
@@ -565,6 +583,19 @@ fn replace_save(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejected_writes_stay_paused_across_saves_and_permission_changes() {
+        let storage = MemoryStorage::default();
+        assert!(set_writes_paused(&storage, 1, 7, true));
+        assert!(save(&storage, 1, 7, &[1], 1, 1.0));
+        assert!(remember_permission(&storage, 1, 7, 2, 2.0));
+        assert!(writes_paused(&storage, 1, 7));
+        assert!(!writes_paused(&storage, 2, 7));
+        assert!(!writes_paused(&storage, 1, 8));
+        purge_snapshot(&storage, 1, 7);
+        assert!(!writes_paused(&storage, 1, 7));
+    }
     use std::cell::RefCell;
     use std::collections::HashMap;
 

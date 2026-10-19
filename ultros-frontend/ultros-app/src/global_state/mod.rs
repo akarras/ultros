@@ -1,4 +1,5 @@
 pub mod app_update;
+pub use lists_readonly::ListsReadonly;
 pub use local_world_data::{LocalWorldData, use_world_display_name, use_world_helper};
 pub use ultros_frontend_core::global_state::changelog;
 pub use ultros_frontend_core::global_state::cheapest_prices;
@@ -8,7 +9,7 @@ pub use ultros_frontend_core::global_state::craft_options;
 pub use ultros_frontend_core::global_state::crafter_levels;
 pub use ultros_frontend_core::global_state::guest_alerts;
 pub use ultros_frontend_core::global_state::home_world;
-pub use ultros_frontend_core::global_state::labs;
+pub use ultros_frontend_core::global_state::lists_readonly;
 pub use ultros_frontend_core::global_state::local_world_data;
 pub use ultros_frontend_core::global_state::notifications;
 pub use ultros_frontend_core::global_state::platform;

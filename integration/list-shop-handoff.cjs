@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-// Account Build → Shop → Build handoff under Labs `lists-sync` (#1437).
+// Account Build → Shop → Build handoff (#1437).
 // Requires a server built with the `test-auth` bin feature. Market data is
 // optional: when the local market has stacks for ITEM_NAME the priced journey
 // runs (partial purchase, owned count, refresh review); otherwise the
@@ -31,6 +31,15 @@ async function main() {
   await page.setCacheEnabled(false);
   page.setDefaultTimeout(TIMEOUT_MS);
   await page.setViewport({ width: 1280, height: 900 });
+  // Keep the initial SSR and hydration trees on the same ad/locale preferences.
+  await page.setCookie(
+    { name: "HIDE_ADS", value: "true", url: BASE_URL, path: "/" },
+    { name: "i18n_pref_locale", value: "en", url: BASE_URL, path: "/" },
+  );
+  await page.evaluateOnNewDocument(() => {
+    window.__handoffFixtureHydrated = false;
+    addEventListener("ultros:hydrated", () => { window.__handoffFixtureHydrated = true; });
+  });
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   let listId = null;
@@ -84,6 +93,7 @@ async function main() {
     login.searchParams.set("redirect", "/list");
     const response = await page.goto(login.toString(), { waitUntil: "domcontentloaded" });
     assert(response && response.status() < 400, `test login failed: ${response?.status()}`);
+    await page.waitForFunction(() => window.__handoffFixtureHydrated);
     const worldData = await api("GET", "/api/v1/world_data");
     assert.equal(worldData.status, 200, "world_data");
     if (ACCEPTANCE) {
@@ -95,10 +105,7 @@ async function main() {
     const region = market?.region || worldData.body.regions[0];
     const world = market?.manifest.worlds[0] || region.datacenters[0].worlds[0];
     await page.setCookie(
-      { name: "LABS", value: "lists-sync", url: BASE_URL, path: "/" },
-      { name: "HIDE_ADS", value: "true", url: BASE_URL, path: "/" },
       { name: "HOME_WORLD", value: world.name, url: BASE_URL, path: "/" },
-      { name: "i18n_pref_locale", value: "en", url: BASE_URL, path: "/" },
     );
     const name = `Shop handoff E2E ${Date.now()}`;
     const create = await api("POST", "/api/v1/list/create", { name, wdr_filter: { Region: region.id } });
@@ -139,7 +146,7 @@ async function main() {
     // (docs/lists-sync.md). Reload straight into Shop so the server render
     // and the hydrated client both start from the synced row.
     // A full reload must follow durable storage, not just server receipt.
-    await page.waitForFunction(() => document.querySelector('[data-testid="account-list-save-state"]')?.textContent.includes("Saved on this device"));
+    await page.waitForFunction(() => document.querySelector('[data-testid="account-list-save-state"]')?.textContent.includes("Local copy saved"));
     await page.goto(new URL(`/list/${listId}?buy=true`, BASE_URL).href, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(testId("inline-list-add"));
     await page.waitForSelector(testId("shop-cart-summary"), { visible: true });
@@ -153,7 +160,11 @@ async function main() {
     await page.waitForSelector(testId("shop-confirm-route"), { visible: true });
     assert.equal(await visible(testId("shop-route-picker")), true, "preview keeps route choices visible");
     assert.equal(await page.$(testId("shop-change-route")), null, "preview does not confirm a route");
-    await page.waitForSelector(testId("shop-stack-bought"));
+    if (priced) {
+      await page.waitForSelector(testId("shop-stack-bought"));
+    } else {
+      assert.equal(await page.$(testId("shop-stack-bought")), null, "no purchase controls without stock");
+    }
     assert(await page.$$eval(testId("shop-stack-bought"), buttons => buttons.every(button => button.disabled)), "preview cannot record purchases");
     await click(testId("shop-confirm-route"));
     await page.waitForSelector(testId("shop-change-route"), { visible: true });

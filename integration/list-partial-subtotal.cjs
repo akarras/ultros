@@ -45,7 +45,7 @@ async function main() {
     const worlds = await api("GET", "/api/v1/world_data");
     const world = worlds.regions[0].datacenters[0].worlds[0];
     await page.setCookie(...[
-      ["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["HOME_WORLD", world.name], ["i18n_pref_locale", "en"],
+      ["HIDE_ADS", "true"], ["HOME_WORLD", world.name], ["i18n_pref_locale", "en"],
     ].map(([name, value]) => ({ name, value, url: base, path: "/" })));
     const name = `Partial subtotal ${Date.now()}`;
     await api("POST", "/api/v1/list/create", { name, wdr_filter: { World: world.id } });

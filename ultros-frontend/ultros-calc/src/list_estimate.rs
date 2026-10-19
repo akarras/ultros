@@ -173,6 +173,50 @@ impl CartEstimate {
     pub fn is_incomplete(&self) -> bool {
         self.saturated || matches!(self.coverage, Coverage::Partial | Coverage::None)
     }
+
+    /// Priced units grouped by the world their listing sits on, dearest
+    /// world first. Sums the same allocations as [`Self::total`], so the
+    /// entries add back up to the cart total (unless it saturated). The
+    /// presentation layer groups these worlds under their datacenters.
+    pub fn world_totals(&self) -> Vec<WorldTotal> {
+        let mut by_world: BTreeMap<i32, WorldTotal> = BTreeMap::new();
+        for line in &self.lines {
+            for allocation in &line.allocations {
+                let entry = by_world
+                    .entry(allocation.world_id)
+                    .or_insert_with(|| WorldTotal {
+                        world_id: allocation.world_id,
+                        total: 0,
+                        units: 0,
+                        listings: 0,
+                    });
+                entry.total = entry.total.saturating_add(
+                    i64::from(allocation.price_per_unit) * i64::from(allocation.units),
+                );
+                entry.units = entry.units.saturating_add(i64::from(allocation.units));
+                entry.listings += 1;
+            }
+        }
+        let mut totals: Vec<_> = by_world.into_values().collect();
+        totals.sort_by(|a, b| {
+            b.total
+                .cmp(&a.total)
+                .then_with(|| a.world_id.cmp(&b.world_id))
+        });
+        totals
+    }
+}
+
+/// Gil, priced units and allocation count for one world in a cart estimate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorldTotal {
+    pub world_id: i32,
+    /// Gil for the units allocated from this world's listings.
+    pub total: i64,
+    /// Priced units allocated from this world.
+    pub units: i64,
+    /// Listings units were allocated from, across all rows.
+    pub listings: usize,
 }
 
 /// Estimate one row from the listings the page holds for its item.
@@ -580,6 +624,50 @@ mod tests {
             acquired: Some(owned),
             target_price: None,
         }
+    }
+
+    #[test]
+    fn world_totals_group_allocated_units_by_world_and_sum_to_the_cart_total() {
+        let mut dear = listing(1, 10, false, 30, 5);
+        dear.world_id = 2;
+        let mut cheap = listing(2, 10, false, 10, 2);
+        cheap.world_id = 3;
+        let mut other_item = listing(3, 20, false, 7, 4);
+        other_item.world_id = 2;
+        // Item 10 needs 4: 2 cheap units on world 3, then 2 on world 2.
+        // Item 20 needs 3 of its 4 world-2 units. Nothing is priced twice.
+        let estimate = estimate_cart([
+            (request(1, 10, None, 4, 0), &[dear, cheap][..]),
+            (request(2, 20, None, 3, 0), &[other_item][..]),
+        ]);
+        let totals = estimate.world_totals();
+        assert_eq!(
+            totals,
+            [
+                WorldTotal {
+                    world_id: 2,
+                    total: 2 * 30 + 3 * 7,
+                    units: 5,
+                    listings: 2
+                },
+                WorldTotal {
+                    world_id: 3,
+                    total: 2 * 10,
+                    units: 2,
+                    listings: 1
+                },
+            ]
+        );
+        assert_eq!(
+            totals.iter().map(|world| world.total).sum::<i64>(),
+            estimate.total
+        );
+        // An estimate with no allocations has no breakdown to show.
+        assert!(
+            estimate_cart([(request(1, 10, None, 1, 0), &[][..])])
+                .world_totals()
+                .is_empty()
+        );
     }
 
     #[test]

@@ -90,21 +90,19 @@ async function main(){
       const menu=`.virtual-grid-heading[data-column="${column}"]`;
       await page.$eval(menu,e=>e.scrollIntoView({block:'center',inline:'nearest'}));
       await page.click(menu,{button:'right'});
-      // Every tool is a registered host: the recipe's old row-filter keys are
-      // aliases of its grid metrics (#1331), like the other six before it.
-      const registered=true;
-      const form=`.grid-column-filter[data-metric-filter="${column}"]`;
+      // Header editors share the registry and retain readable aliases when
+      // those keys can represent the filter exactly.
+      const form=`form[data-metric-filter="${column}"]`;
       await page.waitForSelector(form);
       const selected=filter==='scrip'?'OrangeCrafters':'100';
       if(filter==='scrip')await page.select(`${form} select[aria-label="Value"]`,selected);
-      else {await page.click(`${form} input`,{count:3});await page.type(`${form} input`,selected);}
+      else {await page.click(`${form} input[aria-label="Min"]`,{count:3});await page.type(`${form} input[aria-label="Min"]`,selected);}
       const display=filter==='scrip'?await page.$eval(form+' select[aria-label="Value"]',e=>e.selectedOptions[0].textContent):selected;
       await page.click(`${form} button[type="submit"]`);
-      await page.waitForFunction((filter,column,value,registered)=>{
+      await page.waitForFunction((filter,column,value)=>{
         const query=new URL(location.href).searchParams;
-        return (registered?JSON.parse(query.get('gf')||'{}')[column]?.value:query.get(filter))===value;
-      },{},filter,column,selected,registered);
-      if(registered)assert.equal(new URL(page.url()).searchParams.has(filter),false,'edits retire the legacy alias');
+        return query.get(filter)===value && !JSON.parse(query.get('gf')||'{}')[column];
+      },{},filter,column,selected);
       await page.waitForSelector(`.virtual-grid-heading[data-column="${column}"].grid-filter-active`);
       await page.waitForFunction(display=>[...document.querySelectorAll('.filter-chip')].some(e=>e.textContent.includes(display)),{},display);
       await page.keyboard.press('Escape');
@@ -117,7 +115,7 @@ async function main(){
       const response=await goto(page,`${route}?lang=ja`);
       assert(response.request().redirectChain().some(r=>r.response()?.status()===307),'bare entry is restored before SSR');
       const restored=new URL(page.url()).searchParams;
-      assert.equal(registered?JSON.parse(restored.get('gf')||'{}')[column]?.value:restored.get(filter),selected);
+      assert.equal(restored.get(filter),selected);
       assert.equal(new URL(page.url()).searchParams.get('lang'),'ja');
       assert.equal(new URL(page.url()).searchParams.get('l'),'2~~item.8c');
       // Explicit shared links override this device's last view.

@@ -311,6 +311,10 @@ pub fn hydrate() {
         // Use the SSR-injected bootstrap when available; only fall back to
         // network requests if it's missing (e.g. stale cached HTML).
         let bootstrap = read_bootstrap();
+        // The operator Lists kill-switch rides the SSR bootstrap; a missing
+        // bootstrap (stale cached HTML) keeps editing enabled, matching the
+        // server-side default.
+        let lists_readonly = bootstrap.as_ref().is_some_and(|b| b.lists_readonly);
         let (xiv_data, worlds, region, current_user) = if let Some(b) = bootstrap {
             let xiv_data = populate_xiv_gen_data().await;
             (
@@ -408,6 +412,7 @@ pub fn hydrate() {
             let current_user = current_user.clone();
             provide_context(GuessedRegion(region));
             provide_context(LoadedGameDataLocale(get_i18n_lang()));
+            provide_context(ListsReadonly(lists_readonly));
             provide_context(world_data);
             if let Some(current_user) = current_user {
                 provide_context(BootstrapUser(current_user));
@@ -424,7 +429,12 @@ pub fn hydrate() {
         }
         dispatch_boot_event("ultros:hydrated");
         delete_legacy_game_data_db();
-        let lang = get_i18n_lang();
-        prepare_guest_offline(&xiv_gen_db::startup_url(&lang), &lang);
+        // While lists are paused by the operator switch, do not stage a new
+        // offline generation: the cached guest shell would boot an editor
+        // the switch is meant to keep closed.
+        if !lists_readonly {
+            let lang = get_i18n_lang();
+            prepare_guest_offline(&xiv_gen_db::startup_url(&lang), &lang);
+        }
     });
 }

@@ -32,7 +32,8 @@ use i18n::*;
 use crate::components::icon::Icon;
 use crate::components::recently_viewed::RecentItems;
 pub use crate::global_state::{
-    BootstrapUser, LocalWorldData, home_world::GuessedRegion, xiv_data::LoadedGameDataLocale,
+    BootstrapUser, ListsReadonly, LocalWorldData, home_world::GuessedRegion,
+    xiv_data::LoadedGameDataLocale,
 };
 use crate::global_state::{
     app_update::provide_app_update_context, cheapest_prices::CheapestPrices,

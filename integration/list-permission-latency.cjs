@@ -148,9 +148,11 @@ module.exports = async function permissionLatency({ ownerPage, editorPage, baseU
     await editorPage.bringToFront();
     // Capture a real Write response before downgrading, but deliver it only
     // after a newer Read response has applied on the SAME route and handle.
+    // Acquiring that response is fixture setup; the access-change and
+    // overlapping-probe deadlines below still enforce the 2500ms budget.
     await editorPage.evaluate(() => { window.__permissionLatency.holdNext = true; });
     await editorPage.waitForFunction(() => window.__permissionLatency.heldPermission === "Write",
-      { timeout: 2500 });
+      { timeout });
     const changedAt = Date.now();
     assert.equal((await api(ownerPage, "POST", `/api/v1/list/${id}/share/user`, {
       user_id: editorId, permission: "Read",
@@ -199,7 +201,7 @@ module.exports = async function permissionLatency({ ownerPage, editorPage, baseU
         probe.holdNext = true;
       }, status);
       await editorPage.waitForFunction(() => window.__permissionLatency.heldPermission === "Read",
-        { timeout: 2500 });
+        { timeout });
       const completed = await editorPage.evaluate(() => window.__permissionLatency.completed || 0);
       await editorPage.waitForFunction(completed =>
         (window.__permissionLatency.completed || 0) > completed, { timeout: 2500 }, completed);

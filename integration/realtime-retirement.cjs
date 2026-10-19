@@ -49,7 +49,6 @@ async function main() {
   try {
     const login = await page.goto(`${base}/test/login?user_id=990000001505&username=SocketRetirementQA&redirect=/list`, { waitUntil: 'domcontentloaded' });
     assert(login.ok(), 'test-auth build is required');
-    await page.setCookie({ name: 'LABS', value: 'lists-sync', url: base, path: '/' });
     for (const entry of await api(page, 'GET', '/api/v1/list')) {
       if (entry.list.name.startsWith('Socket retirement ')) await api(page, 'DELETE', `/api/v1/list/${entry.list.id}/delete`);
     }

@@ -116,18 +116,19 @@ async function main() {
       await page.waitForSelector(heading);
       await page.$eval(heading, e => e.scrollIntoView({block: 'center', inline: 'nearest'}));
       await page.click(heading, {button: 'right'});
-      const form = `.grid-column-filter[data-metric-filter="${column}"]`;
+      const form = `form[data-metric-filter="${column}"]`;
       await page.waitForSelector(form);
       const value = tool === 'scrip-sources' ? 'OrangeCrafters' : '0';
+      const filterKey = tool === 'scrip-sources' ? 'scrip' : 'profit';
       if (tool === 'scrip-sources') await page.select(`${form} select[aria-label="Value"]`, value);
-      else { await page.click(`${form} input`, {count: 3}); await page.type(`${form} input`, value); }
+      else { await page.click(`${form} input[aria-label="Min"]`, {count: 3}); await page.type(`${form} input[aria-label="Min"]`, value); }
       const beforeEdit = await page.evaluate(() => ({length: history.length, scroll: scrollY}));
       await page.$eval(`${form} button[type="submit"]`, e => e.click());
       console.log(`CHECK ${tool}: filter applied`, page.url());
-      await page.waitForFunction((column, value) => {
+      await page.waitForFunction((column, filterKey, value) => {
         const query = new URL(location.href).searchParams;
-        return JSON.parse(query.get('gf') || '{}')[column]?.value === value;
-      }, {}, column, value);
+        return query.get(filterKey) === value && !JSON.parse(query.get('gf') || '{}')[column];
+      }, {}, column, filterKey, value);
       await pause(200);
       assert.deepEqual(await page.evaluate(() => ({length: history.length, scroll: scrollY})), beforeEdit, `${tool}: filter edits replace without scrolling`);
       await ready('红玉海');
@@ -140,7 +141,10 @@ async function main() {
         await page.$eval(selector, e => e.scrollIntoView({block: 'center', inline: 'nearest'}));
         const before = await page.evaluate(() => ({length: history.length, scroll: scrollY}));
         await page.click(selector);
-        await page.waitForFunction(column => !JSON.parse(new URL(location.href).searchParams.get('gf') || '{}')[column], {}, column);
+        await page.waitForFunction((column, filterKey) => {
+          const query = new URL(location.href).searchParams;
+          return !query.has(filterKey) && !JSON.parse(query.get('gf') || '{}')[column];
+        }, {}, column, filterKey);
         await ready('红玉海');
         assert.equal(await page.evaluate(() => history.length), before.length, `${tool}: ${label} replaces history`);
         // Removing a filter may shrink the page, but must not reset scroll to
@@ -192,7 +196,7 @@ async function main() {
       console.log(`PASS ${tool}: path/query/cookie precedence, regional ingredients, sales scopes, encoded filters, reload/history, legacy saved views`);
     }
   } catch (error) {
-    if (activePage && !activePage.isClosed()) console.error('Failure state:', activePage.url(), await activePage.$$eval('.grid-column-filter input', inputs => inputs.map(i => ({value: i.value, valid: i.validity.valid}))));
+    if (activePage && !activePage.isClosed()) console.error('Failure state:', activePage.url(), await activePage.$$eval('[data-metric-filter] input', inputs => inputs.map(i => ({value: i.value, valid: i.validity.valid}))));
     throw error;
   } finally { await browser.close(); }
 }

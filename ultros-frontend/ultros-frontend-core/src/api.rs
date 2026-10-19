@@ -640,6 +640,18 @@ pub async fn get_list_activity(list_id: i32) -> AppResult<Vec<ListActivity>> {
     fetch_api(&format!("/api/v1/list/{list_id}/activity?limit=50")).await
 }
 
+/// Account-bound list reads must not apply another tab's current session to
+/// the snapshot selected when this page opened.
+pub async fn get_list_items_with_listings_for_user(
+    list_id: i32,
+    user_id: i64,
+) -> AppResult<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>)> {
+    if list_id == 0 {
+        return Err(AppError::BadList);
+    }
+    fetch_api(&format!("/api/v1/list/{list_id}/listings?viewer={user_id}")).await
+}
+
 pub async fn delete_list(list_id: i32) -> AppResult<()> {
     delete_api(&format!("/api/v1/list/{list_id}/delete")).await
 }
@@ -678,24 +690,6 @@ pub async fn add_item_to_list(list_id: i32, list_item: ListItem) -> AppResult<()
 
 pub async fn edit_list_item(list_item: ListItem) -> AppResult<()> {
     post_api("/api/v1/list/item/edit", list_item).await
-}
-
-pub async fn delete_list_item(list_id: i32) -> AppResult<()> {
-    delete_api(&format!("/api/v1/list/item/{list_id}/delete")).await
-}
-
-pub async fn delete_list_items(list_items: Vec<i32>) -> AppResult<()> {
-    post_api("/api/v1/list/item/delete", list_items).await
-}
-
-#[derive(Serialize)]
-pub struct BulkHqUpdate {
-    pub ids: Vec<i32>,
-    pub hq: Option<bool>,
-}
-
-pub async fn edit_list_items_hq(ids: Vec<i32>, hq: Option<bool>) -> AppResult<()> {
-    post_api("/api/v1/list/item/hq", BulkHqUpdate { ids, hq }).await
 }
 
 /// Every group the user belongs to, each with the member and role counts its

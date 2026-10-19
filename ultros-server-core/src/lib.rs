@@ -7,5 +7,6 @@
 
 pub mod env_flag;
 pub mod event;
+pub mod lists_readonly;
 #[cfg(feature = "test-auth")]
 pub mod test_market_isolation;

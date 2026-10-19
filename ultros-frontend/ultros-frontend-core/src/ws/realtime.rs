@@ -214,6 +214,7 @@ mod client {
         pub fn subscribe_list_doc(
             &self,
             list_id: i32,
+            expected_user_id: i64,
             version: impl Fn() -> Vec<u8> + 'static,
             handler: impl Fn(ServerClient) + 'static,
         ) -> RealtimeSubscription {
@@ -230,6 +231,7 @@ mod client {
                 Rc::new(move || ClientMessage::SubscribeListDoc {
                     subscription_id: Some(subscription_id),
                     list_id,
+                    expected_user_id: Some(expected_user_id),
                     version: version(),
                 });
             self.send_dynamic_subscription(subscription_id, factory);
@@ -245,9 +247,17 @@ mod client {
         /// just waits in the document itself, and the next handshake's
         /// `export_since` diff covers it along with everything else the
         /// server lacks (spec section 5's "no offline queue").
-        pub fn send_list_doc_update(&self, list_id: i32, update: Vec<u8>) -> bool {
-            let Ok(text) = serde_json::to_string(&ClientMessage::ListDocUpdate { list_id, update })
-            else {
+        pub fn send_list_doc_update(
+            &self,
+            list_id: i32,
+            expected_user_id: i64,
+            update: Vec<u8>,
+        ) -> bool {
+            let Ok(text) = serde_json::to_string(&ClientMessage::ListDocUpdate {
+                list_id,
+                expected_user_id: Some(expected_user_id),
+                update,
+            }) else {
                 return false;
             };
             self.send_text(&text)
@@ -659,13 +669,19 @@ mod client {
         pub fn subscribe_list_doc(
             &self,
             _list_id: i32,
+            _expected_user_id: i64,
             _version: impl Fn() -> Vec<u8> + 'static,
             _handler: impl Fn(ServerClient) + 'static,
         ) -> RealtimeSubscription {
             RealtimeSubscription
         }
 
-        pub fn send_list_doc_update(&self, _list_id: i32, _update: Vec<u8>) -> bool {
+        pub fn send_list_doc_update(
+            &self,
+            _list_id: i32,
+            _expected_user_id: i64,
+            _update: Vec<u8>,
+        ) -> bool {
             false
         }
     }

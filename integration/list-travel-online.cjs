@@ -54,11 +54,11 @@ async function runTravelOnline({ browser, base, market, record = async () => {} 
     assert.equal(url.searchParams.get("excluded-worlds"), exclusions);
     assert.equal(url.searchParams.get("excluded-datacenters"), foreignDc.name);
     assert.equal(url.searchParams.get("buy"), "true");
-    assert.equal(url.searchParams.get("labs"), "lists-sync");
+    assert.equal(url.searchParams.get("labs"), null);
     assert.equal(url.searchParams.get("make_online"), device ? "1" : null);
     assert.equal(url.searchParams.has("recovery"), false);
     // The app appends its own `lang` after navigation; it is not a handoff key.
-    assert.deepEqual([...url.searchParams.keys()].filter(key => key !== "lang").sort(), ["labs", "buy", "travel", "excluded-worlds", "excluded-datacenters", ...(device ? ["make_online"] : [])].sort(), "handoff only forwards explicitly supported list settings");
+    assert.deepEqual([...url.searchParams.keys()].filter(key => key !== "lang").sort(), ["buy", "travel", "excluded-worlds", "excluded-datacenters", ...(device ? ["make_online"] : [])].sort(), "handoff only forwards explicitly supported list settings");
     assert.match(url.search, /excluded-worlds=\d+%2C\d+/i, "world list remains one encoded value");
   }
   async function shop() {
@@ -93,7 +93,7 @@ async function runTravelOnline({ browser, base, market, record = async () => {} 
     foreignDc = market.region.datacenters.find(dc => dc.id === foreign.datacenter_id);
     assert(foreignDc && home.id > first.id, "fixture has actual higher-ID home and foreign DC");
     exclusions = `${first.id},${foreign.id}`;
-    await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["i18n_pref_locale", "en"], ["HOME_WORLD", home.name]]
+    await page.setCookie(...[["HIDE_ADS", "true"], ["i18n_pref_locale", "en"], ["HOME_WORLD", home.name]]
       .map(([name, value]) => ({ name, value, url: base, path: "/" })));
     await load("/list"); await click(tid("list-new"));
     await replace(tid("device-list-name"), name); await click(tid("device-list-create"));
@@ -112,7 +112,7 @@ async function runTravelOnline({ browser, base, market, record = async () => {} 
     // the wasm aborts the next document's own wasm fetch (lists-v2 waits too).
     await page.waitForFunction(() => typeof window.__ULTROS_GUEST_OFFLINE_READY__ === "boolean");
     const filtered = new URL(devicePath, base);
-    filtered.search = new URLSearchParams({ labs: "lists-sync", "excluded-worlds": exclusions, "excluded-datacenters": foreignDc.name, debug: "must-not-forward" }).toString();
+    filtered.search = new URLSearchParams({ "excluded-worlds": exclusions, "excluded-datacenters": foreignDc.name, debug: "must-not-forward" }).toString();
     await load(filtered.href);
     await page.select(tid("list-travel-limit"), "dc");
     await page.waitForFunction(() => new URL(location.href).searchParams.get("travel") === "dc");

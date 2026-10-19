@@ -13,8 +13,21 @@ async function main() {
   const page = await browser.newPage();
   page.setDefaultTimeout(60000);
   page.setDefaultNavigationTimeout(Number(process.env.NAVIGATION_TIMEOUT_MS || 120000));
-  await page.setViewport({ width: 1280, height: 900 });
+  await page.setViewport({ width: 1920, height: 900 });
+  // Seed SSR-affecting preferences before the first document. Changing the ad
+  // cookie during login hydration gives the server and client different trees.
+  await page.setCookie(...[["HIDE_ADS", "true"], ["i18n_pref_locale", "en"]]
+    .map(([name, value]) => ({ name, value, url: base, path: "/" })));
+  await page.evaluateOnNewDocument(() => {
+    window.__sortFixtureHydrated = false;
+    addEventListener("ultros:hydrated", () => { window.__sortFixtureHydrated = true; });
+  });
   const errors = [];
+  page.on("console", message => {
+    if (message.type() === "error" && /panicked|hydrat|marker/i.test(message.text())) {
+      console.error("Hydration diagnostic:", message.text());
+    }
+  });
   page.on("pageerror", error => {
     if (!String(error.stack).includes("googlesyndication.com")) errors.push(String(error.stack || error));
   });
@@ -37,7 +50,7 @@ async function main() {
     return `[data-row-id="${row.dataset.rowId}"]`;
   }, quality);
   const saved = () => page.waitForFunction(() =>
-    document.querySelector('[data-testid="account-list-save-state"]')?.textContent.includes("Saved on this device"));
+    document.querySelector('[data-testid="account-list-save-state"]')?.textContent.includes("Local copy saved"));
   const button = column => `button[aria-label="Sort by ${column}"]`;
   const activate = async (column, key) => {
     await page.focus(button(column));
@@ -66,9 +79,10 @@ async function main() {
   try {
     const login = await page.goto(`${base}/test/login?user_id=990000000875&username=ListSortQA&redirect=/list`, { waitUntil: "domcontentloaded" });
     assert(login.ok(), "test-auth must be enabled");
+    await page.waitForFunction(() => window.__sortFixtureHydrated);
     const worlds = await api("GET", "/api/v1/world_data");
     const world = worlds.regions[0].datacenters[0].worlds[0];
-    await page.setCookie(...[["LABS", "lists-sync"], ["HIDE_ADS", "true"], ["HOME_WORLD", world.name], ["i18n_pref_locale", "en"]].map(([name, value]) => ({ name, value, url: base, path: "/" })));
+    await page.setCookie({ name: "HOME_WORLD", value: world.name, url: base, path: "/" });
     const name = `Sort semantics ${Date.now()}`;
     await api("POST", "/api/v1/list/create", { name, wdr_filter: { World: world.id } });
     listId = (await api("GET", "/api/v1/list")).find(entry => entry.list.name === name).list.id;
@@ -136,7 +150,7 @@ async function main() {
     await saved();
     await page.reload({ waitUntil: "domcontentloaded" });
     await waitOrder(["nq", "hq", "any"]);
-    await page.setViewport({ width: 1280, height: 900 });
+    await page.setViewport({ width: 1920, height: 900 });
     const input = `${any} input[aria-label^="Needed for "]`;
     await page.focus(input);
     await page.$eval(input, input => input.select());

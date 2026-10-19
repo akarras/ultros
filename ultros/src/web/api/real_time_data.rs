@@ -43,6 +43,20 @@ use ultros_db::list_doc::ListDocError;
 
 const MAX_SUBSCRIPTIONS_PER_SOCKET: usize = 64;
 
+/// Bind a cached document to the authenticated socket, including reconnects.
+fn list_document_identity_error(
+    expected: Option<i64>,
+    actual: Option<i64>,
+) -> Option<&'static str> {
+    match actual {
+        None => Some("sign in to edit lists"),
+        Some(actual) if expected.is_some_and(|expected| expected != actual) => {
+            Some("signed-in account changed; reload to continue")
+        }
+        Some(_) => None,
+    }
+}
+
 /// Distinguishes sockets so a relay never echoes an update to its sender.
 static NEXT_SOCKET_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -480,6 +494,7 @@ async fn handle_socket(
                                     ClientMessage::SubscribeListDoc {
                                         subscription_id,
                                         list_id,
+                                        expected_user_id,
                                         version,
                                     } => {
                                         let subscription_id =
@@ -488,6 +503,46 @@ async fn handle_socket(
                                                 next_subscription_id += 1;
                                                 id
                                             });
+                                        if let Some(message) = list_document_identity_error(
+                                            expected_user_id,
+                                            user.as_ref().map(|user| user.id as i64),
+                                        ) {
+                                            sender
+                                                .send(Message::Text(
+                                                    serde_json::to_string(&scoped_event(
+                                                        subscription_id,
+                                                        ServerClient::Error {
+                                                            message: message.into(),
+                                                        },
+                                                    ))?
+                                                    .into(),
+                                                ))
+                                                .await?;
+                                            continue;
+                                        }
+                                        // Kill-switch (`ULTROS_LISTS_READONLY`):
+                                        // refuse the handshake so a page loaded
+                                        // before the flip cannot resubscribe and
+                                        // keep merging updates after the restart
+                                        // that turned the switch on. The scoped
+                                        // Error surfaces as this subscription's
+                                        // failure only.
+                                        if ultros_server_core::lists_readonly::lists_readonly() {
+                                            sender
+                                                .send(Message::Text(
+                                                    serde_json::to_string(&scoped_event(
+                                                        subscription_id,
+                                                        ServerClient::Error {
+                                                            message: format!(
+                                                                "list {list_id}: lists are temporarily read-only"
+                                                            ),
+                                                        },
+                                                    ))?
+                                                    .into(),
+                                                ))
+                                                .await?;
+                                            continue;
+                                        }
                                         if !subscriptions.begin(subscription_id) {
                                             sender
                                             .send(Message::Text(
@@ -577,7 +632,11 @@ async fn handle_socket(
                                             }
                                         }
                                     }
-                                    ClientMessage::ListDocUpdate { list_id, update } => {
+                                    ClientMessage::ListDocUpdate {
+                                        list_id,
+                                        expected_user_id,
+                                        update,
+                                    } => {
                                         // Errors for a list-doc update are wrapped in
                                         // the SubscriptionEvent of whichever
                                         // SubscribeListDoc subscription this socket
@@ -589,6 +648,49 @@ async fn handle_socket(
                                         // subscription, fall back to a bare Error.
                                         let resync_subscription_id =
                                             subscriptions.list_docs.get(&list_id).copied();
+                                        if let Some(message) = list_document_identity_error(
+                                            expected_user_id,
+                                            user.as_ref().map(|user| user.id as i64),
+                                        ) {
+                                            let error = ServerClient::Error {
+                                                message: message.into(),
+                                            };
+                                            let payload = match resync_subscription_id {
+                                                Some(subscription_id) => {
+                                                    scoped_event(subscription_id, error)
+                                                }
+                                                None => error,
+                                            };
+                                            sender
+                                                .send(Message::Text(
+                                                    serde_json::to_string(&payload)?.into(),
+                                                ))
+                                                .await?;
+                                            continue;
+                                        }
+                                        // Kill-switch (`ULTROS_LISTS_READONLY`):
+                                        // never merge a client update while it is
+                                        // on, even on a socket that subscribed
+                                        // before the flip.
+                                        if ultros_server_core::lists_readonly::lists_readonly() {
+                                            let error = ServerClient::Error {
+                                                message: format!(
+                                                    "list {list_id}: lists are temporarily read-only"
+                                                ),
+                                            };
+                                            let payload = match resync_subscription_id {
+                                                Some(subscription_id) => {
+                                                    scoped_event(subscription_id, error)
+                                                }
+                                                None => error,
+                                            };
+                                            sender
+                                                .send(Message::Text(
+                                                    serde_json::to_string(&payload)?.into(),
+                                                ))
+                                                .await?;
+                                            continue;
+                                        }
                                         let Some(user) = user.as_ref() else {
                                             let error = ServerClient::Error {
                                                 message: "sign in to edit lists".to_string(),
@@ -943,6 +1045,28 @@ fn scoped_event(subscription_id: u64, event: ServerClient) -> ServerClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn document_reconnects_bind_the_snapshot_account_and_distinguish_session_lapse() {
+        assert_eq!(list_document_identity_error(Some(1), Some(1)), None);
+        assert_eq!(
+            list_document_identity_error(None, Some(2)),
+            None,
+            "legacy clients remain compatible"
+        );
+        assert_eq!(
+            list_document_identity_error(Some(1), None),
+            Some("sign in to edit lists")
+        );
+        assert_eq!(
+            list_document_identity_error(None, None),
+            Some("sign in to edit lists")
+        );
+        assert_eq!(
+            list_document_identity_error(Some(1), Some(2)),
+            Some("signed-in account changed; reload to continue")
+        );
+    }
     use crate::event::ListDocEvent;
     use futures::FutureExt;
     use std::sync::atomic::AtomicUsize;

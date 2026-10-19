@@ -1,6 +1,6 @@
 # Lists local-first sync
 
-`/list/:id` behind the `lists-sync` Labs toggle runs on a Loro CRDT document
+`/list/:id` runs on a Loro CRDT document by default
 stored in the browser and merged through the server. Spec:
 `docs/superpowers/specs/2026-09-07-lists-local-first-sync-design.md`.
 
@@ -100,6 +100,15 @@ failure, candidate evidence and final integrated validation are recorded in
 [`qa/lists-bundle-budget.md`](qa/lists-bundle-budget.md). This does not certify
 the final integrated build or complete the production soak.
 
+The 2026-10-18 current-toolchain sanity comparison separately measured the
+integrated implementation `1eafc0f1` against `main` at `0254444f`: 5,529,702
+versus 5,679,018 bytes with `gzip -n -9` after the production name-strip step,
+a reduction of 149,316 bytes. See
+[`qa/lists-launch-bundle-2026-10-18.json`](qa/lists-launch-bundle-2026-10-18.json)
+for exact inputs and limitations. This is the unsigned scoped-waiver proposal's
+lighter check; it does not reproduce the historical frozen Linux toolchain or
+exercise Docker's immediate-abort build.
+
 ## How it works
 
 - One Loro document per list. The server keeps the merged state in
@@ -181,7 +190,11 @@ the final integrated build or complete the production soak.
   Its JSON distinguishes differences, decode failures, missing documents and
   absent/deleted lists. A mismatch requires investigation and is not by itself
   proof of a bypassing writer. Snapshot sizes and row counts alone do not
-  establish equality.
+  establish equality. The checker is evidence only: it repairs nothing and
+  stops no writer. On a `different` or `decode_error` result, do not treat
+  the REST projection the read-only routes display as independently trusted
+  truth — it is one side of the divergence — and follow the writer
+  containment procedure under [Rollback](#rollback).
 - Compaction: a snapshot is replaced by a shallow one after 5,000 changes or
   256 KiB. This is a compaction trigger, not a stored-size cap: shallow
   snapshots can exceed it when the live document is large. Clients that
@@ -210,8 +223,23 @@ the final integrated build or complete the production soak.
 
 ## Promotion
 
-Lists 2.0 adds guest Build/Shop and account adoption under the same Labs
-preference; its product contract is in
+> **Gate status (2026-10-18): production checks remain open.** The current
+> integration and local bundle result are recorded in
+> [`lists-promotion-decision.md`](lists-promotion-decision.md). The deployed
+> two-account/device/bot exercise and production projection check have no
+> evidence here, and the scoped waiver remains unsigned. Production was
+> inspected at `0254444` with Lists still behind Labs. Do not merge the
+> promotion until that record's blockers are evidenced or its waiver is signed.
+
+In the promotion branch, Lists 2.0 is the default for account and device
+lists. The Labs switch, original REST-driven list editor and directory, and
+`?cart=legacy` comparison grid have been removed. Old `LABS` cookies and
+`?labs=lists-sync` bookmarks no longer select a different implementation.
+Existing account lists use the same document bootstrap and REST projections;
+device lists keep their existing browser storage and IDs. REST endpoints
+remain available for the Discord bot, imports, sharing and other callers.
+
+The guest Build/Shop and account adoption product contract is in
 [`2026-09-10-lists-2-product-design.md`](superpowers/specs/2026-09-10-lists-2-product-design.md).
 The Shop and companion requirements from that contract are tracked item by
 item, with the checks that exercised each one, in
@@ -223,24 +251,220 @@ The Build side (compact cart, estimates, undo) is reconciled the same way in
 which also records the deployed build and the browser verification still owed.
 New UI strings, including companion labels and offline boot messages, must
 remain translated in all seven supported locales. Verify keyboard focus
-through a committed row edit on both device and account lists before promotion.
+through a committed row edit on both device and account lists when changing them.
 
 The existing root service worker also serves push notifications. Worker
 activation and control of open tabs are site-wide; only guest offline cache
-preparation is Labs opt-in. Its fetch handler can use an anonymous guest shell
+preparation starts on the Lists directory or a device-list route. Its fetch handler can use an anonymous guest shell
 and public assets only after a cache generation has been prepared. It never
 caches authenticated page HTML, account APIs, or market responses. The guest
 store, offline helper, and companion modules ship with the versioned WASM
 package so an older cached static helper cannot change a deployed module API.
 
-Promotion out of Labs deletes `LAB_LISTS_SYNC`, the `LabsSettings` section
-when the registry is empty, the legacy `ListView`, and the REST-driven
-actions it owns. It requires the soak below to pass. Promotion requires decoded
-projection-checker evidence, a controlled bundle comparison and the production
-soak. Phase 4 validation is recorded below. This document does not record a
-completed production soak.
+`integration/lists-default.cjs` verifies default SSR, hydration and client-side
+navigation, including stale Labs cookies and comparison bookmarks.
+`integration/lists-help.cjs` and `lists-v2.cjs` cover anonymous device lists
+without opting in. The list-flow suite now runs once against the default editor.
+The historical soak plan and Phase 4 evidence below are retained for context;
+this promotion does not claim new production-soak evidence. The separate local
+bundle sanity comparison above is not the historical frozen-toolset pair.
 
-## Production soak
+## Rollback
+
+The promotion deleted the Labs toggle and the legacy editor, so rollback is
+deliberately two-tiered. Tier 1 needs no rebuild; tier 2 is a full revert.
+Neither tier touches list data — and **neither tier is an all-writer
+containment**. Tier 1 pauses only the promoted browser surfaces; tier 2
+restores the previous browser UX. REST, the Discord bot, imports and other
+server-side `ListSync` writers continue under both, by design: they predate
+the promotion and share its merge and projection code. Match the response
+to the incident class:
+
+- **Browser-only incident** (the promoted routes or socket editing misbehave,
+  with no sign the shared server merge or projection is wrong): tier 1
+  first, tier 2 if the old UX is wanted back.
+- **Suspected shared merge/projection corruption** — a checker `different`
+  or `decode_error` result, or any other sign the code every writer shares
+  is corrupting documents or projections: neither tier contains it. Use
+  the writer containment procedure below; tier 1 may be flipped alongside
+  it, but does not substitute for it.
+
+### Tier 1: read-only kill-switch (`ULTROS_LISTS_READONLY`)
+
+Set `ULTROS_LISTS_READONLY=true` in the server environment and restart the
+process (`ultros-server-core/src/lists_readonly.rs`; same boolean spellings
+as `ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET`). No image rebuild, no migration.
+While it is on:
+
+- The SSR bootstrap carries `lists_readonly` to the browser. `/list/:id`
+  renders the REST projection read-only (`routes/list_readonly.rs`),
+  `/list` renders a read-only account directory, and `/list/device/:id`
+  shows only the paused banner. No list document is opened on any route.
+- The realtime socket refuses `SubscribeListDoc` handshakes and rejects
+  `ListDocUpdate` merges with a scoped `lists are temporarily read-only`
+  error. The restart drops every live socket, so a tab loaded before the
+  flip cannot resubscribe or keep writing after it reconnects.
+- Guest offline-cache preparation is skipped, so no new service-worker
+  generation staging an editor shell is published while paused.
+
+What it does **not** do — it is not a site-wide or all-writer freeze:
+
+- REST list writers (Discord bot, imports, sharing, and any other API
+  caller) keep working through `ListSync`: they predate the promotion and
+  are not the layer it changed. Every server-side writer keeps merging and
+  projecting while the switch is on.
+- The site-wide service worker is not disabled or unregistered; only new
+  guest offline-cache preparation is skipped.
+- A previously prepared offline device editor is not stopped (see limits
+  below).
+
+If the incident implicates the shared server merge or projection itself,
+this switch does not contain it, and neither does tier 2. Use the writer
+containment procedure below.
+
+Limits to know during an incident: the switch takes effect on each
+browser's next full page load (already-hydrated tabs keep their in-memory
+editor until reload, but their writes stop at the socket refusal above),
+and a previously prepared offline guest generation can still boot the
+device editor *offline* — device documents are local-only and use the
+unchanged store format, so those edits merge normally once editing
+resumes. To restore editing, unset the variable (or set it to `false`)
+and restart; no data step is needed in either direction.
+
+Verify after flipping: load `/list` and one account `/list/:id` — both
+show the “temporarily paused” banner and the account list's projected
+rows; the browser console shows no `SubscribeListDoc` handshake; and
+`localStorage` snapshots (`ultros.listdoc.v1.*`) are untouched. In a
+suspected divergence those projected rows are display only, not a trusted
+record of the list — treat the banner as the verified fact, not the rows.
+
+### Writer containment: suspected shared merge/projection corruption
+
+This is an operational stop, separate from both tiers. There is no
+all-writer freeze flag, and none of the steps here is implemented in code.
+Use it for a checker `different` or `decode_error` result, or any other
+evidence the merge/projection code shared by every writer is corrupting
+data:
+
+1. **Stop every affected writer process.** Through the operator's own
+   deployment controls (this runbook does not know the production
+   topology, so it names no command), stop or isolate every application
+   process and replica that can write lists — web/API replicas serving
+   REST and the document socket, the Discord bot, and any import or other
+   server-side `ListSync` caller. Flipping `ULTROS_LISTS_READONLY` or
+   redeploying the pre-promotion image does **not** do this: the switch
+   guards only the promoted browser routes and socket, and the old image
+   runs the same merge code without the switch (see tier 2).
+2. **Isolate traffic** so no request can still reach a surviving writer
+   while processes are being stopped.
+3. **Retain evidence before changing anything:** the checker JSON report
+   and exit code, the affected list IDs, timestamps, the deployed image
+   digest and Git SHA, and the relevant logs. The checker is read-only
+   and safe to re-run for evidence; it does not repair anything.
+4. **Leave the database untouched.** Do not delete, rewrite or hand-repair
+   snapshots or projections, and do not present the projected rows as
+   trusted while divergence is known.
+5. **Deploy a verified fix**, re-run the checker over the affected IDs,
+   and only then restart writers. Restoring the old browser UX (tier 2)
+   may accompany the fix, but is not itself the fix for a shared-code
+   fault.
+
+### Tier 2: revert the promotion
+
+Before promotion, record the currently deployed image's immutable digest
+and Git SHA as the tier-2 target, and confirm that exact image is still
+pullable. Redeploy that exact image for tier 2; the floating `main` tag
+can already point at the promotion and is not a rollback target.
+
+Tier 2 is a **browser UX rollback, not a containment**. The pre-promotion
+image still runs the document merge/projection pipeline through REST, bot and
+import writers, while omitting the launch-review locking and account/session
+fixes (see “Downgrade compatibility and limitations”). A fault in shared code
+can therefore keep running on the old image.
+The pre-promotion image also predates the `ULTROS_LISTS_READONLY` guards,
+which the promotion added, so it may not enforce the pause flag at all:
+setting the variable on the old image must not be assumed to pause
+anything. For a suspected shared merge/projection fault, tier 2 alone
+stops no writer — use the writer containment procedure above and deploy
+a verified fix.
+
+If an image is unavailable, make a rollback branch from current `main`
+and revert the actual landed promotion commit through the normal checks
+and deployment pipeline. For a squash commit use `git revert <commit>`;
+for a merge commit use `git revert -m 1 <merge-commit>`. If the stack lands
+as separate commits, revert its children before their parents. Historical
+branch SHAs are not a substitute for the deployed commit: integration
+merges and squash merges change that history. There is no database migration
+to undo, and no list snapshots or projections should be deleted.
+
+### Downgrade compatibility and limitations
+
+This section describes **format compatibility**, not preservation of every
+later safety fix. The launch-review follow-up changes document locking and adds
+optional account-binding fields to socket messages and account-bound REST
+reads; it does not change schema-1 snapshots or relational row formats. Older
+servers ignore those optional guards, and older clients do not recognize the
+local write-pause marker for rejected offline work. A pre-fix image can therefore
+reintroduce the locking/account/session defects even though it can decode the
+data. Prefer a rollback image containing the safety fixes. Never use an older
+image as containment for one of those defects: stop the affected writers and
+deploy a verified fix as described above. Account switching and rejected-work
+recovery must be checked against the actual image being considered.
+
+Verified against `main...codex/lists-promotion` (25994a5e):
+
+- **Documents**: `ultros-list-doc`, `ultros-lists`, `ultros-db`, and
+  `ultros/static/guest-list-store.mjs` are byte-identical before and
+  after the promotion. The schema-1 snapshot boundary
+  (`ListDocument::from_snapshot`), the guest IndexedDB
+  (`ultros-device-lists-v1`, version 1), and the account localStorage
+  snapshots (`ultros.listdoc.v1.*`) are unchanged, so documents written
+  by the new UI open in the pre-promotion build unchanged.
+- **Projections / REST**: the legacy editor read only REST
+  (`get_list_items_with_listings` over `list_item`), and every accepted
+  document update still maintains that projection (`project_rows` /
+  `project_meta` in `ultros-db/src/list_doc.rs`, covered by
+  `a_peer_update_projects_into_rows_and_back_again`). Lists edited only
+  in the new UI therefore appear complete in the old build. Confirm with
+  the decoded [projection checker](list-projection-checker.md) over the
+  incident's list IDs before and after a tier-2 deploy.
+- **Service worker**: the promotion changed one comment in
+  `service-worker.js` and removed the Labs gate from
+  `guest-offline.mjs` cache preparation. Fetch handling is
+  network-first with cache fallback only on network failure, and
+  generations are never modified in place. After a downgrade the browser
+  installs the old worker script and claims tabs as usual; online
+  navigations serve the old build immediately. A generation prepared by
+  the new build can still answer *offline* device-list navigations with
+  the new build's shell until the old build prepares its own (which, for
+  a never-Labs user, it will not) — that shell reads the same IndexedDB
+  format and caches no account data, so the worst case is the new device
+  editor remaining available offline, not data loss.
+- **Active browsers**: a downgrade does not instantly replace code already
+  running in browsers. Already-hydrated tabs keep the new build's editor
+  in memory until reload, and a prepared offline generation can keep
+  answering device-list navigations with the new shell as above. Data
+  formats are compatible in both directions, so this
+  is a UX-consistency limit, not a data risk — but do not claim every
+  client is on the old build the moment the old image is deployed.
+
+### Alternatives considered
+
+Resurrecting the full legacy editor behind a flag was rejected: it is
+~1,800 lines of route plus ~2,000 lines of deleted components, and its
+REST write paths were partly removed with it — re-adding it would ship a
+second editor to maintain for an incident-only surface. A cookie/query
+flag in the Labs style was rejected because it is per-browser (an
+incident switch must take effect server-side for the promoted browser
+clients, including ones that never opted in) and it reads as a permanent
+user-facing toggle. A gradual cohort was rejected for the same reason
+the promotion deleted
+Labs: the document layer underneath both UIs is identical, so a cohort
+would roll out only the editor skin while complicating every route. The
+env switch covers the failure the promotion actually introduces — the
+new browser surfaces misbehaving — at the smallest surface area.
+
+## Historical production soak plan
 
 The deployed seven-day observation and promotion decision are tracked in
 [#1510](https://github.com/akarras/ultros/issues/1510).
@@ -250,12 +474,16 @@ acceptance and readiness assessment; local fixtures do not close the soak.
 Run after the branch is deployed, over at least a week with the toggle on
 for the maintainer's own shared lists. Retain the authoritative list-ID manifest
 and reconcile deletions using the [checker workflow](list-projection-checker.md).
+Note this plan can only run on a **pre-promotion** build: the promotion
+branch deletes the Labs toggle and legacy view that steps 1 and 3 use, so
+the soak (or a signed waiver) must precede that merge. Current gate
+disposition: [`lists-promotion-decision.md`](lists-promotion-decision.md).
 
 1. Turn it on under Settings › Labs on two browsers and one phone, and
    share one list between two Discord accounts.
 2. Daily: GlitchTip has no new issue whose title contains `list_doc`,
    `ListDocError`, `sync_payload` or `hydration` on `/list/`;
-   inspect warning events from tracing target `ultros::lists::sync`, including
+   inspect warning events from tracing target `ultros_lists::sync`, including
    broadcast, activity-recording and relay failures in `ListSync::publish`
    (filtering only for "list document" misses several of these);
    `SELECT count(*), pg_size_pretty(sum(length(snapshot))) FROM list_doc;`

@@ -1,0 +1,7 @@
+{
+    "category": "bug_fixes",
+    "importance": "medium",
+    "title": "Saved lists stay with the right account",
+    "blurb": "Switching accounts in another tab now pauses the old tab before it can mix saved lists or erase its offline changes.",
+    "link": "/list"
+}

@@ -47,7 +47,17 @@ pub fn CartSelectionBar(
     on_set_quality: Callback<(Vec<i32>, Option<bool>)>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    // Bulk delete asks twice (the legacy confirm, as an inline re-click):
+    // the first click arms, the second deletes. Any selection change
+    // disarms, so a stale arm can never delete a different selection.
+    let confirming = RwSignal::new(false);
     let count = Memo::new(move |_| selected_items.with(|s| s.len()));
+    Effect::new(move |_| {
+        // A replacement selection can have the same count. Track its
+        // identities so confirmation never carries over to different rows.
+        selected_items.track();
+        confirming.set(false);
+    });
     let selected_vec =
         move || selected_items.with_untracked(|s| s.iter().copied().collect::<Vec<_>>());
     let all_visible_selected = Memo::new(move |_| {
@@ -65,13 +75,18 @@ pub fn CartSelectionBar(
                 <span class="mx-1 h-4 border-l border-[color:var(--color-outline)]" aria-hidden="true"></span>
                 <button type="button" class="btn-ghost" disabled=pending data-testid="cart-bulk-hq" on:click=move |_| on_set_quality.run((hq_capable(selected_vec()), Some(true)))>{t!(i18n, list_view_bulk_set_hq)}</button>
                 <button type="button" class="btn-ghost" disabled=pending data-testid="cart-bulk-any" on:click=move |_| on_set_quality.run((selected_vec(), None))>{t!(i18n, list_view_bulk_any_quality)}</button>
-                <button type="button" class="btn-ghost text-negative hover:text-red-200" disabled=pending data-testid="cart-bulk-delete" on:click=move |_| {
+                <button type="button" class="btn-ghost text-negative hover:text-red-200" disabled=pending data-testid="cart-bulk-delete" data-confirming=move || confirming.get().to_string() aria-pressed=move || confirming.get().to_string() on:click=move |_| {
+                    if !confirming.get_untracked() {
+                        confirming.set(true);
+                        return;
+                    }
+                    confirming.set(false);
                     let ids = selected_vec();
                     selected_items.update(|s| s.clear());
                     on_remove_many.run(ids);
                 }>
                     <Icon icon=i::BiTrashRegular />
-                    <span>{t!(i18n, cart_delete_selected)}</span>
+                    <span>{move || if confirming.get() { t_string!(i18n, list_view_bulk_delete_confirm_title).to_string() } else { t_string!(i18n, cart_delete_selected).to_string() }}</span>
                 </button>
                 <button type="button" class="btn-ghost ml-auto" on:click=move |_| selected_items.update(|s| s.clear())>{t!(i18n, cart_clear_selection)}</button>
                 <Show when=move || pending.get()>

@@ -13,6 +13,36 @@ This folder contains a lightweight Puppeteer harness for screenshot-driven E2E c
 
 ## Prerequisites
 
+Lists 2.0 runs by default. `npm run test:lists-default` checks account SSR,
+hydration, client navigation and compatibility with old Labs bookmarks (requires
+`test-auth`). `npm run test:lists-help` and `npm run test:lists-v2` exercise device
+lists without signing in or setting a Labs cookie. `npm run test:list-flow`
+covers inline editing, recipes, sharing and deletion on the account editor.
+
+`npm run test:list-sync` also runs `list-account-lifecycle.cjs`: durable offline
+edits across a Write-to-Read downgrade and reload, export and explicit retry
+after write access returns, session expiry/re-login, and a surviving tab across
+another tab's account switch. It asserts that the previous account's unsynced
+work survives and that private documents never enter the wrong account's cache.
+This requires `test-auth` and an isolated database, like the other authenticated
+list probes.
+
+`npm run test:list-account-identity` uses an account ID above JavaScript's exact
+integer range. It verifies the bootstrap, current-user JSON, account-bound REST
+read and the real browser document WebSocket handshake preserve that ID. It
+requires an isolated local `test-auth` server and removes its own account/list.
+The authenticated driver includes it alongside the sync/lifecycle probes.
+
+To verify the incident switch, start an isolated `test-auth` server with
+`ULTROS_LISTS_READONLY=true`, then run
+`BASE_URL=http://127.0.0.1:8080 npm --prefix integration run test:lists-readonly`.
+This separate probe checks the paused directory/account/device routes in SSR
+and hydration at desktop/mobile widths, retained purchase progress, refusal of
+stale-client document handshakes/updates, and unchanged projected rows. It creates
+and removes only its own account-list fixture; screenshots go under
+`integration/artifacts/lists-readonly/`. The normal E2E suite expects editing to
+be enabled, so run it against an unpaused server.
+
 - Rust toolchain and cargo-leptos installed
 - Node.js 22.12+ and npm installed (Puppeteer 25 requires it)
 - Internet access (Puppeteer will download a compatible Chromium on first install)
@@ -175,7 +205,7 @@ Remove-Item -Recurse -Force ultros/integration/artifacts
 - Port mismatch: Set `BASE_URL` to match your running server.
 - Antivirus/Corp device: Chromium download or launch can be blocked; use your system Chrome by setting `PUPPETEER_EXECUTABLE_PATH` and adjusting `puppeteer.launch()` accordingly.
 - `HEADLESS`: `false` to watch a run in a real window; otherwise headless. Puppeteer 23 dropped the `headless: 'new'` spelling — `true` *is* the new headless mode now and `'shell'` selects the old `chrome-headless-shell` binary — so `HEADLESS=shell` is the way to get the old behaviour. `HEADLESS=new` is still accepted as an alias for `true`.
-- Flaky waits: The runner uses `waitUntil: 'networkidle0'` and then a short `waitForTimeout(1000)`. If pages hydrate slower locally, bump the timeout.
+- Slow hydration: The route runner waits for `domcontentloaded` and the app's `ultros:hydrated` event before checking the page. Increase `TIMEOUT_MS` if local builds need longer to hydrate.
 
 ## CI notes
 

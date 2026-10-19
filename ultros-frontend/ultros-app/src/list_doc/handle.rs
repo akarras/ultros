@@ -36,6 +36,8 @@ pub enum RecoveryState {
         dropped_meta: bool,
     },
     Review,
+    /// Read access remains, but this offline branch was refused for editing.
+    WriteDenied,
     /// The original cache cannot be interpreted safely by this app version.
     Incompatible,
 }
@@ -197,6 +199,7 @@ impl ListDocHandle {
             }
         };
         let recovery_persisting = replacement_source.is_some();
+        let writes_paused = store::writes_paused(&BrowserStorage, user_id, list_id);
         let incompatible = incompatible_snapshot.is_some();
         let content_ready = !incompatible && content_ready;
         let permission = if incompatible {
@@ -238,6 +241,8 @@ impl ListDocHandle {
             }),
             recovery_state: RwSignal::new(if incompatible {
                 RecoveryState::Incompatible
+            } else if writes_paused {
+                RecoveryState::WriteDenied
             } else if recovery_persisting {
                 RecoveryState::Recovered {
                     dropped_meta: false,
@@ -363,6 +368,11 @@ impl ListDocHandle {
                 "list contents are still loading".into(),
             ));
         }
+        if self.writes_rejected() {
+            return Err(DocError::InvalidStructure(
+                "offline changes are paused for review".into(),
+            ));
+        }
         self.with_doc(|doc| {
             let mut result = Ok(());
             if self
@@ -466,7 +476,7 @@ impl ListDocHandle {
     }
 
     pub fn undo(&self) -> bool {
-        if !self.has_readable_content() {
+        if !self.has_readable_content() || self.writes_rejected() {
             return false;
         }
         let mut done = false;
@@ -477,7 +487,7 @@ impl ListDocHandle {
     }
 
     pub fn redo(&self) -> bool {
-        if !self.has_readable_content() {
+        if !self.has_readable_content() || self.writes_rejected() {
             return false;
         }
         let mut done = false;
@@ -494,7 +504,7 @@ impl ListDocHandle {
     pub fn can_undo(&self) -> bool {
         let _ = self.revision.try_get();
         let _ = self.recovery_state.try_get();
-        if !self.has_readable_content() {
+        if !self.has_readable_content() || self.writes_rejected() {
             return false;
         }
         self.undo
@@ -505,7 +515,7 @@ impl ListDocHandle {
     pub fn can_redo(&self) -> bool {
         let _ = self.revision.try_get();
         let _ = self.recovery_state.try_get();
-        if !self.has_readable_content() {
+        if !self.has_readable_content() || self.writes_rejected() {
             return false;
         }
         self.undo
@@ -517,6 +527,7 @@ impl ListDocHandle {
         let _ = self.revision.try_get();
         let _ = self.recovery_state.try_get();
         self.has_readable_content()
+            && !self.writes_rejected()
             && self
                 .undo
                 .try_with_value(|undo| undo.can_undo_purchase())
@@ -547,8 +558,10 @@ impl ListDocHandle {
         if self.is_closed_or_disposed() || self.incompatible() {
             return;
         }
-        let _ = self.permission.try_set(permission);
-        self.update_index(Some(permission));
+        if self.permission.try_get_untracked() != Some(permission) {
+            let _ = self.permission.try_set(permission);
+            self.update_index(Some(permission));
+        }
     }
 
     /// All account-index writers use the same lock. Snapshot purge remains
@@ -726,7 +739,18 @@ impl ListDocHandle {
                                         let saved = ListDocument::from_snapshot(&merged)
                                             .is_ok_and(|doc| !handle.is_ahead_of(&doc.version()));
                                         if saved {
-                                            handle.save_state.set(SaveState::Saved);
+                                            let paused = !handle.writes_rejected()
+                                                || store::set_writes_paused(
+                                                    &BrowserStorage,
+                                                    handle.user_id,
+                                                    handle.list_id,
+                                                    true,
+                                                );
+                                            handle.save_state.set(if paused {
+                                                SaveState::Saved
+                                            } else {
+                                                SaveState::Failed
+                                            });
                                         }
                                         if replacement_source.is_some()
                                             && handle.replacement_source.get_value().is_none()
@@ -877,8 +901,66 @@ impl ListDocHandle {
     pub fn recovery_paused(&self) -> bool {
         matches!(
             self.recovery_state.try_get_untracked(),
-            Some(RecoveryState::Review | RecoveryState::Incompatible)
+            Some(RecoveryState::Review | RecoveryState::Incompatible | RecoveryState::WriteDenied)
         )
+    }
+
+    pub fn writes_rejected(&self) -> bool {
+        self.recovery_state.try_get_untracked() == Some(RecoveryState::WriteDenied)
+    }
+
+    /// Never replace or erase the only copy of rejected offline intent.
+    pub fn pause_rejected_writes(&self) {
+        if self.is_closed_or_disposed() || self.incompatible() {
+            return;
+        }
+        self.recovery_state.set(RecoveryState::WriteDenied);
+        let durable = store::set_writes_paused(&BrowserStorage, self.user_id, self.list_id, true);
+        self.set_status("offline");
+        self.save_now();
+        if !durable {
+            self.save_state.set(SaveState::Failed);
+        }
+    }
+
+    pub fn keep_readonly_server(&self, snapshot: &[u8]) -> Result<(), DocError> {
+        ListDocument::from_snapshot(snapshot)?;
+        self.recovery_snapshot.set_value(Some(snapshot.to_vec()));
+        self.revision.update(|revision| *revision += 1);
+        Ok(())
+    }
+
+    /// The shopping view follows the authorized server copy while local work
+    /// remains intact for export and explicit retry after write access returns.
+    pub fn display_rows(&self) -> Vec<RowSnapshot> {
+        self.display_document()
+            .map(|doc| doc.rows())
+            .unwrap_or_default()
+    }
+
+    pub fn display_document(&self) -> Option<ListDocument> {
+        let server = self
+            .writes_rejected()
+            .then(|| self.recovery_server())
+            .flatten();
+        server.or_else(|| self.with_doc(|doc| doc.clone()))
+    }
+
+    pub fn display_meta(&self) -> MetaSnapshot {
+        self.display_document()
+            .map(|doc| doc.meta())
+            .unwrap_or_else(|| self.meta())
+    }
+
+    pub fn import_readonly_server(&self, update: &[u8]) -> Result<bool, DocError> {
+        let Some(server) = self.recovery_server() else {
+            return Ok(false);
+        };
+        if server.import(update)?.pending {
+            return Ok(false);
+        }
+        self.keep_readonly_server(&server.export_snapshot()?)?;
+        Ok(true)
     }
 
     pub fn incompatible(&self) -> bool {
@@ -898,6 +980,17 @@ impl ListDocHandle {
     /// The player can correct their local values and request a fresh comparison.
     pub fn retry_recovery(&self) {
         if !self.is_closed_or_disposed() && !self.incompatible() {
+            if self.writes_rejected()
+                && (self.permission.get_untracked() < 2
+                    || !store::set_writes_paused(
+                        &BrowserStorage,
+                        self.user_id,
+                        self.list_id,
+                        false,
+                    ))
+            {
+                return;
+            }
             self.recovery_state.set(RecoveryState::None);
             self.set_status("reconnecting");
             self.recovery_retry.update(|n| *n += 1);
@@ -907,7 +1000,7 @@ impl ListDocHandle {
     /// Explicit, labelled UI action after reviewing both copies. The stored
     /// replacement is still fenced against unseen changes from another tab.
     pub fn use_server_version(&self) {
-        if self.is_closed_or_disposed() || !self.recovery_paused() {
+        if self.is_closed_or_disposed() || !self.recovery_paused() || self.writes_rejected() {
             return;
         }
         if let Some(server) = self.recovery_server() {
@@ -1068,6 +1161,67 @@ impl ListDocHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejected_offline_work_is_preserved_while_the_view_uses_server_values() {
+        Owner::new().with(|| {
+            let key = ultros_list_doc::RowKey::new(5056, None);
+            let server = ListDocument::new();
+            server.add_row(key, 3, None).unwrap();
+            let local = ListDocument::from_snapshot(&server.export_snapshot().unwrap()).unwrap();
+            local.add_acquired(&key, 1).unwrap();
+            let handle = ListDocHandle::open_loaded(
+                1,
+                1,
+                Some(store::Loaded {
+                    snapshot: local.export_snapshot().unwrap(),
+                    permission: 2,
+                    content_ready: Some(true),
+                }),
+            );
+            let version = handle.try_version();
+            handle.remember_permission(1);
+            handle.pause_rejected_writes();
+            assert_eq!(
+                handle.display_rows()[0].acquired,
+                1,
+                "offline reload can still display its saved branch"
+            );
+            handle
+                .keep_readonly_server(&server.export_snapshot().unwrap())
+                .unwrap();
+            assert!(handle.writes_rejected());
+            assert!(handle.recovery_paused());
+            assert_eq!(
+                handle.rows()[0].acquired,
+                1,
+                "the exportable local branch survives"
+            );
+            assert_eq!(
+                handle.display_rows()[0].acquired,
+                0,
+                "the page shows authorized server contents"
+            );
+            assert!(!handle.undo());
+            handle.use_server_version();
+            handle.retry_recovery();
+            assert_eq!(
+                handle.try_version(),
+                version,
+                "read-only actions never replace the offline branch"
+            );
+            handle.remember_permission(2);
+            assert!(
+                handle.writes_rejected(),
+                "restored Write never automatically resumes rejected intent"
+            );
+            handle.purge();
+            assert!(
+                handle.rows().is_empty(),
+                "actual read revocation still clears private contents"
+            );
+        });
+    }
 
     #[test]
     fn rest_permission_does_not_make_an_empty_receiver_readable() {
