@@ -27,6 +27,12 @@ work survives and that private documents never enter the wrong account's cache.
 This requires `test-auth` and an isolated database, like the other authenticated
 list probes.
 
+`npm run test:list-account-identity` uses an account ID above JavaScript's exact
+integer range. It verifies the bootstrap, current-user JSON, account-bound REST
+read and the real browser document WebSocket handshake preserve that ID. It
+requires an isolated local `test-auth` server and removes its own account/list.
+The authenticated driver includes it alongside the sync/lifecycle probes.
+
 To verify the incident switch, start an isolated `test-auth` server with
 `ULTROS_LISTS_READONLY=true`, then run
 `BASE_URL=http://127.0.0.1:8080 npm --prefix integration run test:lists-readonly`.
@@ -199,7 +205,7 @@ Remove-Item -Recurse -Force ultros/integration/artifacts
 - Port mismatch: Set `BASE_URL` to match your running server.
 - Antivirus/Corp device: Chromium download or launch can be blocked; use your system Chrome by setting `PUPPETEER_EXECUTABLE_PATH` and adjusting `puppeteer.launch()` accordingly.
 - `HEADLESS`: `false` to watch a run in a real window; otherwise headless. Puppeteer 23 dropped the `headless: 'new'` spelling — `true` *is* the new headless mode now and `'shell'` selects the old `chrome-headless-shell` binary — so `HEADLESS=shell` is the way to get the old behaviour. `HEADLESS=new` is still accepted as an alias for `true`.
-- Flaky waits: The runner uses `waitUntil: 'networkidle0'` and then a short `waitForTimeout(1000)`. If pages hydrate slower locally, bump the timeout.
+- Slow hydration: The route runner waits for `domcontentloaded` and the app's `ultros:hydrated` event before checking the page. Increase `TIMEOUT_MS` if local builds need longer to hydrate.
 
 ## CI notes
 

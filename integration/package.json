@@ -55,6 +55,7 @@
     "test:list-partial-subtotal": "node ./list-partial-subtotal.cjs",
     "test:list-compaction-recovery": "node ./list-compaction-recovery.cjs",
     "test:list-sync": "node ./list-sync.cjs",
+    "test:list-account-identity": "node ./list-account-identity.cjs",
     "test:realtime-retirement": "node ./realtime-retirement.cjs",
     "test:list-undo-keyboard": "node ./list-undo-keyboard.cjs",
     "test:device-list-card-edit": "node ./device-list-card-edit.cjs",

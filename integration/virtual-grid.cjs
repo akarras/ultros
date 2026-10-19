@@ -8,14 +8,18 @@ const checkHoverCardDismissal = require('./hover-card-dismissal.cjs');
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-function decodeLayout(raw) {
-  if (!raw) return {order:[],widths:{}};
-  if (!raw.startsWith('2~')) return JSON.parse(raw);
+function decodeLayout(url) {
+  const query = new URL(url).searchParams;
+  const readable = query.has('col-order') || query.has('col-widths');
+  const raw = readable ? `3~${query.get('col-order') || ''}~${query.get('col-widths') || ''}`
+    : query.get('l') || query.get('layout');
+  const ids = Array.from({length:64},(_,i)=>'c'+String(i).padStart(2,'0'));
+  if (!raw) return {order:ids,widths:{}};
+  if (!/^[23]~/.test(raw)) return JSON.parse(raw);
   const [, order, widths] = raw.split('~');
   const prefix = order.split('.').filter(Boolean);
-  const ids = Array.from({length:64},(_,i)=>'c'+String(i).padStart(2,'0'));
   const tokens=widths.split('.').filter(Boolean), sizes={};
-  for(let i=0;i<tokens.length;i+=2) sizes[tokens[i]]=parseInt(tokens[i+1],36);
+  for(let i=0;i<tokens.length;i+=2) sizes[tokens[i]]=parseInt(tokens[i+1],raw.startsWith('3~')?10:36);
   return {order:[...prefix,...ids.filter(id=>!prefix.includes(id))],widths:sizes};
 }
 async function main() {
@@ -38,7 +42,7 @@ async function main() {
   async function action(label, touch=false) {
     const buttons=await page.$$('.grid-menu-panel button');
     for(const button of buttons) {
-      if(await button.evaluate(e=>e.textContent.trim())===label) {
+      if(await button.evaluate(e=>(e.getAttribute('aria-label')||e.textContent).trim())===label) {
         await button.evaluate(e=>e.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'}));
         await sleep(120);
         assert(await button.evaluate(e=>{
@@ -59,7 +63,9 @@ async function main() {
     await sleep(180);
   }
   async function verifyAlignment() {
-    assert(new URL(page.url()).searchParams.getAll('cols').length <= 1,'visibility changes replace the previous parameter');
+    for (const key of ['cols','show-cols','hide-cols','col-order','col-widths']) {
+      assert(new URL(page.url()).searchParams.getAll(key).length <= 1,`${key} changes replace the previous parameter`);
+    }
     const measurement = await page.evaluate(() => {
       const port = document.querySelector('.virtual-grid');
       const bounds = port.getBoundingClientRect();
@@ -91,7 +97,8 @@ async function main() {
     await page.waitForFunction(() => Number(document.querySelector('.virtual-grid')?.dataset.autoFitted) > 0);
     assert(await width('c00') > 350, 'columns auto-fit their content by default');
     assert(Math.abs(await width('c01')-120) > 2, 'every visible column is measured, not left at its fallback');
-    assert(!new URL(page.url()).searchParams.has('l'), 'automatic widths stay out of the URL');
+    assert(!['l','layout','col-order','col-widths'].some(key=>new URL(page.url()).searchParams.has(key)),
+      'automatic widths stay out of the URL');
     await checkHoverCardDismissal(page);
     const fitCount = () => page.$eval('.virtual-grid', e => Number(e.dataset.autoFitted));
     const waitForFit = previous => page.waitForFunction(
@@ -132,6 +139,10 @@ async function main() {
     assert.equal(await page.$eval(widthEditor,input=>input.value),'280','late data preserves the active editor');
     await page.keyboard.press('Escape');
     await waitForFit(previous);
+    assert.equal(await width('c01'),280,'blurring the width editor commits its explicit width');
+    await menu('c01');
+    await action('Reset column width');
+    await page.waitForFunction(() => document.querySelector('[role=columnheader][data-column=c01]').getBoundingClientRect().width > 400);
     assert(await width('c01') > 400,'closing the menu resumes fitting the latest provider data');
     previous = await fitCount();
     await page.click('#fixture-enrich');
@@ -155,11 +166,11 @@ async function main() {
     await border.click({count:2});
     // The default width already fits: wait for the explicit async action to
     // pin it, rather than accepting that pre-existing width as completion.
-    await page.waitForFunction(() => new URL(location.href).searchParams.has('l'));
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('col-widths')?.split('.').includes('c00'));
     await page.waitForFunction(() => document.querySelector('[role=columnheader][data-column=c00]').getBoundingClientRect().width > 350);
     const fitted=await width('c00');
     assert(fitted<800,'auto-fit stays bounded');
-    assert(new URL(page.url()).searchParams.has('l'));
+    assert(decodeLayout(page.url()).widths.c00 > 350);
     const handle=await border.boundingBox();
     await page.mouse.move(handle.x+3,handle.y+20);
     await page.mouse.down();
@@ -183,11 +194,11 @@ async function main() {
     await waitForFit(previous);
     await menu('c00');await action('Insert column after…');await action('Column 60');
     await page.waitForSelector('[role=columnheader][data-column=c60]');
-    assert(new URL(page.url()).searchParams.get('cols').split(',').includes('c60'));
-    let layout=decodeLayout(new URL(page.url()).searchParams.get('l'));
+    assert(new URL(page.url()).searchParams.get('show-cols').split(',').includes('c60'));
+    let layout=decodeLayout(page.url());
     assert.equal(layout.order[layout.order.indexOf('c00')+1],'c60');
     await menu('c60');await action('Move left');
-    layout=decodeLayout(new URL(page.url()).searchParams.get('l'));
+    layout=decodeLayout(page.url());
     assert.equal(layout.order[0],'c60');
     await verifyAlignment();
     const grip=await page.$('.virtual-grid-heading[data-column=c60] .grid-drag-handle');
@@ -197,11 +208,11 @@ async function main() {
     });
     await page.mouse.move(source.x+source.width/2,source.y+source.height/2);
     await page.mouse.down();await page.mouse.move(destination.x,destination.y,{steps:12});await page.mouse.up();await sleep(180);
-    layout=decodeLayout(new URL(page.url()).searchParams.get('l'));
+    layout=decodeLayout(page.url());
     assert.equal(layout.order[layout.order.indexOf('c00')+1],'c60','grip drag commits the insertion target');
     await verifyAlignment();
     await page.goBack({waitUntil:'networkidle0'});
-    await page.waitForFunction(()=>new URL(location.href).searchParams.get('l')?.startsWith('2~c60'));
+    await page.waitForFunction(()=>new URL(location.href).searchParams.get('col-order')?.split('.')[0]==='c60');
     assert.equal(await page.$eval('[role=columnheader][data-column=c60]',e=>e.getAttribute('aria-colindex')),'1','history restores rendered order');
     await page.goForward({waitUntil:'networkidle0'});
     await page.waitForFunction(()=>document.querySelector('[role=columnheader][data-column=c60]')?.getAttribute('aria-colindex')==='2');
@@ -321,9 +332,9 @@ async function main() {
     assert(Math.abs(await page.$eval('.virtual-grid',e=>e.scrollLeft)-resizeScroll)<1,'resize gesture does not pan');
     await tapMenu('c00');await tapAction('Insert column after…');await tapAction('Column 60');
     await tapMenu('c60');await tapAction('Move left');
-    assert.equal(decodeLayout(new URL(page.url()).searchParams.get('l')).order[0],'c60','tap controls reorder columns');
+    assert.equal(decodeLayout(page.url()).order[0],'c60','tap controls reorder columns');
     await tapMenu('c60');await tapAction('Auto-fit column');
-    await page.waitForFunction(()=>new URL(location.href).searchParams.get('l')?.split('~')[2].split('.').includes('c60'));
+    await page.waitForFunction(()=>new URL(location.href).searchParams.get('col-widths')?.split('.').includes('c60'));
     await tapMenu('c60');await tapAction('Hide column');
     await page.waitForFunction(()=>!document.querySelector('[role=columnheader][data-column=c60]'));
     assert.equal(await page.$eval('#fixture-sorts',e=>e.textContent),'0','touch column operations never sort');

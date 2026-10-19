@@ -31,6 +31,15 @@ async function main() {
   await page.setCacheEnabled(false);
   page.setDefaultTimeout(TIMEOUT_MS);
   await page.setViewport({ width: 1280, height: 900 });
+  // Keep the initial SSR and hydration trees on the same ad/locale preferences.
+  await page.setCookie(
+    { name: "HIDE_ADS", value: "true", url: BASE_URL, path: "/" },
+    { name: "i18n_pref_locale", value: "en", url: BASE_URL, path: "/" },
+  );
+  await page.evaluateOnNewDocument(() => {
+    window.__handoffFixtureHydrated = false;
+    addEventListener("ultros:hydrated", () => { window.__handoffFixtureHydrated = true; });
+  });
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   let listId = null;
@@ -84,6 +93,7 @@ async function main() {
     login.searchParams.set("redirect", "/list");
     const response = await page.goto(login.toString(), { waitUntil: "domcontentloaded" });
     assert(response && response.status() < 400, `test login failed: ${response?.status()}`);
+    await page.waitForFunction(() => window.__handoffFixtureHydrated);
     const worldData = await api("GET", "/api/v1/world_data");
     assert.equal(worldData.status, 200, "world_data");
     if (ACCEPTANCE) {
@@ -95,9 +105,7 @@ async function main() {
     const region = market?.region || worldData.body.regions[0];
     const world = market?.manifest.worlds[0] || region.datacenters[0].worlds[0];
     await page.setCookie(
-      { name: "HIDE_ADS", value: "true", url: BASE_URL, path: "/" },
       { name: "HOME_WORLD", value: world.name, url: BASE_URL, path: "/" },
-      { name: "i18n_pref_locale", value: "en", url: BASE_URL, path: "/" },
     );
     const name = `Shop handoff E2E ${Date.now()}`;
     const create = await api("POST", "/api/v1/list/create", { name, wdr_filter: { Region: region.id } });

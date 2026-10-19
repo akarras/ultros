@@ -1,6 +1,33 @@
 # Lists 2.0 promotion decision (#1510 soak gate)
 
-## Current integration work (2026-10-18)
+## Current integration work (2026-10-19)
+
+The current candidate is `c908431d`, integrating #1665 with `main` at
+`89b24c88`. The [2026-10-19 QA record](qa/lists-promotion-2026-10-19.md)
+records fresh server/client builds, deterministic and real PostgreSQL checks,
+browser-probe repairs, current production HTTP/hydration checks, authenticated
+GlitchTip observations and the current immutable rollback image. The broad
+browser run passed, all 12 required optimized-client Lists suites passed
+(including 32 priced scenarios with zero application/cleanup errors), and the
+fresh bundle pair is 150,427 gzip bytes smaller than current main. These are
+local gates; hosted checks must also pass on the published candidate head.
+
+Production evidence added to #1665 after the older record below includes the
+owner's attestation that the deployed hands-on exercise was completed, and a
+read-only checker report covering all 23 production account lists at
+2026-10-19 03:21:56 UTC: 11 `equal`, 12 `missing_document`, zero
+`different`/`decode_error`/`missing_list`. Missing documents are allowed by the
+scoped proposal and are not verified equality. The earlier dated "missing"
+dispositions below are not a request to repeat the owner's exercise.
+
+Hourly bounded site and GlitchTip monitoring is enabled. Private production
+server tracing and DB access are not established in this validation session;
+the post-deploy sync-warning review and 3–7-day projection check still require
+operator access. The scoped waiver remains unsigned and #1510 has not been
+closed. Main also requires an approving review. Tests and monitoring do not
+substitute for either decision.
+
+## Earlier integration work (2026-10-18)
 
 The promotion implementation is already in #1627. Its rollback, exclusions,
 feature-parity and release-decision follow-ups (#1658–#1661) are collected in

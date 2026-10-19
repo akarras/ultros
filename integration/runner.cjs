@@ -207,15 +207,14 @@ function getRoutes() {
   ];
 }
 
-async function navigateWithFallback(page, url, timeout) {
-  try {
-    return await page.goto(url, { waitUntil: "networkidle0", timeout });
-  } catch (e) {
-    console.warn(
-      `[warn] networkidle0 timed out, retrying domcontentloaded: ${url}`,
-    );
-    return await page.goto(url, { waitUntil: "domcontentloaded", timeout });
+async function navigateWithHydration(page, url, timeout) {
+  // Live polling can prevent network idle on a healthy page. Require the app's
+  // actual hydration event before inspecting it, including on streamed routes.
+  const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout });
+  if (response?.ok()) {
+    await page.waitForFunction(() => window.__e2eHydrated === true, { timeout });
   }
+  return response;
 }
 
 async function runAsserts(page, route, asserts) {
@@ -416,6 +415,10 @@ async function main() {
     const worker = async (id) => {
       const page = await browser.newPage();
       await page.setViewport(viewport);
+      await page.evaluateOnNewDocument(() => {
+        window.__e2eHydrated = false;
+        window.addEventListener("ultros:hydrated", () => { window.__e2eHydrated = true; });
+      });
 
       // Per-page error sinks — re-bound on each navigation since handlers stick across navigations.
       let currentRoute = null;
@@ -446,7 +449,7 @@ async function main() {
         const beforeConsole = consoleErrors.length;
         const beforePage = pageErrors.length;
 
-        const resp = await navigateWithFallback(page, url, TIMEOUT_MS);
+        const resp = await navigateWithHydration(page, url, TIMEOUT_MS);
         const status = resp ? resp.status() : -1;
         if (!resp || status >= 400) {
           failures.push(`${r}: bad status ${status}`);

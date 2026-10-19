@@ -377,7 +377,9 @@ The following failures remain open in that broad run:
   dashboard Trends also received 503s.
 - Analyzer world-URL/grid/shared-data probes timed out on missing profit,
   amount or price-scope controls; the virtual-grid probe also failed.
-- The item-source navigation probe timed out on its clipboard selector.
+- The clipboard probe timed out. The 2026-10-19 log review identified this
+  as `analyzer-actions.cjs` on Flip Finder, correcting the earlier
+  item-source-navigation label; see the follow-up QA record.
 
 A local ClickHouse process was healthy, but that does not establish a populated
 analytics environment or explain every missing control. Repeat these probes in

@@ -14,6 +14,7 @@ const suites = [
   "list-adoption.cjs",
   "list-companion.cjs",
   "list-sync.cjs",
+  "list-account-identity.cjs",
   "account-list-storage.cjs",
   "account-list-ui.cjs",
   "list-sort-accessibility.cjs",

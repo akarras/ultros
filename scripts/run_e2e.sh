@@ -395,6 +395,12 @@ case " ${LEPTOS_FEATURES:-} " in
         if [ "$list_flow_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$list_flow_exit"
         fi
+        log "running exact account identity E2E (test-auth feature detected)"
+        list_identity_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-account-identity ) || list_identity_exit=$?
+        if [ "$list_identity_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$list_identity_exit"
+        fi
         log "running list-sync E2E (test-auth feature detected)"
         list_sync_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:list-sync ) || list_sync_exit=$?
