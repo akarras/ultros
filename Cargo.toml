@@ -15,6 +15,7 @@ members = [
     "ultros-lists",
     "ultros-group-sync",
     "ultros-character",
+    "ultros-discord",
     "ultros-clickhouse",
     "migration",
     "universalis",

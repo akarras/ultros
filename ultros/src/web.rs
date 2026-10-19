@@ -3547,11 +3547,8 @@ async fn assign_retainer_character(
         }
     }
 
-    db.update_owned_retainer(user.id as i64, owned_retainer_id, |mut owned_retainer| {
-        owned_retainer.character_id = ActiveValue::Set(data.character_id);
-        owned_retainer
-    })
-    .await?;
+    db.assign_retainer_character(user.id as i64, owned_retainer_id, data.character_id)
+        .await?;
 
     Ok(Json(()))
 }

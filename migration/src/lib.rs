@@ -5,6 +5,7 @@ mod m20260915_000001_alert_event_inbox;
 mod m20260922_000001_alert_market_triggers;
 mod m20260923_000001_active_listing_id_bigint;
 mod m20260923_000002_sale_history_id_seq_wrap;
+mod m20261018_000001_retainer_name_prefix;
 
 mod m20220101_000001_create_table;
 mod m20220908_111724_create_index;
@@ -111,6 +112,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260922_000001_alert_market_triggers::Migration),
             Box::new(m20260923_000001_active_listing_id_bigint::Migration),
             Box::new(m20260923_000002_sale_history_id_seq_wrap::Migration),
+            Box::new(m20261018_000001_retainer_name_prefix::Migration),
         ]
     }
 }

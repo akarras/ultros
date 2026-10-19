@@ -1,0 +1,37 @@
+[package]
+name = "ultros-discord"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Discord commands, gateway wiring, and testable command journeys for Ultros."
+
+[dependencies]
+anyhow.workspace = true
+async-trait = "0.1.89"
+chrono.workspace = true
+futures.workspace = true
+itertools.workspace = true
+lodestone = { git = "https://github.com/akarras/lodestone.git", branch = "master", default-features = false, features = ["rustls-tls"] }
+poise = "0.6.2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util = "0.7.18"
+tracing.workspace = true
+ultros-alerts = { path = "../ultros-alerts" }
+ultros-analyzer = { path = "../ultros-analyzer" }
+ultros-api-types = { path = "../ultros-api-types" }
+ultros-character = { path = "../ultros-character" }
+ultros-clickhouse = { path = "../ultros-clickhouse" }
+ultros-db = { path = "../ultros-db" }
+ultros-group-sync = { path = "../ultros-group-sync" }
+ultros-ingest = { path = "../ultros-ingest" }
+ultros-list-doc = { path = "../ultros-list-doc" }
+ultros-lists = { path = "../ultros-lists" }
+ultros-server-core = { path = "../ultros-server-core" }
+universalis = { path = "../universalis" }
+xiv-gen.workspace = true
+xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }
+
+[features]
+test-auth = ["ultros-ingest/test-auth", "ultros-server-core/test-auth"]

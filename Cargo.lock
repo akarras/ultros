@@ -5377,6 +5377,7 @@ version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1f111c8c41e7c61a49cd34e44c7619462967221a6443b0ec299e0ac30cfb9b1"
 dependencies = [
+ "cc",
  "pkg-config",
  "vcpkg",
 ]
@@ -10507,6 +10508,7 @@ dependencies = [
  "ultros-charts",
  "ultros-clickhouse",
  "ultros-db",
+ "ultros-discord",
  "ultros-game-sources",
  "ultros-group-sync",
  "ultros-ingest",
@@ -10788,6 +10790,38 @@ dependencies = [
  "ultros-list-doc",
  "universalis",
  "yoke",
+]
+
+[[package]]
+name = "ultros-discord"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "futures",
+ "itertools 0.14.0",
+ "lodestone",
+ "poise",
+ "reqwest 0.12.28",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "ultros-alerts",
+ "ultros-analyzer",
+ "ultros-api-types",
+ "ultros-character",
+ "ultros-clickhouse",
+ "ultros-db",
+ "ultros-group-sync",
+ "ultros-ingest",
+ "ultros-list-doc",
+ "ultros-lists",
+ "ultros-server-core",
+ "universalis",
+ "xiv-gen",
+ "xiv-gen-db",
 ]
 
 [[package]]

@@ -1,6 +1,5 @@
 #![feature(trivial_bounds)]
 #![recursion_limit = "256"]
-mod discord;
 mod fd_limit;
 pub mod leptos;
 #[cfg(feature = "profiling")]
@@ -34,7 +33,6 @@ use analyzer_service::AnalyzerService;
 use anyhow::Result;
 use axum_extra::extract::cookie::Key;
 use character_claim::CharacterClaimService;
-use discord::start_discord;
 use dotenvy::dotenv;
 use event::{EventProducer, EventType, create_event_busses};
 use std::collections::HashSet;
@@ -51,6 +49,7 @@ use ultros_api_types::world::WorldData;
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_db::UltrosDb;
 use ultros_db::world_data::world_cache::WorldCache;
+use ultros_discord::{DiscordServices, start_discord};
 use ultros_ingest::record_listing_changes;
 use ultros_server_core::env_flag::env_flag_enabled;
 use universalis::websocket::SocketRx;
@@ -755,10 +754,7 @@ async fn main() -> Result<()> {
     UpdateService::start_service(update_service.clone(), token.clone());
     // Full-board coverage is independent of the 200-item recency window and
     // fresh sales markers. Resume first, then cover any startup gap.
-    crate::discord::ffxiv::admin::spawn_market_reconciliation(
-        update_service.clone(),
-        token.clone(),
-    );
+    ultros_discord::spawn_market_reconciliation(update_service.clone(), token.clone());
     // Exports `ultros_world_ingest_staleness_seconds`. Every silent ingest
     // failure looks like a healthy process serving frozen numbers, so this gauge
     // is the only thing that makes one visible from outside.
@@ -811,17 +807,26 @@ async fn main() -> Result<()> {
     }
 
     tokio::spawn(start_discord(
-        db.clone(),
-        list_sync.clone(),
-        senders.clone(),
-        receivers.clone(),
-        analyzer_service.clone(),
-        world_cache.clone(),
-        world_helper.clone(),
-        update_service,
+        DiscordServices {
+            db: db.clone(),
+            list_sync: list_sync.clone(),
+            event_senders: senders.clone(),
+            event_receivers: receivers.clone(),
+            analyzer_service: analyzer_service.clone(),
+            world_cache: world_cache.clone(),
+            world_helper: world_helper.clone(),
+            update_service,
+            ch_client: ch_client.clone(),
+            price_history_renderer: Arc::new(|ch, cache, worlds, item, world| {
+                Box::pin(async move {
+                    web::item_card::generate_price_history_chart(ch, cache, worlds, item, world)
+                        .await
+                        .map_err(|error| Box::new(error) as ultros_discord::Error)
+                })
+            }),
+        },
         discord_token,
         token.clone(),
-        ch_client.clone(),
     ));
 
     let character_claim = CharacterClaimService {

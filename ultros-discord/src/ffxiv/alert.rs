@@ -8,9 +8,9 @@ use ultros_api_types::alert::{
 use ultros_api_types::list::ListPermission;
 use ultros_db::NewMarketTriggerAlert;
 
-use crate::discord::ffxiv::helpers;
-use crate::discord::ffxiv::helpers::{discord_locale_to_xiv_language, localized_item_name};
 use crate::event::EventType;
+use crate::ffxiv::helpers;
+use crate::ffxiv::helpers::{discord_locale_to_xiv_language, localized_item_name};
 
 use super::{Context, Error, ULTROS_COLOR};
 

@@ -29,10 +29,31 @@ To remove them, you just need to click unclaim!
 
 ### Adding a retainer on Discord
 
-In discord, use the command
-`/ffxiv retainer add retainer_name` to add a retainer. As you type the retainer name, the autocomplete should show the name and server of the retainer like this.
+Use `/ffxiv retainer add` to open setup, or provide a name directly:
+`/ffxiv retainer add retainer:Moonkeeper world:Gilgamesh`.
+The world is optional: leaving it blank searches all worlds, even if you have
+not added any characters. As you type the retainer name, autocomplete shows
+the name and world of matching retainers.
 ![auto complete example](./discord_retainer_add.png)
-make sure you click on the retainer and server that matches yours. Typing th complete name won't work- it must be chosen from the autocomplete list.
+Choose the retainer and world that match yours. You can also type a complete
+name: if it matches retainers on several worlds, the bot asks you to choose.
+If nothing matches, edit the search or search all worlds. A retainer must have
+appeared in Ultros's market data before it can be found.
+
+The retainer is saved immediately. **Assign / change character** lets you
+choose one of your characters, add another character by searching the
+Lodestone, or leave the retainer unassigned. There is no verification
+challenge and no need to leave Discord. If a character lookup fails, the
+retainer stays tracked.
+
+**Add another** keeps the selected character visible during this setup
+session. You can change the world or switch characters before continuing,
+including when your alts share a world. A fresh add command starts without
+a character unless you provide the optional `character` parameter.
+
+Adding the same retainer again opens its existing record and preserves its
+character assignment. Setup replies to slash commands are private. When a
+menu expires, use `/ffxiv retainer list` to continue; saved retainers remain.
 
 ### Remove
 
@@ -42,3 +63,11 @@ make sure you click on the retainer and server that matches yours. Typing th com
 
 You can check the list of all of your retainers with
 `/ffxiv retainer list`
+
+The menu groups retainers by character, including an Unassigned group, and
+shows each retainer's world. Choose a retainer to change its character or
+remove it from your account.
+
+**Set up alerts** explains the commands to run in your chosen channel or a
+DM with the bot. Alerts cover all your tracked retainers across characters
+and worlds. Adding a retainer does not enable alerts automatically.
