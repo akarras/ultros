@@ -32,9 +32,14 @@ This confirms the deployed base; it does not establish the shared-account,
 offline, phone or Discord-bot exercise.
 
 The unsigned scoped-waiver proposal dated 2026-10-14 below is the latest
-recorded release plan. Its remaining pre-merge work is the deployed hands-on
-exercise, the production projection check, a current-toolchain bundle sanity
-comparison, and the owner's decision on that proposal. Local test results
+recorded release plan. The current-toolchain bundle sanity comparison passed:
+`1eafc0f1` is 149,316 bytes smaller with `gzip -n -9` than `main` at
+`0254444f` (the allowed growth is 750,000 bytes). The exact pipeline, inputs,
+hashes and limitations are retained in
+[`qa/lists-launch-bundle-2026-10-18.json`](qa/lists-launch-bundle-2026-10-18.json).
+This is the proposal's lighter local check, not a replacement for the historical
+frozen-toolset comparison. Its remaining pre-merge work is the deployed hands-on
+exercise, the production projection check, and the owner's decision. Local test results
 belong with the integration candidate and must not be substituted for those
 production observations. This update neither signs the waiver nor closes
 #1510. The dated audit below is retained as the evidence behind that decision.
@@ -56,9 +61,9 @@ processes and replicas — including the bot and API/import writers —
 isolating traffic, and retaining evidence before deploying a verified
 fix, per the writer containment procedure in `docs/lists-sync.md`. An env
 flip or the old image alone must not be described as stopping writers.
-This correction changes no kept precondition: B2, the reduced B4, and the
-bundle sanity comparison are still owed, and the waiver below is still
-unsigned.
+This correction changes no kept precondition: B2 and the reduced B4 are still
+owed, and the waiver below is still unsigned. The local bundle sanity result
+above does not establish either production check.
 
 Run the deployed legacy-versus-Labs comparison before landing the promotion:
 the same change enables Lists 2.0 by default and removes the legacy UI. The
@@ -299,7 +304,11 @@ verified fix before restarting writers.
 > including risks (1)–(4) named in the full waiver text, with the kept
 > checks as merge preconditions. Signed: ________, ________.
 
-## Draft #1510 comment (paste-ready; does not close the issue)
+## Historical draft #1510 comment (superseded by current integration evidence)
+
+Retained as part of the 2026-10-13 audit. This was not posted and must not be
+pasted as a current status report; use the current integration work above and
+its linked QA record.
 
 > Promotion decision for #1627 is recorded in
 > `docs/lists-promotion-decision.md` (stacked PR against

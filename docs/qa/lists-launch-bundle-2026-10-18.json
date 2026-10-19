@@ -1,0 +1,291 @@
+{
+  "date": "2026-10-18",
+  "scope": "Current-toolchain sanity comparison for the unsigned scoped-waiver proposal; not the historical frozen Linux comparison.",
+  "platform": "Windows x86_64",
+  "toolchain": {
+    "rust": "rustc 1.100.0-nightly (feaadeeac 2026-09-19)",
+    "rustup_toolchain": "nightly-2026-09-20",
+    "cargo_leptos": "0.3.1",
+    "wasm_bindgen": "0.2.129",
+    "wasm_opt_requested": "version_123",
+    "tailwind_requested": "v4.1.10",
+    "gnu_gzip": "1.14"
+  },
+  "pipeline": [
+    "cargo leptos build --release --frontend-only --lib-cargo-args=--locked",
+    "wasm-symbols <site>/pkg/ultros.wasm (extract map, strip names, regenerate br/gz)",
+    "gzip -n -9 -c <stripped-wasm>"
+  ],
+  "environment": {
+    "CARGO_BUILD_JOBS": "1",
+    "CARGO_INCREMENTAL": "0",
+    "BINARYEN_CORES": "1",
+    "WASM_BINDGEN_WEAKREF": "1",
+    "LEPTOS_OUTPUT_NAME": "ultros"
+  },
+  "limitations": [
+    "Local wasm-release retains the panic hook; Docker build-std/immediate-abort was not used.",
+    "Separate clean source checkouts; candidate reused valid external cache after every workspace package was explicitly cleaned for wasm-release with and without --target wasm32-unknown-unknown (304 files, 887.6 MiB). Build durations are not a comparable performance measurement.",
+    "The measured implementation commit is immutable; later changes are test harness/evidence only."
+  ],
+  "differing_build_or_data_inputs": [],
+  "builds": [
+    {
+      "label": "main",
+      "commit": "0254444f2e4180233b93924dea9dfb002ad0518a",
+      "tree": "885a812a0b90bbe836c8683725e2572ed16051fd",
+      "clean": true,
+      "pre_strip_wasm_bytes": 74978433,
+      "wasm_bytes": 17921737,
+      "gzip_n9_bytes": 5679018,
+      "wasm_sha256": "ab6ca3fe702da2bd71145e9405b6b83682060b4bc70af354268e3f168e96df46",
+      "gzip_n9_sha256": "d93c99e0928a9f57317b7c4440d69fa011723af746e1f5bdf7938b5d0900eba7",
+      "inputs": [
+        {
+          "path": ".cargo/config.toml",
+          "sha256": "f6f102a210e919031afcc044b73e0c1a4bc54995efd8c032e0c51ca24be85e01"
+        },
+        {
+          "path": "Cargo.lock",
+          "sha256": "5c3920b5edf841c8b963da948c2ddc31763200ca1e12c857bfc8ab643272febc"
+        },
+        {
+          "path": "Cargo.toml",
+          "sha256": "e59fd32afe10b105c3502bd4a74e65b9ec99ff4a5cf52271ac7f5213e0407e65"
+        },
+        {
+          "path": "Dockerfile",
+          "sha256": "4a10a161b5638339cac05dada60539ada790a29de00b401273700f080fa9e270"
+        },
+        {
+          "path": "data/icons/images.tar.zst",
+          "sha256": "c760b6b71ff01514ada499fc899971622972216298287aec9d18835cc49baee0"
+        },
+        {
+          "path": "data/lfs_guard.rs",
+          "sha256": "b88892a69c81749f26cd89c128ced89839cec0b225afd2dcce4c8f7322d57204"
+        },
+        {
+          "path": "data/manifest.toml",
+          "sha256": "11e97da55bd0964ff34b3429f4fee31736388f194324c371938368c8511b9fe0"
+        },
+        {
+          "path": "data/maps/maps.tar.zst",
+          "sha256": "c39176ca89806f65315569846888889906f7695be5640471024040d553141d34"
+        },
+        {
+          "path": "data/npc-locations/README.md",
+          "sha256": "51670c6ba0767929f00a85fe3063ba80a53ff01339c39cbf7340ba1b105f243d"
+        },
+        {
+          "path": "data/npc-locations/TEAMCRAFT-LICENSE",
+          "sha256": "554788ad7daa43165289212641a3ee29b4c8dd14f51e73a77e1ba40ecf86db0b"
+        },
+        {
+          "path": "data/npc-locations/leve-issuers.json",
+          "sha256": "bb31eca3d19f81bbd061c88d4f20fca2065893d4b945a30051529d30914af156"
+        },
+        {
+          "path": "data/npc-placements.json",
+          "sha256": "ead150c773ea692b84e54e93550ce405e67302845408bcc26709f6eb9a9a5c2b"
+        },
+        {
+          "path": "data/xiv-db/cn.rkyv",
+          "sha256": "cc68ab4152507abde38c2d33e1215018b2d2b8e25d8872adbc16b55d90d7789f"
+        },
+        {
+          "path": "data/xiv-db/de.rkyv",
+          "sha256": "5036095992381696cd5471b832c89fbc7ce1208a95d2d882b4ad0e58b9985a44"
+        },
+        {
+          "path": "data/xiv-db/en.rkyv",
+          "sha256": "8d55fbc6632c150369e5f62bc583a6544907824f74d98681e895ffed9e629c99"
+        },
+        {
+          "path": "data/xiv-db/fr.rkyv",
+          "sha256": "a63d00523efaf36086259d137430b1f1720e5b4153ae5dfb45ef75fe13eab4c7"
+        },
+        {
+          "path": "data/xiv-db/ja.rkyv",
+          "sha256": "16d427f03218ce17cdd161fe28fcdbef020f8ab655575c7fc85271246405b69a"
+        },
+        {
+          "path": "data/xiv-db/ko.rkyv",
+          "sha256": "e3353698d11da8a3488740d449df94c99b60360dce0fce1f387251c9756625a9"
+        },
+        {
+          "path": "data/xiv-db/tc.rkyv",
+          "sha256": "b7102949be2321c0644ccd9c5f952682ebd6f7b35ea4cd7b4847e91b3fe32d09"
+        },
+        {
+          "path": "data/xiv-startup/README.md",
+          "sha256": "d9a2f7ffb368d1d973993f580b4dcb9206c528ac41945ec8b6d72f54b187b44a"
+        },
+        {
+          "path": "data/xiv-startup/cn.rkyv",
+          "sha256": "849141564b0d9c2bb1f029f2aed5813921646bc2b3d356218f17be9cd1f0b289"
+        },
+        {
+          "path": "data/xiv-startup/de.rkyv",
+          "sha256": "1e19fd3b6871292466ba8c966705badb9fbf3628f97cc73a3380f7b7d6160967"
+        },
+        {
+          "path": "data/xiv-startup/en.rkyv",
+          "sha256": "b2fdc192a04865d54f5a0148eb245302847ccdf3a8fa11e927e2e2e5588f937a"
+        },
+        {
+          "path": "data/xiv-startup/fr.rkyv",
+          "sha256": "47765673b555770689d30a8a5f0e8be9acefd380abd8c209a4cc6aa459104419"
+        },
+        {
+          "path": "data/xiv-startup/ja.rkyv",
+          "sha256": "c68538456060f8a5e1e76c1f4e0e2d1f83f3820c134f165e3de5bea2d7b59172"
+        },
+        {
+          "path": "data/xiv-startup/ko.rkyv",
+          "sha256": "41d03c23671f92910d12d25ef4b4e435e0b7fbbc9e5e861790be2be23d718cab"
+        },
+        {
+          "path": "data/xiv-startup/tc.rkyv",
+          "sha256": "b56cdee0867989bc594c7ac9cf5e51ede9cb6c8195782b8be10d75b79446fe21"
+        },
+        {
+          "path": "rust-toolchain",
+          "sha256": "7f9b366c81f0547d72ce37ca99c37c98739dbe5f45379fd9423aefd0cfb3fa27"
+        }
+      ]
+    },
+    {
+      "label": "candidate",
+      "commit": "1eafc0f1f1af0b388afd276b190e4fbc9e34ac60",
+      "tree": "c03538330e369f08ba8cb849363532df710a46b3",
+      "clean": true,
+      "pre_strip_wasm_bytes": 73098440,
+      "wasm_bytes": 17353083,
+      "gzip_n9_bytes": 5529702,
+      "wasm_sha256": "b83728ad1ae1fb110689380b0ef766cd0a4ad00e0ba61e8f52e8c82039aad430",
+      "gzip_n9_sha256": "22468eff53e93f22d647c7ab44724b940b49ca2032e81e478a2bd77e9d85eecc",
+      "inputs": [
+        {
+          "path": ".cargo/config.toml",
+          "sha256": "f6f102a210e919031afcc044b73e0c1a4bc54995efd8c032e0c51ca24be85e01"
+        },
+        {
+          "path": "Cargo.lock",
+          "sha256": "5c3920b5edf841c8b963da948c2ddc31763200ca1e12c857bfc8ab643272febc"
+        },
+        {
+          "path": "Cargo.toml",
+          "sha256": "e59fd32afe10b105c3502bd4a74e65b9ec99ff4a5cf52271ac7f5213e0407e65"
+        },
+        {
+          "path": "Dockerfile",
+          "sha256": "4a10a161b5638339cac05dada60539ada790a29de00b401273700f080fa9e270"
+        },
+        {
+          "path": "data/icons/images.tar.zst",
+          "sha256": "c760b6b71ff01514ada499fc899971622972216298287aec9d18835cc49baee0"
+        },
+        {
+          "path": "data/lfs_guard.rs",
+          "sha256": "b88892a69c81749f26cd89c128ced89839cec0b225afd2dcce4c8f7322d57204"
+        },
+        {
+          "path": "data/manifest.toml",
+          "sha256": "11e97da55bd0964ff34b3429f4fee31736388f194324c371938368c8511b9fe0"
+        },
+        {
+          "path": "data/maps/maps.tar.zst",
+          "sha256": "c39176ca89806f65315569846888889906f7695be5640471024040d553141d34"
+        },
+        {
+          "path": "data/npc-locations/README.md",
+          "sha256": "51670c6ba0767929f00a85fe3063ba80a53ff01339c39cbf7340ba1b105f243d"
+        },
+        {
+          "path": "data/npc-locations/TEAMCRAFT-LICENSE",
+          "sha256": "554788ad7daa43165289212641a3ee29b4c8dd14f51e73a77e1ba40ecf86db0b"
+        },
+        {
+          "path": "data/npc-locations/leve-issuers.json",
+          "sha256": "bb31eca3d19f81bbd061c88d4f20fca2065893d4b945a30051529d30914af156"
+        },
+        {
+          "path": "data/npc-placements.json",
+          "sha256": "ead150c773ea692b84e54e93550ce405e67302845408bcc26709f6eb9a9a5c2b"
+        },
+        {
+          "path": "data/xiv-db/cn.rkyv",
+          "sha256": "cc68ab4152507abde38c2d33e1215018b2d2b8e25d8872adbc16b55d90d7789f"
+        },
+        {
+          "path": "data/xiv-db/de.rkyv",
+          "sha256": "5036095992381696cd5471b832c89fbc7ce1208a95d2d882b4ad0e58b9985a44"
+        },
+        {
+          "path": "data/xiv-db/en.rkyv",
+          "sha256": "8d55fbc6632c150369e5f62bc583a6544907824f74d98681e895ffed9e629c99"
+        },
+        {
+          "path": "data/xiv-db/fr.rkyv",
+          "sha256": "a63d00523efaf36086259d137430b1f1720e5b4153ae5dfb45ef75fe13eab4c7"
+        },
+        {
+          "path": "data/xiv-db/ja.rkyv",
+          "sha256": "16d427f03218ce17cdd161fe28fcdbef020f8ab655575c7fc85271246405b69a"
+        },
+        {
+          "path": "data/xiv-db/ko.rkyv",
+          "sha256": "e3353698d11da8a3488740d449df94c99b60360dce0fce1f387251c9756625a9"
+        },
+        {
+          "path": "data/xiv-db/tc.rkyv",
+          "sha256": "b7102949be2321c0644ccd9c5f952682ebd6f7b35ea4cd7b4847e91b3fe32d09"
+        },
+        {
+          "path": "data/xiv-startup/README.md",
+          "sha256": "d9a2f7ffb368d1d973993f580b4dcb9206c528ac41945ec8b6d72f54b187b44a"
+        },
+        {
+          "path": "data/xiv-startup/cn.rkyv",
+          "sha256": "849141564b0d9c2bb1f029f2aed5813921646bc2b3d356218f17be9cd1f0b289"
+        },
+        {
+          "path": "data/xiv-startup/de.rkyv",
+          "sha256": "1e19fd3b6871292466ba8c966705badb9fbf3628f97cc73a3380f7b7d6160967"
+        },
+        {
+          "path": "data/xiv-startup/en.rkyv",
+          "sha256": "b2fdc192a04865d54f5a0148eb245302847ccdf3a8fa11e927e2e2e5588f937a"
+        },
+        {
+          "path": "data/xiv-startup/fr.rkyv",
+          "sha256": "47765673b555770689d30a8a5f0e8be9acefd380abd8c209a4cc6aa459104419"
+        },
+        {
+          "path": "data/xiv-startup/ja.rkyv",
+          "sha256": "c68538456060f8a5e1e76c1f4e0e2d1f83f3820c134f165e3de5bea2d7b59172"
+        },
+        {
+          "path": "data/xiv-startup/ko.rkyv",
+          "sha256": "41d03c23671f92910d12d25ef4b4e435e0b7fbbc9e5e861790be2be23d718cab"
+        },
+        {
+          "path": "data/xiv-startup/tc.rkyv",
+          "sha256": "b56cdee0867989bc594c7ac9cf5e51ede9cb6c8195782b8be10d75b79446fe21"
+        },
+        {
+          "path": "rust-toolchain",
+          "sha256": "7f9b366c81f0547d72ce37ca99c37c98739dbe5f45379fd9423aefd0cfb3fa27"
+        }
+      ]
+    }
+  ],
+  "comparison": {
+    "raw_delta_bytes": -568654,
+    "gzip_delta_bytes": -149316,
+    "maximum_growth_bytes": 750000,
+    "headroom_bytes": 899316,
+    "passed": true
+  }
+}

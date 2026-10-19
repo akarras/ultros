@@ -113,10 +113,14 @@ async function main() {
   const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:8080";
   const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 30000);
   const headless = process.env.HEADLESS !== "false";
+  const browserArgs = ["--no-sandbox", "--disable-setuid-sandbox"];
+  if (process.env.E2E_BLOCK_EXTERNAL === "1") {
+    browserArgs.push("--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost");
+  }
 
   const browser = await puppeteer.launch({
     headless,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: browserArgs,
   });
 
   const failures = [];
@@ -132,6 +136,8 @@ async function main() {
     const readerPage = await readerContext.newPage();
     for (const p of [ownerPage, readerPage]) {
       p.setDefaultTimeout(TIMEOUT_MS);
+      // This scenario deliberately reloads after editing and follows bookmarks.
+      p.on("dialog", dialog => dialog.type() === "beforeunload" ? dialog.accept() : dialog.dismiss());
       // Force desktop viewport so the list-toolbar buttons render in their
       // full labeled form (the layout collapses below ~lg breakpoint).
       await p.setViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });

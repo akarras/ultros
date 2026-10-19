@@ -100,6 +100,15 @@ failure, candidate evidence and final integrated validation are recorded in
 [`qa/lists-bundle-budget.md`](qa/lists-bundle-budget.md). This does not certify
 the final integrated build or complete the production soak.
 
+The 2026-10-18 current-toolchain sanity comparison separately measured the
+integrated implementation `1eafc0f1` against `main` at `0254444f`: 5,529,702
+versus 5,679,018 bytes with `gzip -n -9` after the production name-strip step,
+a reduction of 149,316 bytes. See
+[`qa/lists-launch-bundle-2026-10-18.json`](qa/lists-launch-bundle-2026-10-18.json)
+for exact inputs and limitations. This is the unsigned scoped-waiver proposal's
+lighter check; it does not reproduce the historical frozen Linux toolchain or
+exercise Docker's immediate-abort build.
+
 ## How it works
 
 - One Loro document per list. The server keeps the merged state in
@@ -214,14 +223,13 @@ the final integrated build or complete the production soak.
 
 ## Promotion
 
-> **Gate status (2026-10-13): BLOCKED.** The #1510 production-soak audit
-> in [`lists-promotion-decision.md`](lists-promotion-decision.md) found
-> the promotion **not promotion-ready**: most soak checkboxes are
-> missing or only locally evidenced, and the final integrated bundle
-> measurement does not exist. The branch state described below is
-> **not deployed** (production verified as `main` @ `d09d761` on
-> 2026-10-13, Lists still behind Labs). Do not merge the promotion
-> until that record’s blockers are evidenced or its waiver is signed.
+> **Gate status (2026-10-18): production checks remain open.** The current
+> integration and local bundle result are recorded in
+> [`lists-promotion-decision.md`](lists-promotion-decision.md). The deployed
+> two-account/device/bot exercise and production projection check have no
+> evidence here, and the scoped waiver remains unsigned. Production was
+> inspected at `0254444` with Lists still behind Labs. Do not merge the
+> promotion until that record's blockers are evidenced or its waiver is signed.
 
 In the promotion branch, Lists 2.0 is the default for account and device
 lists. The Labs switch, original REST-driven list editor and directory, and
@@ -258,7 +266,8 @@ navigation, including stale Labs cookies and comparison bookmarks.
 `integration/lists-help.cjs` and `lists-v2.cjs` cover anonymous device lists
 without opting in. The list-flow suite now runs once against the default editor.
 The historical soak plan and Phase 4 evidence below are retained for context;
-this promotion does not claim new production-soak or bundle measurements.
+this promotion does not claim new production-soak evidence. The separate local
+bundle sanity comparison above is not the historical frozen-toolset pair.
 
 ## Rollback
 
@@ -368,10 +377,10 @@ pullable. Redeploy that exact image for tier 2; the floating `main` tag
 can already point at the promotion and is not a rollback target.
 
 Tier 2 is a **browser UX rollback, not a containment**. The pre-promotion
-image shares the promotion's merge and projection code (`ultros-lists`,
-`ultros-db` and `ultros-list-doc` are unchanged by the promotion — see
-“Why downgrade is data-safe”), so a fault in that shared code keeps
-running on the old image, through the same REST, bot and import writers.
+image still runs the document merge/projection pipeline through REST, bot and
+import writers, while omitting the launch-review locking and account/session
+fixes (see “Downgrade compatibility and limitations”). A fault in shared code
+can therefore keep running on the old image.
 The pre-promotion image also predates the `ULTROS_LISTS_READONLY` guards,
 which the promotion added, so it may not enforce the pause flag at all:
 setting the variable on the old image must not be assumed to pause
@@ -388,7 +397,7 @@ branch SHAs are not a substitute for the deployed commit: integration
 merges and squash merges change that history. There is no database migration
 to undo, and no list snapshots or projections should be deleted.
 
-### Why downgrade is data-safe
+### Downgrade compatibility and limitations
 
 This section describes **format compatibility**, not preservation of every
 later safety fix. The launch-review follow-up changes document locking and adds

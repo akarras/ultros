@@ -130,6 +130,10 @@ module.exports = async function accountLifecycle({ ownerPage, editorPage, baseUr
       sessionStorage.removeItem("lifecycleHoldSocket");
       window.__listLifecycle.offline = false;
     });
+    // Constructor failures use the real socket's reconnect backoff, which
+    // reaches 32 seconds. Await its handshake before checking the server copy.
+    await editorPage.waitForFunction(id => window.__listLifecycle.delivered.includes(id),
+      { timeout: Math.max(timeout, 40000) }, downgraded);
     await expectPaused(downgraded, snapshotKey);
     assert.equal((await api(ownerPage, "POST", `/api/v1/list/${downgraded}/share/user`, {
       user_id: editorUser.id, permission: "Write",

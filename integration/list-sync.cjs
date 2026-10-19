@@ -244,9 +244,13 @@ async function main() {
   const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:8080";
   const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 30000);
   const headless = process.env.HEADLESS !== "false";
+  const browserArgs = ["--no-sandbox", "--disable-setuid-sandbox"];
+  if (process.env.E2E_BLOCK_EXTERNAL === "1") {
+    browserArgs.push("--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost");
+  }
   const browser = await puppeteer.launch({
     headless,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: browserArgs,
   });
   const browsers = [browser];
   const failures = [];
@@ -257,7 +261,7 @@ async function main() {
     // Separate regular disposable profiles preserve identity isolation without
     // incognito's smaller in-memory storage budget for the large debug WASM.
     for (let index = 0; index < 3; index++) {
-      browsers.push(await puppeteer.launch({ headless, args: ["--no-sandbox", "--disable-setuid-sandbox"] }));
+      browsers.push(await puppeteer.launch({ headless, args: browserArgs }));
     }
     const [ownerContext, editorContext, freshContext, switchContext] = browsers.map(value => value.defaultBrowserContext());
     ownerPage = await ownerContext.newPage();
