@@ -92,6 +92,20 @@ public sealed class ClientWorker : IDisposable
         if(!CanEdit())throw new InvalidOperationException("Connect with list editing and select a writable cart.");
         cart!.Edit(edit);estimate=null;nextCart=DateTimeOffset.MinValue;status="Saved locally; synchronizing…";return Task.CompletedTask;
     });
+    public bool AddItem(ListEditTarget target,int item,string quality="any",int quantity=1)
+    {
+        if(!target.Matches(View)||item<=0||quantity is <1 or >1_000_000||quality is not ("any" or "nq" or "hq"))return false;
+        return Offer(()=>{
+            if(!target.Matches(connection?.Session,cart?.Id,CanEdit())) {
+                status="The list or account changed. Choose the destination and add the item again.";
+                return Task.CompletedTask;
+            }
+            cart!.Edit(new{kind="add",item_id=item,quality,need=quantity});
+            estimate=null;nextCart=DateTimeOffset.MinValue;
+            status="Item added to the selected list. Saved locally; synchronizing…";
+            return Task.CompletedTask;
+        });
+    }
     public bool RetrySave()=>Offer(()=>{cart?.Save();nextCart=DateTimeOffset.MinValue;return Task.CompletedTask;});
     public bool UseServerCopy()=>Offer(()=>{cart?.UseServer();nextCart=DateTimeOffset.MinValue;return Task.CompletedTask;});
     public bool RetryRecovery()=>Offer(()=>{cart?.Backup("recovery-original");cart?.Document.RetryRecovery();cart?.Save();nextCart=DateTimeOffset.MinValue;return Task.CompletedTask;});

@@ -18,7 +18,7 @@ internal sealed class MainWindow : Window
     private bool localhost;
     private string localOrigin,profile;
     private string search="",scope="";
-    private bool automaticScope=true,openItem,pendingMarket;
+    private bool automaticScope=true,openItem,openLists,pendingMarket;
     private int itemId=8,quantity=1,quality;
     private (uint Id,string Name)[] matches=[];
     private readonly Dictionary<string,(int Need,int Acquired)> drafts=[];
@@ -43,6 +43,12 @@ internal sealed class MainWindow : Window
     }
     private static string ItemName(int id)=>Plugin.Data.GetExcelSheet<Item>().TryGetRow((uint)id,out var item)?item.Name.ToString():$"Item #{id}";
     internal void ShowItem(int id){itemId=id;openItem=true;pendingMarket=true;IsOpen=true;}
+    internal void AddToList(int id,ListEditTarget? destination)
+    {
+        itemId=id;quality=0;quantity=1;openItem=false;pendingMarket=false;openLists=true;IsOpen=true;
+        uiStatus=destination is not null&&worker.AddItem(destination,id)
+            ? "" : "Choose a writable list, then add the selected item. Enable list editing in Account if needed.";
+    }
     public override void Draw()
     {
         if(Interlocked.Exchange(ref browserError,null) is { } browserFailure)uiStatus=browserFailure;
@@ -61,7 +67,7 @@ internal sealed class MainWindow : Window
             if(ImGui.BeginTabItem("Account")){try{Account(v);}finally{ImGui.EndTabItem();}}
             if(ImGui.BeginTabItem("Item",openItem?ImGuiTabItemFlags.SetSelected:ImGuiTabItemFlags.None)){try{openItem=false;Items(v);}finally{ImGui.EndTabItem();}}
             var activeList=v.Cart?.Name??v.Lists.FirstOrDefault(l=>l.List.Id==v.SelectedList)?.List.Name??"Cart";
-            if(ImGui.BeginTabItem($"Lists - {activeList.Replace('#','＃')}###ultros-lists")){try{Cart(v);}finally{ImGui.EndTabItem();}}
+            if(ImGui.BeginTabItem($"Lists - {activeList.Replace('#','＃')}###ultros-lists",openLists?ImGuiTabItemFlags.SetSelected:ImGuiTabItemFlags.None)){try{openLists=false;Cart(v);}finally{ImGui.EndTabItem();}}
             if(ImGui.BeginTabItem("Characters & retainers")){try{Characters(v);}finally{ImGui.EndTabItem();}}
             if(ImGui.BeginTabItem("Notification history")){try{Notifications(v);}finally{ImGui.EndTabItem();}}
             if(ImGui.BeginTabItem("Settings")){try{Settings();}finally{ImGui.EndTabItem();}}
@@ -117,7 +123,10 @@ internal sealed class MainWindow : Window
     private void Items(ClientView v)
     {
         Search();
-        ImGui.TextWrapped("Right-click an item or recipe in the game and choose Search Ultros to open its market here.");
+        ImGui.TextWrapped("Right-click an item or recipe to search Ultros or add its item to your selected list.");
+        ImGui.BeginDisabled(itemId<=0||!Plugin.Data.GetExcelSheet<Item>().HasRow((uint)itemId));
+        if(ImGui.Button("Add item to active list"))AddToList(itemId,ListEditTarget.Capture(v));
+        ImGui.EndDisabled();
         ImGui.SetNextItemWidth(200);if(ImGui.InputTextWithHint("Price zone","Region, datacenter or world",ref scope,64))automaticScope=false;
         ImGui.SameLine();if(ImGui.Button("Use current region")){automaticScope=true;scope=v.PriceRegion;}
         ImGui.BeginDisabled(scope.Length==0);
@@ -145,6 +154,7 @@ internal sealed class MainWindow : Window
             try{foreach(var list in v.Lists)if(ImGui.Selectable($"{list.List.Name} · {list.Permission}##{list.List.Id}",list.List.Id==v.SelectedList)){drafts.Clear();Submit(worker.SelectList(list.List.Id));}}
             finally{ImGui.EndCombo();}
         }
+        if(!v.CanEdit)ImGui.TextWrapped("Choose a writable online list and enable list editing in Account to add items.");
         if(v.Cart is not { } cart){ImGui.TextWrapped("Your online Cart is selected automatically when available. Create an online list named Cart on Ultros, or choose another list here.");return;}
         ImGui.TextUnformatted($"{cart.Name} · {(cart.AwaitingPersist?"UNSAVED — retry save":cart.RecoveryReview?"Recovery paused for review":"Saved locally")}");
         if(ImGui.Button("Retry save / sync"))Submit(worker.RetrySave());
@@ -159,10 +169,15 @@ internal sealed class MainWindow : Window
         ImGui.BeginDisabled(!v.CanEdit);
         try
         {
+            ImGui.TextUnformatted($"Selected item: {ItemName(itemId)}");
             ImGui.SetNextItemWidth(100);ImGui.InputInt("Add item ID",ref itemId);
             ImGui.SameLine();ImGui.SetNextItemWidth(80);ImGui.Combo("Quality",ref quality,Qualities,3);
             ImGui.SameLine();ImGui.SetNextItemWidth(85);ImGui.InputInt("Need",ref quantity);
-            if(ImGui.Button("Add to cart"))Submit(worker.Edit(new{kind="add",item_id=itemId,quality=Qualities[quality],need=quantity}));
+            if(ImGui.Button("Add to list")) {
+                if(itemId<=0||!Plugin.Data.GetExcelSheet<Item>().HasRow((uint)itemId)||quantity is <1 or >1_000_000)
+                    uiStatus="Choose an item and a quantity between 1 and 1,000,000.";
+                else if(ListEditTarget.Capture(v) is { } destination)Submit(worker.AddItem(destination,itemId,Qualities[quality],quantity));
+            }
             ImGui.SameLine();if(ImGui.Button("Undo"))Submit(worker.Edit(new{kind="undo"}));
             ImGui.SameLine();if(ImGui.Button("Redo"))Submit(worker.Edit(new{kind="redo"}));
         }finally{ImGui.EndDisabled();}
