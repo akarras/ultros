@@ -1,0 +1,7 @@
+{
+    "category": "bug_fixes",
+    "importance": "medium",
+    "title": "Keep offline list changes when access changes",
+    "blurb": "Offline changes survive an expired login. If a shared list becomes read-only, your changes stay available to download and review before sending them when editing is allowed again.",
+    "link": "/list"
+}

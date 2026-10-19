@@ -2851,5 +2851,10 @@
     "a11y_units": "數量",
     "a11y_result_details": "結果詳情",
     "a11y_world_scope_notice": "請先選擇出售伺服器，再評估當地利潤。目前材料價格來自 {{ scope }}；這些估算尚未針對出售伺服器。",
-    "a11y_floor": "最低掛單價（金幣）"
+    "a11y_floor": "最低掛單價（金幣）",
+    "list_readonly_recovery_title": "離線變更已保留待確認",
+    "list_readonly_recovery_help": "目前不再允許編輯。離線變更已儲存待確認。可連線伺服器時顯示伺服器副本，否則顯示已儲存的副本。您可以在下方下載變更。恢復編輯權限後，請核對差異，再重試傳送。",
+    "list_account_changed_title": "帳號已變更",
+    "list_account_changed_help": "其他分頁變更了登入帳號。為保護各帳號儲存的變更，同步已停止。請重新載入以使用目前的帳號。",
+    "list_account_reload": "重新載入"
 }

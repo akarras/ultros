@@ -4,7 +4,7 @@
 
 The promotion implementation is already in #1627. Its rollback, exclusions,
 feature-parity and release-decision follow-ups (#1658–#1661) are collected in
-the draft integration PR [#1665](https://github.com/akarras/ultros/pull/1665).
+the integration PR [#1665](https://github.com/akarras/ultros/pull/1665).
 The current integration incorporates `main` at `0254444f`, preserving its
 account-deletion fix while removing the retired Labs settings. It also fixes
 bulk-delete confirmation carrying over to different selected rows of the same
@@ -16,6 +16,15 @@ Trip confirmation also preserves a quantity editor focused before its delayed
 focus callback runs; browser coverage deliberately delays that callback.
 Local verification and the exact implementation tree are recorded in
 [`qa/lists-promotion-2026-10-18.md`](qa/lists-promotion-2026-10-18.md).
+
+The subsequent three-model launch review and cross-review found a first-touch
+locking race, destructive handling of rejected offline edits, and stale-tab
+account binding. The follow-up fixes use a returning locked read, preserve
+rejected offline intent for explicit review, and bind document traffic and
+account-bound REST reads to the saved account. Session expiry keeps the saved
+copy. Offline preparation now reuses complete matching generations. The QA
+record distinguishes the original reproductions from validation of these fixes;
+these local changes do not complete the production checks below.
 
 Production was inspected read-only on 2026-10-18: the Labs directory renders
 at `https://ultros.app/list?labs=lists-sync&lang=en` with footer `0254444`.
@@ -29,6 +38,27 @@ comparison, and the owner's decision on that proposal. Local test results
 belong with the integration candidate and must not be substituted for those
 production observations. This update neither signs the waiver nor closes
 #1510. The dated audit below is retained as the evidence behind that decision.
+
+**Containment scope correction (launch-candidate cross-review).** Earlier
+wording in this record and in `docs/lists-sync.md` overstated what the
+rollback tiers contain. `ULTROS_LISTS_READONLY` pauses only the promoted
+browser routes and list-document socket edits; REST, the Discord bot,
+imports and other server-side writers intentionally keep working through
+`ListSync`, the site-wide service worker is not disabled, and a previously
+prepared offline device editor is not stopped. The tier-2 pre-promotion
+image (whose immutable digest and Git SHA must be recorded before
+promotion) shares the same merge/projection code and predates the pause
+guards, so it may not enforce the flag: it is a browser UX rollback, not
+containment of a shared merge/projection fault. A post-deploy `different`
+or `decode_error` checker result, or any other suspected shared-code
+corruption, therefore requires stopping all affected application
+processes and replicas — including the bot and API/import writers —
+isolating traffic, and retaining evidence before deploying a verified
+fix, per the writer containment procedure in `docs/lists-sync.md`. An env
+flip or the old image alone must not be described as stopping writers.
+This correction changes no kept precondition: B2, the reduced B4, and the
+bundle sanity comparison are still owed, and the waiver below is still
+unsigned.
 
 Run the deployed legacy-versus-Labs comparison before landing the promotion:
 the same change enables Lists 2.0 by default and removes the legacy UI. The
@@ -74,7 +104,7 @@ real artifact or run in this session (see “Closed locally in this change”).
 | --- | --- | --- | --- | --- |
 | 1 | Deployed commit, ≥7-day window, accounts/devices, cohort; note material changes | **Partially evidenced** | #1439 close-out names a candidate start: last visible Lists change #1574 deployed 2026-09-21, acceptance on prod `c7b83be` 2026-09-22. Prod today verified as `d09d761` (above). | No recorded observation end, cohort, or participating accounts/devices. Material builds landed inside any Sep 21→ window without a soak log: wasm-split pilot #1579 (2026-09-21) and its revert #1588 (2026-09-22), bundle change #1590, crate split #1597, shopping-route change #1639. >7 elapsed days with no daily record is not a soak. |
 | 2 | Two browsers + phone, list shared by two Discord accounts; online/offline, reconnect, concurrent purchases, Discord bot add/remove on the deployment | **Missing** (production); partially evidenced locally | Local only: `integration/list-sync.cjs` and `integration/list-compaction-recovery.cjs` (two browser peers, offline/reconnect, additive purchases), recorded in #1439’s 2026-09-15/16 comments against local test-auth builds. #1439’s prod run (2026-09-22) was a signed-out **device** list on one client. | No artifact shows the deployed exercise with a phone, two Discord accounts sharing one list, or the bot’s `/list add_item`/`remove_item` landing live. |
-| 3 | Daily review of application errors and `ultros::lists::sync` warnings (broadcast, activity, relay) | **Missing** | The soak plan names the exact GlitchTip/tracing queries (`docs/lists-sync.md`, “Historical production soak plan”). | No daily findings/resolutions are recorded in #1510, #1439, or `docs/`. An empty local log is explicitly not this evidence. |
+| 3 | Daily review of application errors and `ultros_lists::sync` warnings (broadcast, activity, relay) | **Missing** | The soak plan names the exact GlitchTip/tracing queries (`docs/lists-sync.md`, “Historical production soak plan”). | No daily findings/resolutions are recorded in #1510, #1439, or `docs/`. An empty local log is explicitly not this evidence. |
 | 4 | Authoritative manifest of every list touched, incl. deletions | **Missing** | Retention procedure exists and is sound: `docs/list-projection-checker.md` (“Week-long soak manifest”), incl. deleted-ID reconciliation and why `--updated-since` polling alone is not exhaustive. | No retained `soak-ids` manifest or action ledger exists in the repo or on #1510. Without it, checkbox 5 cannot prove completeness. |
 | 5 | Read-only decoded projection checker vs that manifest; zero unexplained divergence, no data loss | **Partially evidenced** | Tooling is Done: checker merged via #1513 closing #1479, with REPEATABLE READ/READ ONLY snapshot, machine-readable statuses and exit codes 0/1/2/3 (`docs/list-projection-checker.md`). Re-verified at `25994a5e` in this session: `cargo test --locked -p ultros-db list_projection` → 7 passed, 1 ignored (isolated-PostgreSQL test); the CLI without `DATABASE_URL` exits 2 with `DATABASE_URL is required`. #1479’s close-out covers synthetic equal/divergent/malformed/missing/deleted fixtures on a disposable local DB. | The checker has **never been run against a production soak manifest** (no manifest, no production access claimed in #1479). Zero production divergence is unestablished. Synthetic passes must not be reported as soak results. |
 | 6 | Snapshot growth and compaction over time (256 KiB is a trigger, not a cap) | **Missing** (production time series) | Compaction semantics and the daily size query are documented (`docs/lists-sync.md`); forced production-path compaction passed locally in `list-compaction-recovery.cjs` (#1439). | No per-list size/compaction-counter series over a deployed week; repeated-compaction-without-edits and unexplained growth are therefore unexamined in production. |
@@ -128,7 +158,7 @@ maintainer (@akarras). Reviewer sign-off should be recorded on #1510.
 3. **B3 — Daily error/warning review (checkbox 3).** Owner: production
    operator. Evidence: one dated entry per day of B1 recording the
    GlitchTip query results (`list_doc`/`ListDocError`/`sync_payload`/
-   `hydration` on `/list/`) and `ultros::lists::sync` warning review
+   `hydration` on `/list/`) and `ultros_lists::sync` warning review
    (broadcast/activity/relay), with findings and resolutions — “none
    found” per day is acceptable evidence when the query is named.
 4. **B4 — Manifest + checker (checkboxes 4, 5).** Owner: production
@@ -184,8 +214,9 @@ and date in this file and on #1510 — not silence:
 > on ordinary Lists navigation for every visitor, with its bandwidth
 > and service-worker cache cost unmeasured on the final bundle, whose
 > size delta is likewise unmeasured; (3) the Labs flag and legacy UI
-> are removed, so there is no per-user fallback — rollback means
+> are removed, so there is no per-user fallback — browser rollback means
 > redeploying a prior build (plus any separately reviewed kill-switch),
+> neither of which stops the REST/bot writers that share the merge code,
 > and the legacy-vs-Labs comparison can never be run after merge; and
 > (4) the intermittent E2E failures recorded on #1627 ship as known
 > unknowns. Rationale: <owner to state>. Signed: <name>, <date>.
@@ -218,12 +249,20 @@ decision above stays **blocked**.
   `all-ids.txt`) and pass `--ids-file all-ids.txt`. A list deleted between
   the export and the check reports as deleted, which is fine. Pass bar: every row is `equal`
   or `missing_document` (never opened through sync). Any `different` or
-  `decode_error` result blocks the merge, or after the merge triggers
-  `ULTROS_LISTS_READONLY`. Exit code 1 is expected while any
-  `missing_document` remains, so judge the run by the statuses in the
-  report, not by the exit code. (Local dry run on 2026-10-14 against the
-  dev database: 85 lists, 25 `equal`, 60 `missing_document`, nothing else.) The post-deploy run is the check on the mass
-  first-open bootstrap risk (waiver item 1).
+  `decode_error` result blocks the merge. After the merge, the same result
+  is suspected shared merge/projection corruption: stop all affected
+  application processes and replicas, including the bot and API/import
+  writers, isolate traffic and retain evidence, then deploy a verified
+  fix (the writer containment procedure in `docs/lists-sync.md`).
+  `ULTROS_LISTS_READONLY` may be flipped alongside that stop, but it pauses
+  only the promoted browser routes and socket edits and is not by itself
+  the response; the projected rows are not trusted while divergence is
+  known. The checker itself is read-only and repairs nothing. Exit code 1
+  is expected while any `missing_document` remains, so judge the run by
+  the statuses in the report, not by the exit code. (Local dry run on
+  2026-10-14 against the dev database: 85 lists, 25 `equal`, 60
+  `missing_document`, nothing else.) The post-deploy run is the check on
+  the mass first-open bootstrap risk (waiver item 1).
 
 **Replaced by a lighter check:**
 
@@ -233,18 +272,28 @@ decision above stays **blocked**.
   not comparable with the historical pair, which stays as it is.
 - **B1, B3, B5 → one week of monitoring after deploy.** Daily look at
   GlitchTip (`list_doc` / `ListDocError` / `sync_payload` / hydration
-  on `/list/`) and the `ultros::lists::sync` warnings. A one-line #1510
-  comment per day, "none" included. Any data-loss signal means flipping
-  `ULTROS_LISTS_READONLY` first and investigating second.
+  on `/list/`) and the `ultros_lists::sync` warnings. A one-line #1510
+  comment per day, "none" included. Match the response to the signal: a
+  browser-only incident may start with flipping `ULTROS_LISTS_READONLY`;
+  any data-loss signal or suspected shared merge/projection fault means
+  stopping all affected writer processes first (bot and API/import
+  writers included — the env flip does not stop them), isolating traffic,
+  retaining evidence, and investigating before writers restart.
 
 **Waived outright:** the declared ≥7-day pre-merge soak window and cohort
 (B1), the retained append-only manifest (B4's ledger), the per-list
 snapshot/compaction time series (B5), and the frozen-toolset bundle pair
 (B6 as written).
 
-**Rollback for the waived risks:** `ULTROS_LISTS_READONLY` (#1658), an
-env flip and restart of the same image, then the tier-2 revert runbook in
-`docs/lists-sync.md`.
+**Rollback for the waived risks:** for a browser-only incident,
+`ULTROS_LISTS_READONLY` (#1658), an env flip and restart of the same
+image, then the tier-2 revert runbook in `docs/lists-sync.md` (record the
+pre-promotion image's immutable digest and Git SHA before promotion; the
+old image shares the merge code and may not enforce the pause flag). For
+a suspected shared merge/projection fault neither step is containment:
+stop every affected writer process and replica, including the bot and
+API/import writers, isolate traffic, retain evidence, and deploy a
+verified fix before restarting writers.
 
 > I accept the scoped waiver above for the Lists 2.0 promotion in #1627,
 > including risks (1)–(4) named in the full waiver text, with the kept
@@ -260,7 +309,7 @@ env flip and restart of the same image, then the tier-2 revert runbook in
 > (#1574) but no recorded window/cohort, and material builds (#1579/
 > #1588, #1590, #1597, #1639) landed unlogged; elapsed time is not a
 > soak. (2) Missing on the deployment (local two-peer evidence only).
-> (3) Missing — no daily GlitchTip/`ultros::lists::sync` reviews.
+> (3) Missing — no daily GlitchTip/`ultros_lists::sync` reviews.
 > (4) Missing — procedure exists, no retained manifest. (5) Partially
 > evidenced — checker (#1513) re-verified at `25994a5e` (7 tests pass,
 > CLI guards intact) but never run against a production manifest.

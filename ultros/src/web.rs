@@ -1775,12 +1775,26 @@ pub(crate) async fn get_list(
     Ok(Json((list, list_items)))
 }
 
+#[derive(Default, Deserialize)]
+pub(crate) struct ListViewer {
+    viewer: Option<i64>,
+}
+
 pub(crate) async fn get_list_with_listings(
     State(db): State<UltrosDb>,
     State(world_cache): State<Arc<WorldCache>>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
+    Query(viewer): Query<ListViewer>,
 ) -> Result<Json<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>)>, ApiError> {
+    if viewer
+        .viewer
+        .is_some_and(|expected| expected != user.id as i64)
+    {
+        return Err(ApiError::BadRequest(
+            "signed-in account changed; reload to continue",
+        ));
+    }
     let ((list, owner_name), list_items) = futures::future::try_join(
         db.get_list(id, user.id as i64),
         db.get_list_items(id, user.id as i64),

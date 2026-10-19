@@ -181,7 +181,11 @@ the final integrated build or complete the production soak.
   Its JSON distinguishes differences, decode failures, missing documents and
   absent/deleted lists. A mismatch requires investigation and is not by itself
   proof of a bypassing writer. Snapshot sizes and row counts alone do not
-  establish equality.
+  establish equality. The checker is evidence only: it repairs nothing and
+  stops no writer. On a `different` or `decode_error` result, do not treat
+  the REST projection the read-only routes display as independently trusted
+  truth — it is one side of the divergence — and follow the writer
+  containment procedure under [Rollback](#rollback).
 - Compaction: a snapshot is replaced by a shallow one after 5,000 changes or
   256 KiB. This is a compaction trigger, not a stored-size cap: shallow
   snapshots can exceed it when the live document is large. Clients that
@@ -260,7 +264,21 @@ this promotion does not claim new production-soak or bundle measurements.
 
 The promotion deleted the Labs toggle and the legacy editor, so rollback is
 deliberately two-tiered. Tier 1 needs no rebuild; tier 2 is a full revert.
-Neither tier touches list data.
+Neither tier touches list data — and **neither tier is an all-writer
+containment**. Tier 1 pauses only the promoted browser surfaces; tier 2
+restores the previous browser UX. REST, the Discord bot, imports and other
+server-side `ListSync` writers continue under both, by design: they predate
+the promotion and share its merge and projection code. Match the response
+to the incident class:
+
+- **Browser-only incident** (the promoted routes or socket editing misbehave,
+  with no sign the shared server merge or projection is wrong): tier 1
+  first, tier 2 if the old UX is wanted back.
+- **Suspected shared merge/projection corruption** — a checker `different`
+  or `decode_error` result, or any other sign the code every writer shares
+  is corrupting documents or projections: neither tier contains it. Use
+  the writer containment procedure below; tier 1 may be flipped alongside
+  it, but does not substitute for it.
 
 ### Tier 1: read-only kill-switch (`ULTROS_LISTS_READONLY`)
 
@@ -279,10 +297,21 @@ While it is on:
   flip cannot resubscribe or keep writing after it reconnects.
 - Guest offline-cache preparation is skipped, so no new service-worker
   generation staging an editor shell is published while paused.
-- REST list writers (Discord bot, imports, sharing) keep working through
-  `ListSync`: they predate the promotion and are not the layer it changed.
-  If the incident implicates the server merge itself, go to tier 2 — the
-  switch only stops the browser surfaces the promotion exposed.
+
+What it does **not** do — it is not a site-wide or all-writer freeze:
+
+- REST list writers (Discord bot, imports, sharing, and any other API
+  caller) keep working through `ListSync`: they predate the promotion and
+  are not the layer it changed. Every server-side writer keeps merging and
+  projecting while the switch is on.
+- The site-wide service worker is not disabled or unregistered; only new
+  guest offline-cache preparation is skipped.
+- A previously prepared offline device editor is not stopped (see limits
+  below).
+
+If the incident implicates the shared server merge or projection itself,
+this switch does not contain it, and neither does tier 2. Use the writer
+containment procedure below.
 
 Limits to know during an incident: the switch takes effect on each
 browser's next full page load (already-hydrated tabs keep their in-memory
@@ -296,13 +325,59 @@ and restart; no data step is needed in either direction.
 Verify after flipping: load `/list` and one account `/list/:id` — both
 show the “temporarily paused” banner and the account list's projected
 rows; the browser console shows no `SubscribeListDoc` handshake; and
-`localStorage` snapshots (`ultros.listdoc.v1.*`) are untouched.
+`localStorage` snapshots (`ultros.listdoc.v1.*`) are untouched. In a
+suspected divergence those projected rows are display only, not a trusted
+record of the list — treat the banner as the verified fact, not the rows.
+
+### Writer containment: suspected shared merge/projection corruption
+
+This is an operational stop, separate from both tiers. There is no
+all-writer freeze flag, and none of the steps here is implemented in code.
+Use it for a checker `different` or `decode_error` result, or any other
+evidence the merge/projection code shared by every writer is corrupting
+data:
+
+1. **Stop every affected writer process.** Through the operator's own
+   deployment controls (this runbook does not know the production
+   topology, so it names no command), stop or isolate every application
+   process and replica that can write lists — web/API replicas serving
+   REST and the document socket, the Discord bot, and any import or other
+   server-side `ListSync` caller. Flipping `ULTROS_LISTS_READONLY` or
+   redeploying the pre-promotion image does **not** do this: the switch
+   guards only the promoted browser routes and socket, and the old image
+   runs the same merge code without the switch (see tier 2).
+2. **Isolate traffic** so no request can still reach a surviving writer
+   while processes are being stopped.
+3. **Retain evidence before changing anything:** the checker JSON report
+   and exit code, the affected list IDs, timestamps, the deployed image
+   digest and Git SHA, and the relevant logs. The checker is read-only
+   and safe to re-run for evidence; it does not repair anything.
+4. **Leave the database untouched.** Do not delete, rewrite or hand-repair
+   snapshots or projections, and do not present the projected rows as
+   trusted while divergence is known.
+5. **Deploy a verified fix**, re-run the checker over the affected IDs,
+   and only then restart writers. Restoring the old browser UX (tier 2)
+   may accompany the fix, but is not itself the fix for a shared-code
+   fault.
 
 ### Tier 2: revert the promotion
 
-Before promotion, retain the currently deployed image's immutable digest
-and Git SHA. Redeploy that exact image for tier 2; the floating `main` tag
+Before promotion, record the currently deployed image's immutable digest
+and Git SHA as the tier-2 target, and confirm that exact image is still
+pullable. Redeploy that exact image for tier 2; the floating `main` tag
 can already point at the promotion and is not a rollback target.
+
+Tier 2 is a **browser UX rollback, not a containment**. The pre-promotion
+image shares the promotion's merge and projection code (`ultros-lists`,
+`ultros-db` and `ultros-list-doc` are unchanged by the promotion — see
+“Why downgrade is data-safe”), so a fault in that shared code keeps
+running on the old image, through the same REST, bot and import writers.
+The pre-promotion image also predates the `ULTROS_LISTS_READONLY` guards,
+which the promotion added, so it may not enforce the pause flag at all:
+setting the variable on the old image must not be assumed to pause
+anything. For a suspected shared merge/projection fault, tier 2 alone
+stops no writer — use the writer containment procedure above and deploy
+a verified fix.
 
 If an image is unavailable, make a rollback branch from current `main`
 and revert the actual landed promotion commit through the normal checks
@@ -314,6 +389,18 @@ merges and squash merges change that history. There is no database migration
 to undo, and no list snapshots or projections should be deleted.
 
 ### Why downgrade is data-safe
+
+This section describes **format compatibility**, not preservation of every
+later safety fix. The launch-review follow-up changes document locking and adds
+optional account-binding fields to socket messages and account-bound REST
+reads; it does not change schema-1 snapshots or relational row formats. Older
+servers ignore those optional guards, and older clients do not recognize the
+local write-pause marker for rejected offline work. A pre-fix image can therefore
+reintroduce the locking/account/session defects even though it can decode the
+data. Prefer a rollback image containing the safety fixes. Never use an older
+image as containment for one of those defects: stop the affected writers and
+deploy a verified fix as described above. Account switching and rejected-work
+recovery must be checked against the actual image being considered.
 
 Verified against `main...codex/lists-promotion` (25994a5e):
 
@@ -344,6 +431,13 @@ Verified against `main...codex/lists-promotion` (25994a5e):
   a never-Labs user, it will not) — that shell reads the same IndexedDB
   format and caches no account data, so the worst case is the new device
   editor remaining available offline, not data loss.
+- **Active browsers**: a downgrade does not instantly replace code already
+  running in browsers. Already-hydrated tabs keep the new build's editor
+  in memory until reload, and a prepared offline generation can keep
+  answering device-list navigations with the new shell as above. Data
+  formats are compatible in both directions, so this
+  is a UX-consistency limit, not a data risk — but do not claim every
+  client is on the old build the moment the old image is deployed.
 
 ### Alternatives considered
 
@@ -352,9 +446,10 @@ Resurrecting the full legacy editor behind a flag was rejected: it is
 REST write paths were partly removed with it — re-adding it would ship a
 second editor to maintain for an incident-only surface. A cookie/query
 flag in the Labs style was rejected because it is per-browser (an
-incident switch must cover every client at once, including ones that
-never opted in) and it reads as a permanent user-facing toggle. A
-gradual cohort was rejected for the same reason the promotion deleted
+incident switch must take effect server-side for the promoted browser
+clients, including ones that never opted in) and it reads as a permanent
+user-facing toggle. A gradual cohort was rejected for the same reason
+the promotion deleted
 Labs: the document layer underneath both UIs is identical, so a cohort
 would roll out only the editor skin while complicating every route. The
 env switch covers the failure the promotion actually introduces — the
@@ -379,7 +474,7 @@ disposition: [`lists-promotion-decision.md`](lists-promotion-decision.md).
    share one list between two Discord accounts.
 2. Daily: GlitchTip has no new issue whose title contains `list_doc`,
    `ListDocError`, `sync_payload` or `hydration` on `/list/`;
-   inspect warning events from tracing target `ultros::lists::sync`, including
+   inspect warning events from tracing target `ultros_lists::sync`, including
    broadcast, activity-recording and relay failures in `ListSync::publish`
    (filtering only for "list document" misses several of these);
    `SELECT count(*), pg_size_pretty(sum(length(snapshot))) FROM list_doc;`

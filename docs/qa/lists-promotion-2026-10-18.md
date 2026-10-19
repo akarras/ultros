@@ -125,3 +125,127 @@ complete browser pass.
 Before go-live, retain the prior production image's immutable digest. The
 [rollback procedure](../lists-sync.md#rollback) covers the runtime pause switch
 and a full image rollback without deleting list data.
+
+## Launch review follow-up (original candidate `82891f5e`)
+
+Muse Wonder Full, Opus 5.5, and a fresh Sol 6.1 each reviewed the complete
+implementation independently. Three new tasks then gave each model all three
+reports and the parent's objections for source-based cross-review. The initial
+candidate stayed unchanged throughout those six reviews and the reproductions.
+Agreement was not treated as runtime proof.
+
+The surviving launch blockers were:
+
+| Finding | Evidence on the original candidate | Remediation |
+| --- | --- | --- |
+| SOL-01: first-touch locking | Three PostgreSQL connections reproduced an empty locking read followed by an unlocked ordinary read; another writer could commit before the stale snapshot overwrote it. | One returning `SELECT ... FOR UPDATE`, including the post-insert reload. Real PostgreSQL addition and deletion regressions both fail the old sequence and pass the fix. |
+| SOL-03: offline edits after Write-to-Read | Real browser: acquisition `1` was persisted offline, owner downgraded to Read, reconnect deleted the snapshot; server remained at `0`. | Separate edit refusal from lost Read, preserve and durably pause the local branch, show the authorized server copy, and require explicit retry after Write returns. |
+| OPUS round-2 NEW-1: expired session | Real browser: remove the auth cookie while offline, reconnect anonymously, receive a read-denial and lose the persisted snapshot. | Anonymous document subscriptions now report a lapsed session; close sync and keep the original account's snapshot. |
+| SOL-02: surviving-tab account binding | Two tabs in one disposable profile: A's tab survived B's login and socket reconnect, then client-navigated to B's private list. B's document was saved under A's key. A's separate REST request was correctly denied with 403. | Bind subscription/update traffic and account-bound REST reads to the snapshot's account. A mismatch detaches without purging and asks for a full reload. |
+
+The account reproduction kept the original page document (no reload), rendered
+B's private name and row, received its document handshake, populated
+`ultros.listdoc.v1.A.<B-list>`, and left B's corresponding key empty. This was
+a browser namespace violation; the server correctly authorized the actual
+cookie's B session. Fixtures and disposable browsers were cleaned with no
+cleanup errors. The first attempt stalled with the source tab in the background;
+bringing it to the foreground made the reconnect deterministic. That stalled
+attempt is not counted as a successful reproduction.
+
+Two additional fixes survived cross-review:
+
+- OPUS-1: identical worker preparation fetched all seven fixture resources again,
+  including WASM with `cache: reload`, and replaced the generation. Reuse now
+  requires the complete canonical manifest, locale, shell version and every
+  cached dependency. Changed or partially evicted generations still stage
+  transactionally. World topology is refreshed with the generation rather than
+  on each visit; no claim is made about measured browser transfer bytes yet.
+- MUSE-1 / OPUS-2 and SOL-04: the incident guidance overstated browser-only pause
+  and image rollback, and named the old tracing target. It now requires stopping
+  all affected writers for shared merge/projection faults, corrects the target
+  to `ultros_lists::sync`, and distinguishes format compatibility from retention
+  of the new safety fixes. No all-writer flag was added and no waiver was signed.
+
+Cross-review downgraded the ordinary in-flight revocation window: merely moving
+the permission read into the document transaction cannot serialize it with
+independent share/group revocation. No claim of closing that window is made.
+The large-document capacity concern still needs measurement; transport has a
+default limit, so it is not literally unbounded. A missing projection on
+`Updated` remains a hardening concern for already-divergent data; `Removed`
+with an already-absent row is not divergent. The first-touch fix removes the
+demonstrated source of that divergence. Production checker differences still
+block launch. The stale-world fallback translation and stale-tab pause messaging
+remain nonblocking follow-ups. LWW/remove-wins quality-change semantics remain
+intentional and should be included in the hands-on exercise.
+
+Validation of the revised implementation is recorded separately below; the
+original passing checks above do not validate these follow-up changes. All
+production-only evidence and owner decisions in the release handoff remain
+open unless explicitly updated with their own evidence.
+
+A fresh post-fix source review found the original P1 paths closed. Follow-up
+changes preserve the visible saved branch when a paused document has no server
+snapshot after reload, fence cached REST permissions by viewer, refresh the
+read-only server copy from relay deltas, and track the paused state when disabling
+controls. The account regression now remounts from a non-list route before
+detecting the stale identity, and asserts no permission-only index entry is
+created under the previous account. The rollback limitations in that review
+are covered by the updated format-compatibility section of the runbook.
+
+One deliberate recovery limitation remains: a user who stays at Read retains
+the saved branch and its review banner; export is available, but there is no
+discard action in this state. Restoring Write alone does not resend it; an
+explicit retry is required. A separate confirmed-discard flow needs the same
+durable replacement ordering as ordinary recovery. Storage failure is still
+reported: successfully saving the snapshot does not report Saved unless the
+write-pause marker also sticks. No claim is made that a browser can persist a
+new marker when its storage refuses writes.
+
+### Validation of the launch-review fixes
+
+The implementation tree before this evidence-only addition is
+`11a7ee5769e331d052d67cc8fca7e3ac761fcdac`, on top of `82891f5e`.
+The additional Opus source review inspected the earlier indexed tree
+`5ef6b8a6288871648395c5c2f3a4edd4147df379`; its follow-up changes and
+the browser-discovered issue below were made afterward.
+
+- `./check_ci.sh` passed after the final Rust change, including workspace
+  library/binary tests, CRDT convergence, the non-default CSV feature and
+  vendored reactive-graph regressions. Existing ignored tests remain ignored.
+- The DB worker separately ran 20 focused document/adoption/projection tests,
+  including the eight opt-in PostgreSQL cases, in disposable private schemas.
+  Both new three-connection race regressions fail the old lock/read sequence.
+- JavaScript unit regressions: **199 passed, 0 failed, 0 skipped**. The real
+  production-worker/helper browser fixture also passed a disconnected cold
+  reload with anonymous shell and durable device contents.
+- `cargo leptos build --bin-features test-auth` passed for server and client,
+  with the same local debug overrides described above. The final debug server
+  SHA256 is `1183ec305f4a62eac2fcab9fd4dcae05b7e5607315786c7cf20591b6b23d67b0`;
+  delivered debug WASM is
+  `70b5fafbfe53cfa574d4abd0dbb2967375736d8157cd27098d3f928360fa1a79`.
+  These are not optimized release-bundle measurements.
+- The isolated account-lifecycle browser run passed all cases with **zero
+  page errors**: Write-to-Read keeps and exports the branch, a socket-blocked
+  reload shows the saved copy, a server snapshot restores the authorized view,
+  regrant alone never sends rejected edits, explicit retry converges, a lapsed
+  session preserves work, and a stale tab cannot write document or permission
+  metadata under the former account. Reload and subsequent login put each
+  account's data in its own namespace and sync the former account's saved edit.
+  All owned list fixtures and disposable browsers were cleaned up.
+
+The first lifecycle attempt exposed a real cart teardown panic when the account
+warning conditionally removed the workspace during queued cart updates. The
+warning now hides the detached workspace until route teardown. A fresh build
+and the complete lifecycle run then passed without panics. That failed attempt
+is retained as a failure, not counted as a pass. Its separate undefined-valued
+Puppeteer object assertion was corrected to serialize an explicit null.
+
+The NPC map-preview probe passed at 390 and 1440 pixels on the fresh build.
+Search reproduced its earlier timeout: the selected `/about` became
+`/about?lang=en`, but the test demanded an empty query string. The corrected
+probe checks the destination and all its query parameters while requiring the
+current locale to survive; its desktop/mobile Enter/click matrix passed.
+This was an assertion correction, with no search application change.
+
+The broad E2E gate and optimized release comparison are still being validated;
+no complete browser pass or bundle result is claimed by these focused results.

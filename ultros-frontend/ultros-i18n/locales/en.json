@@ -2851,5 +2851,10 @@
     "a11y_units": "Units",
     "a11y_result_details": "Result details",
     "a11y_world_scope_notice": "Choose a sell world before judging local profit. Ingredient prices currently use {{ scope }}; these estimates are not personalized to a sell world.",
-    "a11y_floor": "Listing floor (gil)"
+    "a11y_floor": "Listing floor (gil)",
+    "list_readonly_recovery_title": "Offline changes kept for review",
+    "list_readonly_recovery_help": "Editing is no longer allowed. Offline changes stay saved for review. The list shows the server copy when available, or your saved copy while offline. Download your changes below. If write access returns, review the differences and retry to send them.",
+    "list_account_changed_title": "Account changed",
+    "list_account_changed_help": "Another tab changed the signed-in account. Sync has stopped to protect saved changes for each account. Reload to use the current account.",
+    "list_account_reload": "Reload"
 }

@@ -19,6 +19,14 @@ hydration, client navigation and compatibility with old Labs bookmarks (requires
 lists without signing in or setting a Labs cookie. `npm run test:list-flow`
 covers inline editing, recipes, sharing and deletion on the account editor.
 
+`npm run test:list-sync` also runs `list-account-lifecycle.cjs`: durable offline
+edits across a Write-to-Read downgrade and reload, export and explicit retry
+after write access returns, session expiry/re-login, and a surviving tab across
+another tab's account switch. It asserts that the previous account's unsynced
+work survives and that private documents never enter the wrong account's cache.
+This requires `test-auth` and an isolated database, like the other authenticated
+list probes.
+
 To verify the incident switch, start an isolated `test-auth` server with
 `ULTROS_LISTS_READONLY=true`, then run
 `BASE_URL=http://127.0.0.1:8080 npm --prefix integration run test:lists-readonly`.

@@ -2851,5 +2851,10 @@
     "a11y_units": "Einheiten",
     "a11y_result_details": "Ergebnisdetails",
     "a11y_world_scope_notice": "Wählen Sie eine Verkaufswelt, um den lokalen Gewinn einzuschätzen. Zutatenpreise stammen derzeit aus {{ scope }}; die Schätzungen gelten nicht für eine bestimmte Verkaufswelt.",
-    "a11y_floor": "Niedrigstes Angebot (Gil)"
+    "a11y_floor": "Niedrigstes Angebot (Gil)",
+    "list_readonly_recovery_title": "Offline-Änderungen zur Prüfung aufbewahrt",
+    "list_readonly_recovery_help": "Bearbeiten ist nicht mehr erlaubt. Offline-Änderungen bleiben zur Prüfung gespeichert. Die Liste zeigt die Serverkopie, wenn sie verfügbar ist, sonst deine gespeicherte Kopie. Lade deine Änderungen unten herunter. Wenn du wieder Schreibzugriff hast, prüfe die Unterschiede und versuche erneut, sie zu senden.",
+    "list_account_changed_title": "Konto geändert",
+    "list_account_changed_help": "Ein anderer Tab hat das angemeldete Konto geändert. Die Synchronisierung wurde angehalten, um die gespeicherten Änderungen jedes Kontos zu schützen. Lade die Seite neu, um das aktuelle Konto zu verwenden.",
+    "list_account_reload": "Neu laden"
 }

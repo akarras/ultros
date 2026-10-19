@@ -2851,5 +2851,10 @@
     "a11y_units": "수량",
     "a11y_result_details": "결과 상세",
     "a11y_world_scope_notice": "판매 서버를 선택한 후 수익을 판단하세요. 현재 재료 가격은 {{ scope }} 기준이며, 추정치는 판매 서버에 맞춰지지 않았습니다.",
-    "a11y_floor": "최저 등록가 (길)"
+    "a11y_floor": "최저 등록가 (길)",
+    "list_readonly_recovery_title": "오프라인 변경 사항 보관됨",
+    "list_readonly_recovery_help": "더 이상 편집할 수 없습니다. 오프라인 변경 사항은 확인을 위해 보관됩니다. 서버 사본을 불러올 수 있으면 해당 사본을, 오프라인이면 저장된 사본을 표시합니다. 아래에서 변경 사항을 다운로드하세요. 쓰기 권한이 복구되면 차이를 확인하고 다시 시도하여 보내세요.",
+    "list_account_changed_title": "계정 변경됨",
+    "list_account_changed_help": "다른 탭에서 로그인 계정이 변경되었습니다. 각 계정의 저장된 변경 사항을 보호하기 위해 동기화를 중지했습니다. 현재 계정을 사용하려면 새로고침하세요.",
+    "list_account_reload": "새로고침"
 }

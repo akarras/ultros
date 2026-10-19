@@ -15,6 +15,15 @@ const GUEST_META = 'ultros-guest-offline-v2';
 const GUEST_GENERATION_PREFIX = 'ultros-guest-offline-v2-generation-';
 const GUEST_ACTIVE = '/__ultros_guest_offline_active__';
 const GUEST_SHELL = '/__ultros_guest_offline_shell__';
+// Canonical manifest a generation was staged from. It lives inside the
+// immutable generation, so it is published by the same pointer swap as the
+// shell and dependencies it describes; generations staged before this entry
+// existed never match and are restaged once.
+const GUEST_MANIFEST = '/__ultros_guest_offline_manifest__';
+// Bump whenever the generated shell (HTML, bootstrap shape, labels) or the
+// staging layout changes, so prepared generations are rebuilt by a new worker
+// even when the client build is unchanged.
+const GUEST_SHELL_VERSION = 1;
 
 async function activeGuestGeneration() {
   const response = await (await caches.open(GUEST_META)).match(GUEST_ACTIVE);
@@ -50,10 +59,53 @@ async function prepareGuestOffline(message) {
   // an in-memory queue alone cannot protect cleanup during worker replacement.
   // Unsupported browsers keep any existing generation and report not-ready.
   if (!self.navigator?.locks) throw new Error('Offline preparation requires Web Locks');
+  // Validate before taking the lock or touching the network.
+  const manifest = guestManifest(message);
   return self.navigator.locks.request('ultros-guest-offline-prepare-v2', async () => {
-    await pruneGuestGenerations(await activeGuestGeneration());
-    return stageGuestOffline(message);
+    const active = await activeGuestGeneration();
+    await pruneGuestGenerations(active);
+    // Every Lists visit asks again; an identical complete generation is reused
+    // instead of re-downloading the whole client (wasm included) each time.
+    if (active && await guestGenerationMatches(active, manifest)) return;
+    return stageGuestOffline(manifest);
   });
+}
+
+// Validates the page's manifest and reduces it to a canonical form: equal sets
+// of assets in any order, and any unsupported language (normalized to en),
+// produce the same key.
+function guestManifest(message) {
+  const { js, wasm, css } = message;
+  for (const [value, suffix] of [[js, '.js'], [wasm, '.wasm'], [css, '.css']]) {
+    if (typeof value !== 'string' || !publicGuestAsset(value)
+      || !new URL(value, self.location.origin).pathname.startsWith('/pkg/')
+      || !value.endsWith(suffix)) throw new Error('Invalid offline build manifest');
+  }
+  if (!Array.isArray(message.assets) || message.assets.length > 256
+    || !message.assets.every(value => typeof value === 'string' && publicGuestAsset(value))) {
+    throw new Error('Invalid offline asset manifest');
+  }
+  const paths = [...new Set([...message.assets, js, wasm, css,
+    '/api/v1/world_data'])].sort();
+  const lang = /^(en|ja|de|fr|cn|ko|tc)$/.test(message.lang) ? message.lang : 'en';
+  const key = JSON.stringify({ shell: GUEST_SHELL_VERSION, lang, js, wasm, css, paths });
+  return { js, wasm, css, lang, paths, key };
+}
+
+// Reuse requires the exact canonical manifest plus the shell and every
+// dependency still present, so a partially evicted generation is restaged.
+// world_data is deliberately part of the immutable generation: world topology
+// is refreshed whenever the build, language or shell version changes, not on
+// every visit (it changes far less often than deployments).
+async function guestGenerationMatches(name, manifest) {
+  if (!await caches.has(name)) return false;
+  const cache = await caches.open(name);
+  const stored = await cache.match(GUEST_MANIFEST);
+  if (!stored || await stored.text() !== manifest.key) return false;
+  for (const path of [GUEST_SHELL, ...manifest.paths]) {
+    if (!await cache.match(path)) return false;
+  }
+  return true;
 }
 
 function publicGuestAsset(value) {
@@ -112,19 +164,7 @@ const guestShellLabels = {
   ]
 };
 
-async function stageGuestOffline(message) {
-  const { js, wasm, css } = message;
-  for (const [value, suffix] of [[js, '.js'], [wasm, '.wasm'], [css, '.css']]) {
-    if (typeof value !== 'string' || !publicGuestAsset(value)
-      || !new URL(value, self.location.origin).pathname.startsWith('/pkg/')
-      || !value.endsWith(suffix)) throw new Error('Invalid offline build manifest');
-  }
-  if (!Array.isArray(message.assets) || message.assets.length > 256
-    || !message.assets.every(value => typeof value === 'string' && publicGuestAsset(value))) {
-    throw new Error('Invalid offline asset manifest');
-  }
-  const paths = [...new Set([...message.assets, js, wasm, css,
-    '/api/v1/world_data'])];
+async function stageGuestOffline({ js, wasm, css, lang, paths, key }) {
   // Fetch without cookies even when preparation starts in a signed-in tab.
   // Do not publish the shell until every required resource has been saved.
   const responses = await Promise.all(paths.map(async path => {
@@ -136,7 +176,6 @@ async function stageGuestOffline(message) {
   }));
   const worlds = await responses.find(([path]) => path === '/api/v1/world_data')[1].clone().json();
   const bootstrap = { world_data: worlds, region: '', current_user: null };
-  const lang = /^(en|ja|de|fr|cn|ko|tc)$/.test(message.lang) ? message.lang : 'en';
   const [title, opening, failed] = guestShellLabels[lang];
   // All dynamic HTML attributes are restricted to a locale or emitted by DOM JS.
   const html = `<!doctype html><html lang="${lang}" translate="no" data-theme="dark" data-palette="ultros"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><script>window.__ULTROS_OFFLINE_GUEST__=true;window.__ULTROS_BOOTSTRAP__=${scriptJson(bootstrap)};</script><script type="module">const style=document.createElement('link');style.rel='stylesheet';style.href=${scriptJson(css)};document.head.append(style);try {const app=await import(${scriptJson(js)});await app.default({module_or_path:${scriptJson(wasm)}});app.hydrate();}catch(error){document.body.textContent=${scriptJson(failed)};}</script></head><body class="notranslate"><p id="offline-boot-status">${opening}</p></body></html>`;
@@ -147,6 +186,7 @@ async function stageGuestOffline(message) {
     // Sequential writes ensure there are no pending puts when failed staging
     // is deleted. The published generation is never modified in place.
     for (const [path, response] of responses) await cache.put(path, response);
+    await cache.put(GUEST_MANIFEST, new Response(key));
     await cache.put(GUEST_SHELL, new Response(html, {
       headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
     }));

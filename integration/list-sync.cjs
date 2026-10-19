@@ -464,6 +464,13 @@ async function main() {
       waitForDocKey, login, editorUser: USERS.editor, timeout: TIMEOUT_MS,
     });
 
+    console.log("[scenario A3] offline permission/session changes and surviving-tab account switch");
+    await require("./list-account-lifecycle.cjs")({
+      ownerPage, editorPage, baseUrl: BASE_URL, ownerUser: USERS.owner, editorUser: USERS.editor,
+      worldId, api, createList, addItem, createdLists, login, waitForHydration, waitForLive,
+      setAcquired, rowState, timeout: TIMEOUT_MS,
+    });
+
     // ================= Scenario B: permission revocation =================
     console.log("[scenario B] permission revocation while the editor is open");
     const listB = await createList(ownerPage, worldId, "ListSync E2E B");

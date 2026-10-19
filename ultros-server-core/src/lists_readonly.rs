@@ -1,18 +1,27 @@
-//! Operator kill-switch for the Lists 2.0 promotion.
+//! Operator pause switch for the promoted Lists 2.0 browser surfaces.
 //!
 //! Setting `ULTROS_LISTS_READONLY` (any [`crate::env_flag`] truthy spelling)
-//! and restarting the process puts every list surface into read-only mode
-//! without a rebuild or a data change: the SSR bootstrap carries the flag to
-//! the browser, the list routes render a read-only view over the REST
-//! projection instead of opening a list document, list-document websocket
-//! subscriptions and updates are refused, and guest offline-cache preparation
-//! is skipped. Unsetting it (or giving it a falsy value) and restarting
-//! restores normal editing. See the rollback runbook in `docs/lists-sync.md`.
+//! and restarting the process pauses the promoted browser list routes and
+//! list-document socket edits without a rebuild or a data change: the SSR
+//! bootstrap carries the flag to the browser, the list routes render a
+//! read-only view over the REST projection instead of opening a list
+//! document, list-document websocket subscriptions and updates are refused,
+//! and guest offline-cache preparation is skipped. Unsetting it (or giving
+//! it a falsy value) and restarting restores normal browser editing. See
+//! the rollback runbook in `docs/lists-sync.md`.
+//!
+//! Scope limits, by design: this is *not* an all-writer freeze. REST
+//! writers — the Discord bot, imports, sharing and other API callers —
+//! keep merging and projecting through `ListSync`, the site-wide service
+//! worker stays registered, and a previously prepared offline device
+//! editor is not stopped. If a regression implicates the server merge or
+//! projection code those writers share, this switch does not contain it;
+//! operators must stop every affected writer process per the runbook.
 //!
 //! This is deliberately *not* a user preference: there is no cookie, no
-//! Settings toggle, and no per-user cohort. It exists so a bad sync/CRDT
-//! regression in production can be stopped with an env flip + restart of
-//! the same image, which is faster and less risky than building and
+//! Settings toggle, and no per-user cohort. It exists so a regression in
+//! the promoted browser surfaces can be paused with an env flip + restart
+//! of the same image, which is faster and less risky than building and
 //! deploying a revert during an incident.
 
 use std::sync::OnceLock;
@@ -20,10 +29,13 @@ use std::sync::OnceLock;
 use crate::env_flag::env_flag_enabled;
 use tracing::warn;
 
-/// Name of the env var that turns list editing off.
+/// Name of the env var that pauses the promoted browser list routes and
+/// list-document socket edits in this process. It does not pause REST/bot
+/// list writers.
 pub const LISTS_READONLY_ENV: &str = "ULTROS_LISTS_READONLY";
 
-/// Whether this process serves lists read-only. Read once per process: the
+/// Whether this process pauses the promoted browser list surfaces (see the
+/// module docs for what stays writable). Read once per process: the
 /// value is process configuration, and caching it keeps the per-request SSR
 /// path from re-reading (and re-warning about) the environment.
 pub fn lists_readonly() -> bool {
@@ -36,7 +48,8 @@ pub fn lists_readonly() -> bool {
         if on {
             warn!(
                 variable = LISTS_READONLY_ENV,
-                "lists are in read-only mode; editing and document sync are paused"
+                "promoted browser list routes and document socket sync are paused; \
+                 REST/bot list writers are not paused by this flag"
             );
         }
         on

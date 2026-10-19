@@ -2851,5 +2851,10 @@
     "a11y_units": "Unités",
     "a11y_result_details": "Détails du résultat",
     "a11y_world_scope_notice": "Choisissez un monde de vente avant d’évaluer le profit local. Les ingrédients sont actuellement évalués sur {{ scope }} ; ces estimations ne sont pas personnalisées pour un monde de vente.",
-    "a11y_floor": "Prix minimal annoncé (gils)"
+    "a11y_floor": "Prix minimal annoncé (gils)",
+    "list_readonly_recovery_title": "Modifications hors ligne conservées",
+    "list_readonly_recovery_help": "La modification n’est plus autorisée. Vos changements hors ligne sont conservés. La liste affiche la copie du serveur si elle est disponible, sinon votre copie enregistrée. Téléchargez vos changements ci-dessous. Si vous récupérez le droit de modifier, comparez les différences et réessayez pour les envoyer.",
+    "list_account_changed_title": "Compte modifié",
+    "list_account_changed_help": "Un autre onglet a changé le compte connecté. La synchronisation est arrêtée pour protéger les changements enregistrés de chaque compte. Rechargez la page pour utiliser le compte actuel.",
+    "list_account_reload": "Recharger"
 }

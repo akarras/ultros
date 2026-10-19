@@ -2851,5 +2851,10 @@
     "a11y_units": "数量",
     "a11y_result_details": "结果详情",
     "a11y_world_scope_notice": "请先选择出售服务器，再评估当地利润。当前材料价格来自 {{ scope }}；这些估算尚未针对出售服务器。",
-    "a11y_floor": "最低挂单价（金币）"
+    "a11y_floor": "最低挂单价（金币）",
+    "list_readonly_recovery_title": "离线更改已保留待确认",
+    "list_readonly_recovery_help": "当前不再允许编辑。离线更改已保存待确认。可连接服务器时显示服务器副本，否则显示已保存的副本。您可以在下方下载更改。恢复编辑权限后，请核对差异，再重试发送。",
+    "list_account_changed_title": "账号已更改",
+    "list_account_changed_help": "其他标签页更改了登录账号。为保护各账号保存的更改，同步已停止。请重新加载以使用当前账号。",
+    "list_account_reload": "重新加载"
 }

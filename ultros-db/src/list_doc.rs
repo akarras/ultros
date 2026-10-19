@@ -11,8 +11,8 @@
 
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseTransaction,
-    DbBackend, DbErr, EntityTrait, IntoActiveModel, QueryFilter, Statement, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseTransaction, DbErr, EntityTrait,
+    IntoActiveModel, QueryFilter, QuerySelect, TransactionTrait,
 };
 use ultros_api_types::list::ListPermission;
 use ultros_api_types::world_helper::AnySelector;
@@ -124,25 +124,29 @@ fn permission_error(e: anyhow::Error) -> ListDocError {
     }
 }
 
-async fn lock_row(txn: &DatabaseTransaction, list_id: i32) -> Result<(), ListDocError> {
-    txn.execute_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT list_id FROM list_doc WHERE list_id = $1 FOR UPDATE",
-        [list_id.into()],
-    ))
-    .await?;
-    Ok(())
+async fn lock_row(
+    txn: &DatabaseTransaction,
+    list_id: i32,
+) -> Result<Option<list_doc::Model>, ListDocError> {
+    Ok(list_doc::Entity::find_by_id(list_id)
+        .lock_exclusive()
+        .one(txn)
+        .await?)
 }
 
 /// The stored document, locked for this transaction, built from the list's
 /// rows on first touch. Two first touches can race on the insert; the loser
-/// re-reads the winner's row.
+/// re-reads and locks the winner's row. The read must acquire the lock itself:
+/// an earlier locking query that found no row cannot protect a later read of
+/// a document another transaction has just published.
 async fn load_or_create(
     txn: &DatabaseTransaction,
     list_id: i32,
 ) -> Result<list_doc::Model, ListDocError> {
-    lock_row(txn, list_id).await?;
-    if let Some(stored) = list_doc::Entity::find_by_id(list_id).one(txn).await? {
+    let stored = lock_row(txn, list_id).await?;
+    #[cfg(test)]
+    tests::after_initial_lookup().await;
+    if let Some(stored) = stored {
         return Ok(stored);
     }
     let list = list::Entity::find_by_id(list_id)
@@ -170,9 +174,7 @@ async fn load_or_create(
         )
         .exec_without_returning(txn)
         .await?;
-    lock_row(txn, list_id).await?;
-    list_doc::Entity::find_by_id(list_id)
-        .one(txn)
+    lock_row(txn, list_id)
         .await?
         .ok_or_else(|| ListDocError::Db(DbErr::RecordNotFound(format!("list_doc {list_id}"))))
 }
@@ -312,7 +314,7 @@ async fn store(
 /// Runs inside the caller's transaction. Split out from `merge` so a caller
 /// that already holds `stored` (`edit_list_doc`, which needs it to build the
 /// document for its own edit) does not pay for a second `load_or_create` —
-/// a row lock plus a `SELECT` — under the same transaction. The document
+/// a `SELECT FOR UPDATE` — under the same transaction. The document
 /// itself is still parsed fresh from `stored.snapshot` here: `edit_list_doc`'s
 /// own `ListDocument` already has its local edit applied directly, so it
 /// cannot double as the pre-import baseline this function diffs against.
@@ -462,11 +464,233 @@ impl UltrosDb {
 mod tests {
     use super::*;
     use crate::entity::list_shared_user;
-    use sea_orm::Database;
-    use ultros_list_doc::Quality;
+    use sea_orm::{
+        ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend, RuntimeErr,
+        Statement,
+    };
+    use std::sync::Arc;
+    use tokio::sync::Notify;
+    use ultros_list_doc::{Quality, SyncPayload};
 
     const OWNER: i64 = 990_000_000_301;
     const EDITOR: i64 = 990_000_000_302;
+
+    // Only the scoped first-touch reader pauses; other tasks and tests take
+    // the ordinary path. This hook is absent from production builds.
+    tokio::task_local! {
+        static INITIAL_LOOKUP_PAUSE: (Arc<Notify>, Arc<Notify>);
+    }
+
+    pub(super) async fn after_initial_lookup() {
+        if let Ok((reached, resume)) = INITIAL_LOOKUP_PAUSE.try_with(Clone::clone) {
+            reached.notify_one();
+            tokio::time::timeout(std::time::Duration::from_secs(10), resume.notified())
+                .await
+                .expect("first-touch publisher did not resume the reader");
+        }
+    }
+
+    /// NOWAIT proves the row lock directly, without relying on a slow writer
+    /// or a sleep. Roll back the probe's transaction even on lock failure.
+    async fn row_is_locked(conn: &DatabaseConnection, list_id: i32) -> bool {
+        let txn = conn.begin().await.unwrap();
+        let result = txn
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT list_id FROM list_doc WHERE list_id = $1 FOR UPDATE NOWAIT",
+                [list_id.into()],
+            ))
+            .await;
+        txn.rollback().await.unwrap();
+        match result {
+            Ok(row) => {
+                assert!(row.is_some(), "the document must already be published");
+                false
+            }
+            Err(DbErr::Query(RuntimeErr::SqlxError(error))) => {
+                assert_eq!(
+                    error.as_database_error().unwrap().code().as_deref(),
+                    Some("55P03"),
+                    "the probe must fail because of the row lock: {error}"
+                );
+                true
+            }
+            Err(error) => panic!("unexpected lock probe error: {error}"),
+        }
+    }
+
+    async fn accept_update(conn: &DatabaseConnection, update: &[u8]) -> MergeOutcome {
+        let txn = conn.begin().await.unwrap();
+        let outcome = merge(&txn, 1, ListPermission::Owner, update).await.unwrap();
+        txn.commit().await.unwrap();
+        outcome
+    }
+
+    async fn first_touch_preserves_concurrent_edit(delete: bool) {
+        // Three real PostgreSQL connections, each pinned to this test's
+        // private schema. No app users, shared lists, or services are needed.
+        let url = std::env::var("MIGRATION_TEST_DATABASE_URL").unwrap();
+        let mut options = ConnectOptions::new(url);
+        options.max_connections(1).min_connections(1);
+        let connections = [
+            Database::connect(options.clone()).await.unwrap(),
+            Database::connect(options.clone()).await.unwrap(),
+            Database::connect(options).await.unwrap(),
+        ];
+        let [a, b, c] = &connections;
+        let schema = format!(
+            "list_doc_race_{}_{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_micros()
+        );
+        a.execute_unprepared(&format!("CREATE SCHEMA {schema}"))
+            .await
+            .unwrap();
+        for conn in &connections {
+            conn.execute_unprepared(&format!(
+                "SET search_path TO {schema}; SET statement_timeout TO '10s'"
+            ))
+            .await
+            .unwrap();
+        }
+        a.execute_unprepared(
+            "CREATE TABLE list (id integer PRIMARY KEY, owner bigint NOT NULL, name text NOT NULL, world_id integer, datacenter_id integer, region_id integer);
+             CREATE TABLE list_item (id serial PRIMARY KEY, list_id integer NOT NULL REFERENCES list(id) ON DELETE CASCADE, item_id integer NOT NULL, hq boolean, quantity integer, acquired integer, target_price bigint);
+             CREATE TABLE list_doc (list_id integer PRIMARY KEY REFERENCES list(id) ON DELETE CASCADE, snapshot bytea NOT NULL, version bytea NOT NULL, changes_since_compaction integer NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
+             INSERT INTO list VALUES (1, 1, 'first-touch race', 79, NULL, NULL)"
+        ).await.unwrap();
+        if delete {
+            a.execute_unprepared("INSERT INTO list_item (list_id, item_id, quantity, acquired, target_price) VALUES (1, 2, 3, 1, 50)")
+                .await
+                .unwrap();
+        }
+
+        let reached = Arc::new(Notify::new());
+        let resume = Arc::new(Notify::new());
+        let txn_a = a.begin().await.unwrap();
+        let load_a = INITIAL_LOOKUP_PAUSE.scope(
+            (Arc::clone(&reached), Arc::clone(&resume)),
+            load_or_create(&txn_a, 1),
+        );
+        let publish_b = async {
+            // A's first locking lookup saw no document. Publish B before A
+            // can continue to its old, separate ordinary lookup.
+            reached.notified().await;
+            let txn_b = b.begin().await.unwrap();
+            let stored = load_or_create(&txn_b, 1).await.unwrap();
+            txn_b.commit().await.unwrap();
+            resume.notify_one();
+            stored
+        };
+        let (stored_a, stored_b) = tokio::join!(load_a, publish_b);
+        let stored_a = stored_a.unwrap();
+
+        let key_a = RowKey::new(1, None);
+        let key_c = RowKey::new(2, None);
+        let peer_c = ListDocument::from_snapshot(&stored_b.snapshot).unwrap();
+        let before_c = peer_c.version();
+        if delete {
+            peer_c.remove_row(&key_c).unwrap();
+        } else {
+            peer_c.add_row(key_c, 3, Some(50)).unwrap();
+            peer_c.add_acquired(&key_c, 1).unwrap();
+        }
+        let update_c = peer_c.export_since(&before_c).unwrap();
+        let conflict_reload_locked = row_is_locked(c, 1).await;
+        let mut accepted_c = None;
+        if !conflict_reload_locked {
+            // Regression schedule: C MUST commit after A has returned its
+            // stale ordinary lookup, but before A merges and stores it.
+            // The old code loses C's add or resurrects C's removed row.
+            accepted_c = Some(accept_update(c, &update_c).await);
+        }
+
+        let peer_a = ListDocument::from_snapshot(&stored_a.snapshot).unwrap();
+        let before_a = peer_a.version();
+        peer_a.add_row(key_a, 2, Some(10)).unwrap();
+        let accepted_a = merge_loaded(
+            &txn_a,
+            1,
+            ListPermission::Owner,
+            &stored_a,
+            &peer_a.export_since(&before_a).unwrap(),
+        )
+        .await
+        .unwrap();
+        txn_a.commit().await.unwrap();
+        let accepted_c = match accepted_c {
+            Some(outcome) => outcome,
+            None => accept_update(c, &update_c).await,
+        };
+
+        // Also exercise the already-existing document path, independently
+        // of first creation and the insert-conflict reload.
+        let txn = a.begin().await.unwrap();
+        let final_stored = load_or_create(&txn, 1).await.unwrap();
+        let existing_locked = row_is_locked(c, 1).await;
+        txn.commit().await.unwrap();
+        let final_doc = ListDocument::from_snapshot(&final_stored.snapshot).unwrap();
+        let mut projected: Vec<_> = list_item::Entity::find()
+            .filter(list_item::Column::ListId.eq(1))
+            .all(a)
+            .await
+            .unwrap()
+            .iter()
+            .map(row_snapshot)
+            .collect();
+        projected.sort_by_key(|row| row.key);
+        let final_list = list::Entity::find_by_id(1).one(a).await.unwrap().unwrap();
+        // Clean up before the regression assertions so a failing pre-fix
+        // run does not leave its schema or fixtures behind.
+        a.execute_unprepared(&format!("DROP SCHEMA {schema} CASCADE"))
+            .await
+            .unwrap();
+
+        assert_eq!(accepted_a.changes.len(), 1);
+        assert_eq!(accepted_c.changes.len(), 1);
+        let mut expected = vec![RowSnapshot {
+            key: key_a,
+            need: 2,
+            acquired: 0,
+            target: Some(10),
+        }];
+        if !delete {
+            expected.push(RowSnapshot {
+                key: key_c,
+                need: 3,
+                acquired: 1,
+                target: Some(50),
+            });
+        }
+        assert_eq!(projected, expected, "both accepted edits must be projected");
+        assert_eq!(
+            final_doc.rows(),
+            projected,
+            "the stored document must preserve C's accepted edit, too"
+        );
+        assert_eq!(final_doc.meta(), meta_of(&final_list));
+        assert_eq!(
+            final_doc.sync_payload(&final_stored.version).unwrap(),
+            SyncPayload::UpToDate
+        );
+        assert!(
+            conflict_reload_locked,
+            "the newly published document must be locked by the insert loser"
+        );
+        assert!(existing_locked, "existing documents must stay locked");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn first_touch_race_preserves_an_accepted_addition() {
+        first_touch_preserves_concurrent_edit(false).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn first_touch_race_preserves_an_accepted_deletion() {
+        first_touch_preserves_concurrent_edit(true).await;
+    }
 
     async fn db() -> UltrosDb {
         let conn = Database::connect(std::env::var("MIGRATION_TEST_DATABASE_URL").unwrap())

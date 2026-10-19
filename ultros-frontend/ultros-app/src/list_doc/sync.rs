@@ -24,6 +24,10 @@ pub enum ErrorKind {
     /// This user may not read or write this list. The local copy is no
     /// longer trustworthy to keep syncing and must be purged.
     Denied,
+    /// Editing was refused; read access must be checked without losing intent.
+    EditDenied,
+    /// A different account now owns the socket. Keep the original snapshot.
+    AccountChanged,
     /// The socket has no session at all ("sign in to edit lists"). This says
     /// nothing about whether the user still has the list, so the local copy
     /// must be kept — signing back in has to resume where they left off —
@@ -67,6 +71,10 @@ pub enum ErrorKind {
 pub fn classify_error(message: &str) -> ErrorKind {
     if message == "sign in to edit lists" {
         ErrorKind::NotSignedIn
+    } else if message == "signed-in account changed; reload to continue" {
+        ErrorKind::AccountChanged
+    } else if message.contains("Insufficient permissions to edit list") {
+        ErrorKind::EditDenied
     } else if message.contains("Insufficient permissions") {
         ErrorKind::Denied
     } else if message.contains("List not found") {
@@ -241,8 +249,9 @@ pub fn start(
     let retry_rebased = rebased_for.clone();
     let subscription = realtime.subscribe_list_doc(
         list_id,
+        handle.user_id,
         move || {
-            if version_flag.replace(false) {
+            if version_flag.replace(false) || handle.writes_rejected() {
                 Vec::new()
             } else {
                 // Never `version()`: this factory outlives the page on a
@@ -259,6 +268,22 @@ pub fn start(
             ServerClient::ListDocSubscribed {
                 version, payload, ..
             } => {
+                if handle.writes_rejected()
+                    || (handle.permission.get_untracked() == 1 && handle.is_ahead_of(&version)) {
+                    handle.pause_rejected_writes();
+                    if let ListDocPayload::Snapshot(bytes) = payload {
+                        if let Err(error) = handle.keep_readonly_server(&bytes) {
+                            log::warn!("list {list_id}: read-only server copy unavailable: {error}");
+                        }
+                        let on_remote_change = on_remote_change.clone();
+                        defer(move || { if !handle.is_closed_or_disposed() { on_remote_change(); } });
+                    } else {
+                        let slot = weak_slot.clone();
+                        let flag = force_empty_version.clone();
+                        defer(move || resubscribe_forcing_snapshot(&slot, &flag));
+                    }
+                    return;
+                }
                 if handle.recovery_paused() || handle.recovery_persisting.get_untracked() { return; }
                 // `snapshot` is `Some(bytes)` only when the reply carried a
                 // Snapshot AND that snapshot fully merged (not pending) —
@@ -339,7 +364,7 @@ pub fn start(
                 };
                 handle.mark_content_ready();
 
-                if handle.is_ahead_of(&version) {
+                if handle.is_ahead_of(&version) && handle.permission.get_untracked() >= 2 {
                     let same_version =
                         last_diff_version.borrow().as_deref() == Some(version.as_slice());
                     if rebased_for.borrow().as_ref().is_some_and(|previous| previous != &version) {
@@ -386,7 +411,7 @@ pub fn start(
                                     return;
                                 }
                             };
-                            sender.send_list_doc_update(list_id, diff);
+                            sender.send_list_doc_update(list_id, handle.user_id, diff);
                             // The handshake diff covers everything the outbox
                             // held up to this point; anything committed
                             // locally after this reply started will still push
@@ -403,6 +428,17 @@ pub fn start(
                 handle.save_now();
             }
             ServerClient::ListDocUpdate { update, .. } => {
+                if handle.writes_rejected() {
+                    if handle.import_readonly_server(&update).unwrap_or(false) {
+                        let on_remote_change = on_remote_change.clone();
+                        defer(move || { if !handle.is_closed_or_disposed() { on_remote_change(); } });
+                        return;
+                    }
+                    let slot = weak_slot.clone();
+                    let flag = force_empty_version.clone();
+                    defer(move || resubscribe_forcing_snapshot(&slot, &flag));
+                    return;
+                }
                 if handle.recovery_paused() || handle.recovery_persisting.get_untracked() { return; }
                 let report = match handle.import(&update) {
                     Ok(report) => report,
@@ -460,7 +496,7 @@ pub fn start(
                 }
                 let kind = classify_error(&message);
                 match kind {
-                    ErrorKind::Denied | ErrorKind::NotFound | ErrorKind::NotSignedIn => {
+                    ErrorKind::Denied | ErrorKind::NotFound | ErrorKind::NotSignedIn | ErrorKind::AccountChanged => {
                         handle.set_status("offline");
                         let on_denied = on_denied.clone();
                         defer(move || {
@@ -468,6 +504,13 @@ pub fn start(
                                 on_denied(kind);
                             }
                         });
+                    }
+                    ErrorKind::EditDenied => {
+                        handle.remember_permission(1);
+                        handle.pause_rejected_writes();
+                        let slot = weak_slot.clone();
+                        let flag = force_empty_version.clone();
+                        defer(move || resubscribe_forcing_snapshot(&slot, &flag));
                     }
                     ErrorKind::MetaForbidden => {
                         log::warn!("list {list_id} sync: {message}");
@@ -495,9 +538,11 @@ pub fn start(
     *slot.borrow_mut() = Some(subscription);
 
     let retry_slot = Rc::downgrade(&slot);
-    let recovery_retry = Effect::new(move |previous: Option<(u64, u64)>| {
+    let recovery_retry = Effect::new(move |previous: Option<(u64, u64, i16)>| {
         let retry = handle.recovery_retry.try_get().unwrap_or(0);
         let saved = handle.recovery_saved.try_get().unwrap_or(0);
+        let permission = handle.permission.try_get().unwrap_or(0);
+        let had_previous = previous.is_some();
         let previous = previous.unwrap_or_default();
         if retry != previous.0 {
             *retry_last_diff.borrow_mut() = None;
@@ -505,7 +550,12 @@ pub fn start(
             let slot = retry_slot.clone();
             let flag = retry_flag.clone();
             defer(move || resubscribe_forcing_snapshot(&slot, &flag));
-        } else if saved != previous.1 {
+        } else if saved != previous.1
+            || (had_previous
+                && permission >= 2
+                && permission != previous.2
+                && !handle.recovery_paused())
+        {
             // A normal reply is Updates/UpToDate because the persisted doc
             // descends from the server root. Keep the rejection-loop guard.
             let slot = retry_slot.clone();
@@ -513,7 +563,7 @@ pub fn start(
                 resubscribe(&slot);
             });
         }
-        (retry, saved)
+        (retry, saved, permission)
     });
     let sender = realtime;
     let drain = Effect::new(move |_| {
@@ -524,12 +574,14 @@ pub fn start(
             return;
         };
         if pending.is_empty()
+            || handle.permission.try_get().unwrap_or(0) < 2
             || handle.recovery_persisting.try_get().unwrap_or(true)
             || matches!(
                 handle.recovery_state.try_get(),
                 Some(
                     crate::list_doc::handle::RecoveryState::Review
                         | crate::list_doc::handle::RecoveryState::Incompatible
+                        | crate::list_doc::handle::RecoveryState::WriteDenied
                 )
             )
             || handle.status.try_get().as_deref() != Some("live")
@@ -537,7 +589,7 @@ pub fn start(
             return;
         }
         for update in pending {
-            sender.send_list_doc_update(list_id, update);
+            sender.send_list_doc_update(list_id, handle.user_id, update);
         }
         // Cleared unconditionally, success or not: the outbox is not a
         // delivery queue (spec section 5 — no offline queue). Whatever a
@@ -657,10 +709,18 @@ mod tests {
     }
 
     #[test]
-    fn classify_error_forbidden_edit_is_denied() {
+    fn classify_error_forbidden_edit_preserves_readable_offline_work() {
         assert_eq!(
             classify_error("list 9: Insufficient permissions to edit list"),
-            ErrorKind::Denied
+            ErrorKind::EditDenied
+        );
+    }
+
+    #[test]
+    fn classify_account_change_never_purges_the_previous_account() {
+        assert_eq!(
+            classify_error("signed-in account changed; reload to continue"),
+            ErrorKind::AccountChanged
         );
     }
 

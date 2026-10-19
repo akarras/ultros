@@ -21,7 +21,9 @@ use ultros_api_types::{
     result::ApiError,
 };
 
-use crate::api::{get_list_activity, get_list_items_with_listings};
+use crate::api::{
+    get_list_activity, get_list_items_with_listings, get_list_items_with_listings_for_user,
+};
 use crate::components::list_workspace_shell::ListWorkspaceShell;
 use crate::components::{
     cart::ListCart,
@@ -465,6 +467,8 @@ pub struct ListWorkspaceSource {
 /// supplies the rows themselves, so a local edit never refetches prices.
 #[derive(Clone)]
 struct ListingsCache {
+    /// None means fetched before an account-bound handle existed.
+    viewer: Option<i64>,
     list_id: i32,
     version: u32,
     /// The value of the page's `revalidate_version` this entry was fetched
@@ -507,6 +511,8 @@ struct ListResponseOrder {
 struct ListReads {
     cache: StoredValue<Option<ListingsCache>>,
     responses: StoredValue<ListResponseOrder>,
+    account_changed: RwSignal<bool>,
+    detached: RwSignal<Option<ListDocHandle>>,
 }
 
 impl ListReads {
@@ -514,7 +520,19 @@ impl ListReads {
         Self {
             cache: StoredValue::new(None),
             responses: StoredValue::new(ListResponseOrder::default()),
+            account_changed: RwSignal::new(false),
+            detached: RwSignal::new(None),
         }
+    }
+
+    fn detach_account(self, handle: RwSignal<Option<ListDocHandle>>) {
+        if let Some(doc) = handle.get_untracked() {
+            doc.close();
+            self.detached.set(Some(doc));
+        }
+        self.account_changed.set(true);
+        self.cache.set_value(None);
+        handle.set(None);
     }
 
     fn begin(self) -> u64 {
@@ -559,7 +577,8 @@ impl ListReads {
             .map(|(item, listings)| (item.item_id, listings))
             .collect();
         handle
-            .with_doc(|doc| crate::list_doc::adapter::view_result(&list, doc, &listings))
+            .display_document()
+            .map(|doc| crate::list_doc::adapter::view_result(&list, &doc, &listings))
             .ok_or_else(|| AppError::ListDoc("document is closed".into()))
     }
 }
@@ -833,7 +852,10 @@ fn revalidate(
             return;
         }
         let request = reads.begin();
-        let result = get_list_items_with_listings(list_id).await;
+        let result = match handle.get_untracked() {
+            Some(doc) => get_list_items_with_listings_for_user(list_id, doc.user_id).await,
+            None => get_list_items_with_listings(list_id).await,
+        };
         if !request_is_current(active_list, list_id, handle, expected) {
             return;
         }
@@ -842,6 +864,10 @@ fn revalidate(
             return;
         }
         match result {
+            Err(error) if is_account_change(&error) => {
+                reads.detach_account(handle);
+                finished(false);
+            }
             Ok((list, items)) => {
                 let permission = list.permission;
                 if let Some(doc_handle) = handle.get_untracked() {
@@ -912,6 +938,11 @@ fn is_denial(error: &AppError) -> bool {
         error,
         AppError::BadList | AppError::ApiError(ApiError::Forbidden | ApiError::NotFound)
     )
+}
+
+fn is_account_change(error: &AppError) -> bool {
+    matches!(error, AppError::ApiError(ApiError::BadRequest(message))
+        if message == "signed-in account changed; reload to continue")
 }
 
 /// Every write goes through the document; there is no REST fallback. A
@@ -1021,6 +1052,7 @@ async fn load_view(
         );
         if let Ok((list, items)) = &result {
             cache.set_value(Some(ListingsCache {
+                viewer: None,
                 list_id: id,
                 version: listings_version,
                 revalidate: revalidate_version,
@@ -1048,9 +1080,10 @@ async fn load_view(
         .collect();
     // A document that has never recorded a scope prices against whatever
     // the server scoped the cached listings to; one that has must match.
-    let wanted_scope = doc_handle.meta().scope;
+    let wanted_scope = doc_handle.display_meta().scope;
     let cached = cache.get_value().filter(|c| {
         c.list_id == id
+            && c.viewer == Some(doc_handle.user_id)
             && c.version == listings_version
             && c.revalidate == revalidate_version
             && wanted_ids.is_subset(&c.covered)
@@ -1060,7 +1093,7 @@ async fn load_view(
         Some(cached) => cached,
         None => {
             let request = reads.begin();
-            let result = get_list_items_with_listings(id).await;
+            let result = get_list_items_with_listings_for_user(id, doc_handle.user_id).await;
             if !request_is_current(list_id, id, handle, expected) {
                 return Err(stale());
             }
@@ -1073,6 +1106,7 @@ async fn load_view(
                     let covered = covered_ids(&items);
                     note_fetch(prices, Some((&list, &items)));
                     let fresh = ListingsCache {
+                        viewer: Some(doc_handle.user_id),
                         list_id: id,
                         version: listings_version,
                         revalidate: revalidate_version,
@@ -1094,6 +1128,10 @@ async fn load_view(
                 // Forbidden or deleted: the local copy must not outlive the
                 // server's answer. Clearing the handle also drops the sync
                 // subscription (the Effect that owns it reads this signal).
+                Err(error) if is_account_change(&error) => {
+                    reads.detach_account(handle);
+                    return Err(error);
+                }
                 Err(error) if is_denial(&error) => {
                     doc_handle.purge();
                     cache.set_value(None);
@@ -1107,11 +1145,15 @@ async fn load_view(
                     // estimate reports that prices are unavailable. Either
                     // way the document keeps rendering and editing.
                     note_fetch(prices, None);
-                    match cache.get_value().filter(|c| c.list_id == id) {
+                    match cache
+                        .get_value()
+                        .filter(|c| c.list_id == id && c.viewer == Some(doc_handle.user_id))
+                    {
                         // Stale prices beat no page.
                         Some(stale) => stale,
                         None => match offline_list(id, doc_handle) {
                             Some(list) => ListingsCache {
+                                viewer: Some(doc_handle.user_id),
                                 list_id: id,
                                 version: listings_version,
                                 revalidate: revalidate_version,
@@ -1129,7 +1171,8 @@ async fn load_view(
     };
     // `ListDocument` clones share the underlying document, so this hands
     // `view_result` a reference without holding the stored value across it.
-    let Some(doc) = doc_handle.with_doc(|doc| doc.clone()) else {
+    doc_handle.remember_permission(base.list.permission as i16);
+    let Some(doc) = doc_handle.display_document() else {
         // The page was torn down while this fetch was in flight; there is no
         // document left to render and nothing to render it into.
         return Err(AppError::ListDoc("document is closed".to_string()));
@@ -1146,7 +1189,7 @@ async fn load_view(
 /// permission says this user never had access, so an empty document can't
 /// masquerade as a readable list.
 fn offline_list(id: i32, handle: ListDocHandle) -> Option<ListWithPermission> {
-    let meta = handle.meta();
+    let meta = handle.display_meta();
     let permission = ListPermission::from(handle.permission.get_untracked());
     if permission == ListPermission::None {
         return None;
@@ -1498,6 +1541,9 @@ pub fn ListViewSync() -> impl IntoView {
         // otherwise close a document the page is still using. `None` means
         // login hasn't resolved; `Some(None)` means signed out or no list.
         let doc_target = Memo::new(move |_| {
+            if listings_cache.account_changed.get() {
+                return Some(None);
+            }
             let id = list_id.get();
             let login = user_resource.get()?;
             Some(match login {
@@ -1610,6 +1656,10 @@ pub fn ListViewSync() -> impl IntoView {
                     // that never refetches (and so still reads "signed in"
                     // for exactly the cookie that just expired).
                     use crate::list_doc::sync::ErrorKind;
+                    if kind == ErrorKind::AccountChanged {
+                        listings_cache.detach_account(handle);
+                        return;
+                    }
                     let purge = matches!(kind, ErrorKind::Denied | ErrorKind::NotFound);
                     let Some(denied) = handle.try_get_untracked().flatten() else {
                         return;
@@ -1735,7 +1785,15 @@ pub fn ListViewSync() -> impl IntoView {
                         doc.list_id == list_id.get() && doc.has_readable_content()
                     }) =>
             {
-                ListCapabilities::from(list_with_perm.permission)
+                let permission = if handle.get().is_some_and(|doc| {
+                    doc.recovery_state.track();
+                    doc.writes_rejected()
+                }) {
+                    ListPermission::Read
+                } else {
+                    list_with_perm.permission
+                };
+                ListCapabilities::from(permission)
             }
             _ => ListCapabilities::default(),
         };
@@ -1764,7 +1822,7 @@ pub fn ListViewSync() -> impl IntoView {
                         .map(|(item, rows)| (item.item_id, rows))
                         .collect()
                 });
-            doc.rows()
+            doc.display_rows()
                 .iter()
                 .filter_map(|row| crate::list_doc::adapter::to_list_item(list_id.get(), row))
                 .map(|item| {
@@ -1895,7 +1953,7 @@ pub fn ListViewSync() -> impl IntoView {
             .filter(|doc| doc.list_id == list_id.get() && !doc.is_closed_or_disposed())
             .map(|doc| {
                 doc.revision.track();
-                doc.meta().name
+                doc.display_meta().name
             })
             .or_else(|| {
                 list_view
@@ -1916,7 +1974,7 @@ pub fn ListViewSync() -> impl IntoView {
             .get()
             .filter(|doc| doc.list_id == list_id.get() && !doc.is_closed_or_disposed())?;
         doc.revision.track();
-        doc.meta().scope.or_else(|| {
+        doc.display_meta().scope.or_else(|| {
             list_view
                 .get()
                 .and_then(Result::ok)
@@ -2012,7 +2070,7 @@ pub fn ListViewSync() -> impl IntoView {
             .filter(|doc| doc.list_id == list_id.get() && !doc.is_closed_or_disposed())
             .map(|handle| {
                 handle.revision.track();
-                handle.meta()
+                handle.display_meta()
             });
         let title = local_meta
             .as_ref()
@@ -2078,6 +2136,21 @@ pub fn ListViewSync() -> impl IntoView {
             // price row. The scope picker exists on the client alone (the
             // document that carries it does), so the first server render
             // matches the hydrating client: neither shows it.
+            <Show when=move || listings_cache.account_changed.get()>
+                <section role="alert" class="panel rounded-lg p-4 space-y-3" data-testid="list-account-changed">
+                    <h1 class="text-xl font-semibold">{t!(i18n, list_account_changed_title)}</h1>
+                    <p>{t!(i18n, list_account_changed_help)}</p>
+                    <button type="button" class="btn-primary" data-testid="list-account-reload"
+                        on:click=move |_| {
+                            #[cfg(feature="hydrate")]
+                            if let Some(window) = web_sys::window() { let _ = window.location().reload(); }
+                        }>{t!(i18n, list_account_reload)}</button>
+                </section>
+            </Show>
+            // Keep the workspace owner alive until route teardown. Detaching
+            // the document also notifies its cart; disposing that subtree in
+            // this notification turn leaves queued cart effects with dead memos.
+            <div class:hidden=move || listings_cache.account_changed.get()>
             <ListWorkspaceShell
                 name=list_name
                 can_rename=Signal::derive(move || can_admin.get() && open_doc().is_some())
@@ -2282,6 +2355,7 @@ pub fn ListViewSync() -> impl IntoView {
                     })}
                 </Show>
             </ListWorkspaceShell>
+            </div>
         </div>
     }.into_any()
 }
