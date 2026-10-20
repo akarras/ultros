@@ -7,7 +7,7 @@ description = "Discord role membership sync for Ultros groups."
 
 [dependencies]
 anyhow = { workspace = true }
-poise = { version = "0.6.2" }
+poise = { version = "0.7.1" }
 tokio = { workspace = true }
 tokio-util = { version = "0.7.18" }
 tracing = { workspace = true }

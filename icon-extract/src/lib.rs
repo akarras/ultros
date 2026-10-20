@@ -296,6 +296,8 @@ pub fn decode_tex(tex: &Texture) -> anyhow::Result<RgbaImage> {
     RgbaImage::from_raw(w as u32, h as u32, rgba).context("pixel buffer does not match dimensions")
 }
 
+pub mod lgb;
+
 #[cfg(test)]
 mod tests {
     use ironworks::file::File;
@@ -378,5 +380,3 @@ mod tests {
         assert!(decode_tex(&tex).is_err());
     }
 }
-
-pub mod lgb;

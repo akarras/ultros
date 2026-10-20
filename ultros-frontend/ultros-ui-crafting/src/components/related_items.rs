@@ -849,6 +849,335 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     .into_any()
 }
 
+pub fn leve_rewards_item(
+    leve: &Leve,
+    item_id: i32,
+    reward_items: &xiv_gen::IdMap<xiv_gen::LeveRewardItemId, LeveRewardItem>,
+    groups: &xiv_gen::IdMap<xiv_gen::LeveRewardItemGroupId, LeveRewardItemGroup>,
+) -> bool {
+    if let Some(reward) = reward_items.get(&xiv_gen::LeveRewardItemId(leve.leve_reward_item)) {
+        // Check all 8 groups
+        let group_ids: [u16; 8] = [
+            reward.leve_reward_item_group_0,
+            reward.leve_reward_item_group_1,
+            reward.leve_reward_item_group_2,
+            reward.leve_reward_item_group_3,
+            reward.leve_reward_item_group_4,
+            reward.leve_reward_item_group_5,
+            reward.leve_reward_item_group_6,
+            reward.leve_reward_item_group_7,
+        ];
+
+        for group_id in group_ids {
+            if let Some(group) = groups.get(&xiv_gen::LeveRewardItemGroupId(group_id as i32)) {
+                // Check all items in group (0-8)
+                let items: [u16; 9] = [
+                    group.item_0,
+                    group.item_1,
+                    group.item_2,
+                    group.item_3,
+                    group.item_4,
+                    group.item_5,
+                    group.item_6,
+                    group.item_7,
+                    group.item_8,
+                ];
+                if items.iter().any(|&i| i as i32 == item_id) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn leve_sources_for_item(item_id: i32) -> Vec<&'static Leve> {
+    let data = tracked_data();
+    data.leves
+        .values()
+        .filter(|leve| {
+            leve_rewards_item(
+                leve,
+                item_id,
+                &data.leve_reward_items,
+                &data.leve_reward_item_groups,
+            )
+        })
+        // Keep SSR and hydration order identical despite randomized HashMaps.
+        .sorted_by_key(|leve| leve.key_id.0)
+        .collect()
+}
+
+/// Counts describe available recipes, trade options, reward leves, and vendor
+/// shop/NPC pairs, not market listings. No market resource is needed during SSR.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ItemSourceCounts {
+    pub craftable: usize,
+    pub exchange: usize,
+    pub levequest: usize,
+    pub vendor: usize,
+}
+
+pub fn item_source_counts(item_id: i32) -> ItemSourceCounts {
+    let data = tracked_data();
+    if item_id <= 0 || !data.items.contains_key(&ItemId(item_id)) {
+        return ItemSourceCounts::default();
+    }
+    ItemSourceCounts {
+        // recipe_tree_iter also matches ingredients: those are not acquisition sources.
+        craftable: data
+            .recipes
+            .values()
+            .filter(|r| r.item_result == item_id)
+            .count(),
+        exchange: exchange_shops_for_item(&data.special_shops, item_id)
+            .iter()
+            .map(|shop| get_trade_costs(shop, item_id).len())
+            .sum(),
+        levequest: leve_sources_for_item(item_id).len(),
+        vendor: vendor_sources_for_item(item_id).len(),
+    }
+}
+
+#[component]
+fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
+    let data = tracked_data();
+    let leves = Memo::new(move |_| leve_sources_for_item(item_id()));
+
+    let view = move || {
+        leves.with(|leves| {
+            leves
+                .iter()
+                .map(|leve| {
+                    let job_name = data.class_job_categorys.get(&xiv_gen::ClassJobCategoryId(leve.class_job_category)).map(|c| c.name.as_str()).unwrap_or("Unknown");
+                    view! {
+                        <div class="group flex flex-col gap-2 panel p-3">
+                             <div class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{leve.name.as_str()}</div>
+                             <div class="flex items-center gap-2 mt-1">
+                                <span class="px-2 py-1 rounded border border-brand-400/40 text-xs text-brand-200 font-bold">
+                                    "Lvl " {leve.class_job_level}
+                                </span>
+                                <span class="text-xs text-[color:var(--color-text-muted)] truncate flex items-center gap-1">
+                                    <Icon icon=icondata::FaHammerSolid attr:class="text-[10px] opacity-70" />
+                                    {job_name}
+                                </span>
+                             </div>
+                             <super::npc_locations::LeveIssuers leve_id=leve.key_id.0 />
+                        </div>
+                    }
+                })
+                .collect_view()
+        })
+    };
+
+    let empty = move || leves.with(|l| l.is_empty());
+
+    view! {
+        <div id="leve-sources" class:hidden=empty class="item-detail-section scroll-mt-20 min-w-0" data-entry-count=move || leves.with(Vec::len)>
+            <div class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
+                <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
+                    <Icon icon=icondata::FaScrollSolid attr:class="text-brand-300" />
+                    {t!(i18n, related_levequest_rewards_title)}
+                    <span class="item-detail-count">{move || leves.with(Vec::len)}</span>
+                </h3>
+                <div class="item-detail-entries">{view}</div>
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+#[component]
+pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
+    let (price_zone, _) = get_price_zone();
+    // The grid below is chosen by matching item *names*, and SSR renders game
+    // data in English while the client has already swapped to the visitor's
+    // locale by the time `hydrate()` runs — so the two sides disagree about how
+    // many `<AppLink>` elements belong here and tachys panics walking the DOM
+    // (GlitchTip #6831; see `related_item_ids`). Render nothing until the first
+    // client effect has run, so SSR and the initial CSR pass both emit an empty
+    // grid and the real list arrives as an ordinary reactive update afterwards.
+    // Same idiom as `RecipePriceEstimate` above.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
+    let related_items_data = Memo::new(move |_| {
+        if !hydrated.get() {
+            return Vec::new();
+        }
+        let data = tracked_data();
+        related_item_ids(data, ItemId(item_id()))
+            .into_iter()
+            .filter_map(|id| data.items.get(&id))
+            .collect::<Vec<_>>()
+    });
+
+    let item_set = move || {
+        related_items_data.with(|items| {
+            items.iter().take(12).map(|&item| {
+                view! {
+                    <AppLink
+                        attr:class="group flex flex-col gap-2 rounded-lg p-3 transition-all hover:scale-[1.02] hover:shadow-lg border border-[color:var(--color-outline)] hover:border-brand-300/60"
+                        exact=true
+                        href=move || {
+                            format!(
+                                "/item/{}/{}",
+                                price_zone()
+                                    .as_ref()
+                                    .map(|z| z.get_name())
+                                    .unwrap_or("North-America"),
+                                item.key_id.0,
+                            )
+                        }
+                    >
+
+                        <div class="flex items-center gap-2 text-sm">
+                            <ItemTooltip item_id=item.key_id.0 class="shrink-0">
+                                <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                            </ItemTooltip>
+                            <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
+                            <span class="text-xs text-[color:var(--color-text-muted)] px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">"iLvl " {item.level_item}</span>
+                        </div>
+                        <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
+                            <CheapestPrice item_id=item.key_id />
+                        </div>
+                    </AppLink>
+                }
+            }).collect_view()
+        })
+    };
+
+    let recipes = Memo::new(move |_| {
+        let mut recipes = recipe_tree_iter(ItemId(item_id.get()))
+            // Acquisition recipes come first when jumping from "Craftable".
+            .sorted_by_key(|r| (r.item_result != item_id.get(), r.key_id.0))
+            .collect::<Vec<_>>();
+        let acquisition_count = recipes
+            .iter()
+            .take_while(|r| r.item_result == item_id.get())
+            .count();
+        recipes.truncate(30.max(acquisition_count));
+        recipes
+    });
+
+    let (show_more, set_show_more) = signal(false);
+    let has_more = move || related_items_data.with(|items| items.len() > 12);
+    let source_counts = Memo::new(move |_| item_source_counts(item_id()));
+    let source_entries = move || {
+        let counts = source_counts.get();
+        counts.vendor + counts.exchange + counts.levequest
+    };
+    let visible_recipes = Memo::new(move |_| {
+        let mut recipes = recipes.get();
+        // Every acquisition recipe counted in the shortcut must be visible.
+        let acquisition_count = recipes
+            .iter()
+            .take_while(|r| r.item_result == item_id())
+            .count();
+        recipes.truncate(5.max(acquisition_count));
+        recipes
+    });
+
+    view! {
+        <div class="item-details-layout">
+            <div class="item-detail-section panel p-4 sm:p-6" data-entry-count=move || related_items_data.with(Vec::len) class:hidden=move || related_items_data.with(|i| i.is_empty())>
+                <h2 class="text-lg font-bold text-brand-200 mb-4 flex flex-wrap items-center gap-2">
+                    {t!(i18n, related_items_heading)}
+                    <span class="item-detail-count">{move || related_items_data.with(Vec::len)}</span>
+                </h2>
+                <div class="item-detail-entries">
+                    {item_set}
+                    {move || {
+                        show_more().then(|| {
+                            related_items_data.with(|items| {
+                                items.iter().skip(12).map(|&item| {
+                                    view! {
+                                        <AppLink
+                                            attr:class="group flex flex-col gap-2 rounded-lg p-3 transition-all hover:scale-[1.02] hover:shadow-lg border border-[color:var(--color-outline)] hover:border-brand-300/60"
+                                            exact=true
+                                            href=move || {
+                                                format!(
+                                                    "/item/{}/{}",
+                                                    price_zone()
+                                                        .as_ref()
+                                                        .map(|z| z.get_name())
+                                                        .unwrap_or("North-America"),
+                                                    item.key_id.0,
+                                                )
+                                            }
+                                        >
+
+                                            <div class="flex items-center gap-2 text-sm">
+                                                <ItemTooltip item_id=item.key_id.0 class="shrink-0">
+                                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                                                </ItemTooltip>
+                                                <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
+                                                <span class="text-xs text-[color:var(--color-text-muted)] px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">"iLvl " {item.level_item}</span>
+                                            </div>
+                                            <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
+                                                <CheapestPrice item_id=item.key_id />
+                                            </div>
+                                        </AppLink>
+                                    }
+                                }).collect_view()
+                            })
+                        })
+                    }}
+                </div>
+                <div class="mt-4 flex justify-center" class:hidden=move || !has_more()>
+                    <button class="btn-secondary" on:click=move |_| set_show_more(!show_more())>
+                        {move || if show_more() { "Show less" } else { "Show more" }}
+                    </button>
+                </div>
+            </div>
+
+            // The inner #vendor-sources / #exchange-sources / #leve-sources ids
+            // stay — SectionNav's source shortcuts link to them directly.
+            // This wrapper id is the jump-nav's coarser "Sources" destination.
+            <div id="sources" class="item-source-group scroll-mt-16" data-entry-count=source_entries
+                data-section-count=move || {
+                    let counts = source_counts.get();
+                    [counts.vendor, counts.exchange, counts.levequest].into_iter().filter(|count| *count > 0).count()
+                }
+                class:hidden=move || source_entries() == 0
+            >
+                <VendorItems item_id />
+                <ExchangeSources item_id />
+                <LeveSources item_id />
+            </div>
+
+            <div
+                id="crafting-recipes"
+                class="item-recipe-section item-detail-section scroll-mt-20 panel p-4 sm:p-6"
+                data-entry-count=move || visible_recipes.with(Vec::len)
+                class:hidden=move || recipes.with(|recipes| recipes.is_empty())
+            >
+                <div class="flex flex-row items-center justify-between mb-3 flex-wrap gap-2">
+                    <h2 class="text-lg font-bold text-brand-200 flex flex-wrap items-center gap-2">
+                        {t!(i18n, related_items_crafting_recipes_heading)}
+                        <span class="item-detail-count">{move || visible_recipes.with(Vec::len)}</span>
+                    </h2>
+                    <CraftOptionsToggleRow />
+                </div>
+                <ActiveListBanner />
+                <div class="item-detail-entries item-recipe-entries">
+                    <For
+                        each=move || visible_recipes.get()
+                        key=|recipe| recipe.key_id
+                        children=move |recipe: &'static Recipe| {
+                            view! { <Recipe recipe item_id=ItemId(item_id()) /> }
+                        }
+                    />
+                </div>
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1298,333 +1627,4 @@ mod tests {
         // deterministic sequence both SSR and CSR must produce.
         assert_eq!(ids, vec![1, 2, 4, 7, 9]);
     }
-}
-
-pub fn leve_rewards_item(
-    leve: &Leve,
-    item_id: i32,
-    reward_items: &xiv_gen::IdMap<xiv_gen::LeveRewardItemId, LeveRewardItem>,
-    groups: &xiv_gen::IdMap<xiv_gen::LeveRewardItemGroupId, LeveRewardItemGroup>,
-) -> bool {
-    if let Some(reward) = reward_items.get(&xiv_gen::LeveRewardItemId(leve.leve_reward_item)) {
-        // Check all 8 groups
-        let group_ids: [u16; 8] = [
-            reward.leve_reward_item_group_0,
-            reward.leve_reward_item_group_1,
-            reward.leve_reward_item_group_2,
-            reward.leve_reward_item_group_3,
-            reward.leve_reward_item_group_4,
-            reward.leve_reward_item_group_5,
-            reward.leve_reward_item_group_6,
-            reward.leve_reward_item_group_7,
-        ];
-
-        for group_id in group_ids {
-            if let Some(group) = groups.get(&xiv_gen::LeveRewardItemGroupId(group_id as i32)) {
-                // Check all items in group (0-8)
-                let items: [u16; 9] = [
-                    group.item_0,
-                    group.item_1,
-                    group.item_2,
-                    group.item_3,
-                    group.item_4,
-                    group.item_5,
-                    group.item_6,
-                    group.item_7,
-                    group.item_8,
-                ];
-                if items.iter().any(|&i| i as i32 == item_id) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-fn leve_sources_for_item(item_id: i32) -> Vec<&'static Leve> {
-    let data = tracked_data();
-    data.leves
-        .values()
-        .filter(|leve| {
-            leve_rewards_item(
-                leve,
-                item_id,
-                &data.leve_reward_items,
-                &data.leve_reward_item_groups,
-            )
-        })
-        // Keep SSR and hydration order identical despite randomized HashMaps.
-        .sorted_by_key(|leve| leve.key_id.0)
-        .collect()
-}
-
-/// Counts describe available recipes, trade options, reward leves, and vendor
-/// shop/NPC pairs, not market listings. No market resource is needed during SSR.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ItemSourceCounts {
-    pub craftable: usize,
-    pub exchange: usize,
-    pub levequest: usize,
-    pub vendor: usize,
-}
-
-pub fn item_source_counts(item_id: i32) -> ItemSourceCounts {
-    let data = tracked_data();
-    if item_id <= 0 || !data.items.contains_key(&ItemId(item_id)) {
-        return ItemSourceCounts::default();
-    }
-    ItemSourceCounts {
-        // recipe_tree_iter also matches ingredients: those are not acquisition sources.
-        craftable: data
-            .recipes
-            .values()
-            .filter(|r| r.item_result == item_id)
-            .count(),
-        exchange: exchange_shops_for_item(&data.special_shops, item_id)
-            .iter()
-            .map(|shop| get_trade_costs(shop, item_id).len())
-            .sum(),
-        levequest: leve_sources_for_item(item_id).len(),
-        vendor: vendor_sources_for_item(item_id).len(),
-    }
-}
-
-#[component]
-fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
-    let i18n = use_i18n();
-    let data = tracked_data();
-    let leves = Memo::new(move |_| leve_sources_for_item(item_id()));
-
-    let view = move || {
-        leves.with(|leves| {
-            leves
-                .iter()
-                .map(|leve| {
-                    let job_name = data.class_job_categorys.get(&xiv_gen::ClassJobCategoryId(leve.class_job_category)).map(|c| c.name.as_str()).unwrap_or("Unknown");
-                    view! {
-                        <div class="group flex flex-col gap-2 panel p-3">
-                             <div class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{leve.name.as_str()}</div>
-                             <div class="flex items-center gap-2 mt-1">
-                                <span class="px-2 py-1 rounded border border-brand-400/40 text-xs text-brand-200 font-bold">
-                                    "Lvl " {leve.class_job_level}
-                                </span>
-                                <span class="text-xs text-[color:var(--color-text-muted)] truncate flex items-center gap-1">
-                                    <Icon icon=icondata::FaHammerSolid attr:class="text-[10px] opacity-70" />
-                                    {job_name}
-                                </span>
-                             </div>
-                             <super::npc_locations::LeveIssuers leve_id=leve.key_id.0 />
-                        </div>
-                    }
-                })
-                .collect_view()
-        })
-    };
-
-    let empty = move || leves.with(|l| l.is_empty());
-
-    view! {
-        <div id="leve-sources" class:hidden=empty class="item-detail-section scroll-mt-20 min-w-0" data-entry-count=move || leves.with(Vec::len)>
-            <div class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
-                <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
-                    <Icon icon=icondata::FaScrollSolid attr:class="text-brand-300" />
-                    {t!(i18n, related_levequest_rewards_title)}
-                    <span class="item-detail-count">{move || leves.with(Vec::len)}</span>
-                </h3>
-                <div class="item-detail-entries">{view}</div>
-            </div>
-        </div>
-    }
-    .into_any()
-}
-
-#[component]
-pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
-    let i18n = use_i18n();
-    let (price_zone, _) = get_price_zone();
-    // The grid below is chosen by matching item *names*, and SSR renders game
-    // data in English while the client has already swapped to the visitor's
-    // locale by the time `hydrate()` runs — so the two sides disagree about how
-    // many `<AppLink>` elements belong here and tachys panics walking the DOM
-    // (GlitchTip #6831; see `related_item_ids`). Render nothing until the first
-    // client effect has run, so SSR and the initial CSR pass both emit an empty
-    // grid and the real list arrives as an ordinary reactive update afterwards.
-    // Same idiom as `RecipePriceEstimate` above.
-    let hydrated = RwSignal::new(false);
-    Effect::new(move |_| {
-        hydrated.set(true);
-    });
-    let related_items_data = Memo::new(move |_| {
-        if !hydrated.get() {
-            return Vec::new();
-        }
-        let data = tracked_data();
-        related_item_ids(data, ItemId(item_id()))
-            .into_iter()
-            .filter_map(|id| data.items.get(&id))
-            .collect::<Vec<_>>()
-    });
-
-    let item_set = move || {
-        related_items_data.with(|items| {
-            items.iter().take(12).map(|&item| {
-                view! {
-                    <AppLink
-                        attr:class="group flex flex-col gap-2 rounded-lg p-3 transition-all hover:scale-[1.02] hover:shadow-lg border border-[color:var(--color-outline)] hover:border-brand-300/60"
-                        exact=true
-                        href=move || {
-                            format!(
-                                "/item/{}/{}",
-                                price_zone()
-                                    .as_ref()
-                                    .map(|z| z.get_name())
-                                    .unwrap_or("North-America"),
-                                item.key_id.0,
-                            )
-                        }
-                    >
-
-                        <div class="flex items-center gap-2 text-sm">
-                            <ItemTooltip item_id=item.key_id.0 class="shrink-0">
-                                <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
-                            </ItemTooltip>
-                            <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
-                            <span class="text-xs text-[color:var(--color-text-muted)] px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">"iLvl " {item.level_item}</span>
-                        </div>
-                        <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
-                            <CheapestPrice item_id=item.key_id />
-                        </div>
-                    </AppLink>
-                }
-            }).collect_view()
-        })
-    };
-
-    let recipes = Memo::new(move |_| {
-        let mut recipes = recipe_tree_iter(ItemId(item_id.get()))
-            // Acquisition recipes come first when jumping from "Craftable".
-            .sorted_by_key(|r| (r.item_result != item_id.get(), r.key_id.0))
-            .collect::<Vec<_>>();
-        let acquisition_count = recipes
-            .iter()
-            .take_while(|r| r.item_result == item_id.get())
-            .count();
-        recipes.truncate(30.max(acquisition_count));
-        recipes
-    });
-
-    let (show_more, set_show_more) = signal(false);
-    let has_more = move || related_items_data.with(|items| items.len() > 12);
-    let source_counts = Memo::new(move |_| item_source_counts(item_id()));
-    let source_entries = move || {
-        let counts = source_counts.get();
-        counts.vendor + counts.exchange + counts.levequest
-    };
-    let visible_recipes = Memo::new(move |_| {
-        let mut recipes = recipes.get();
-        // Every acquisition recipe counted in the shortcut must be visible.
-        let acquisition_count = recipes
-            .iter()
-            .take_while(|r| r.item_result == item_id())
-            .count();
-        recipes.truncate(5.max(acquisition_count));
-        recipes
-    });
-
-    view! {
-        <div class="item-details-layout">
-            <div class="item-detail-section panel p-4 sm:p-6" data-entry-count=move || related_items_data.with(Vec::len) class:hidden=move || related_items_data.with(|i| i.is_empty())>
-                <h2 class="text-lg font-bold text-brand-200 mb-4 flex flex-wrap items-center gap-2">
-                    {t!(i18n, related_items_heading)}
-                    <span class="item-detail-count">{move || related_items_data.with(Vec::len)}</span>
-                </h2>
-                <div class="item-detail-entries">
-                    {item_set}
-                    {move || {
-                        show_more().then(|| {
-                            related_items_data.with(|items| {
-                                items.iter().skip(12).map(|&item| {
-                                    view! {
-                                        <AppLink
-                                            attr:class="group flex flex-col gap-2 rounded-lg p-3 transition-all hover:scale-[1.02] hover:shadow-lg border border-[color:var(--color-outline)] hover:border-brand-300/60"
-                                            exact=true
-                                            href=move || {
-                                                format!(
-                                                    "/item/{}/{}",
-                                                    price_zone()
-                                                        .as_ref()
-                                                        .map(|z| z.get_name())
-                                                        .unwrap_or("North-America"),
-                                                    item.key_id.0,
-                                                )
-                                            }
-                                        >
-
-                                            <div class="flex items-center gap-2 text-sm">
-                                                <ItemTooltip item_id=item.key_id.0 class="shrink-0">
-                                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
-                                                </ItemTooltip>
-                                                <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
-                                                <span class="text-xs text-[color:var(--color-text-muted)] px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">"iLvl " {item.level_item}</span>
-                                            </div>
-                                            <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
-                                                <CheapestPrice item_id=item.key_id />
-                                            </div>
-                                        </AppLink>
-                                    }
-                                }).collect_view()
-                            })
-                        })
-                    }}
-                </div>
-                <div class="mt-4 flex justify-center" class:hidden=move || !has_more()>
-                    <button class="btn-secondary" on:click=move |_| set_show_more(!show_more())>
-                        {move || if show_more() { "Show less" } else { "Show more" }}
-                    </button>
-                </div>
-            </div>
-
-            // The inner #vendor-sources / #exchange-sources / #leve-sources ids
-            // stay — SectionNav's source shortcuts link to them directly.
-            // This wrapper id is the jump-nav's coarser "Sources" destination.
-            <div id="sources" class="item-source-group scroll-mt-16" data-entry-count=source_entries
-                data-section-count=move || {
-                    let counts = source_counts.get();
-                    [counts.vendor, counts.exchange, counts.levequest].into_iter().filter(|count| *count > 0).count()
-                }
-                class:hidden=move || source_entries() == 0
-            >
-                <VendorItems item_id />
-                <ExchangeSources item_id />
-                <LeveSources item_id />
-            </div>
-
-            <div
-                id="crafting-recipes"
-                class="item-recipe-section item-detail-section scroll-mt-20 panel p-4 sm:p-6"
-                data-entry-count=move || visible_recipes.with(Vec::len)
-                class:hidden=move || recipes.with(|recipes| recipes.is_empty())
-            >
-                <div class="flex flex-row items-center justify-between mb-3 flex-wrap gap-2">
-                    <h2 class="text-lg font-bold text-brand-200 flex flex-wrap items-center gap-2">
-                        {t!(i18n, related_items_crafting_recipes_heading)}
-                        <span class="item-detail-count">{move || visible_recipes.with(Vec::len)}</span>
-                    </h2>
-                    <CraftOptionsToggleRow />
-                </div>
-                <ActiveListBanner />
-                <div class="item-detail-entries item-recipe-entries">
-                    <For
-                        each=move || visible_recipes.get()
-                        key=|recipe| recipe.key_id
-                        children=move |recipe: &'static Recipe| {
-                            view! { <Recipe recipe item_id=ItemId(item_id()) /> }
-                        }
-                    />
-                </div>
-            </div>
-        </div>
-    }
-    .into_any()
 }

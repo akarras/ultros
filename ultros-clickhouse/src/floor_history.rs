@@ -95,135 +95,6 @@ pub async fn history(
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn change(timestamp: i64, world_id: i32, hq: u8, price: u32) -> Change {
-        Change {
-            timestamp,
-            world_id,
-            hq,
-            price,
-        }
-    }
-    #[test]
-    fn carries_quiet_worlds_and_removes_exhausted_floors() {
-        let points = sample(
-            vec![
-                change(0, 1, 0, 100),
-                change(0, 2, 0, 150),
-                change(10, 1, 0, 0),
-                change(20, 2, 0, 0),
-            ],
-            0,
-            30,
-            10,
-        );
-        assert_eq!(
-            points.iter().map(|p| p.price).collect::<Vec<_>>(),
-            vec![Some(100), Some(150), None, None]
-        );
-    }
-    #[test]
-    fn does_not_invent_history_and_keeps_quality_states_separate() {
-        let points = sample(
-            vec![
-                change(10, 1, 0, 100),
-                change(10, 1, 1, 180),
-                change(20, 1, 0, 0),
-            ],
-            0,
-            25,
-            10,
-        );
-        assert_eq!(
-            points.iter().map(|p| p.price).collect::<Vec<_>>(),
-            vec![None, Some(100), Some(180), Some(180)]
-        );
-        assert_eq!(points.last().unwrap().timestamp, 25);
-    }
-
-    fn row(timestamp: i64, world_id: i32, price: u32) -> WindowChange {
-        WindowChange {
-            item_id: 7,
-            hq: 0,
-            world_id,
-            timestamp,
-            price,
-        }
-    }
-    fn anchors(pairs: &[(i32, i64)]) -> FloorAnchors {
-        pairs.iter().copied().collect()
-    }
-    fn scope_bounds(
-        rows: Vec<WindowChange>,
-        worlds: &[i32],
-        anchors: &FloorAnchors,
-        from: i64,
-        to: i64,
-    ) -> ultros_api_types::floor_history::FloorBounds {
-        bounds(&seeded(&rows, worlds, anchors), worlds, from, to)
-    }
-
-    #[test]
-    fn world_without_rows_stays_unknown_without_an_anchor() {
-        let b = scope_bounds(vec![row(0, 1, 100)], &[1, 2], &anchors(&[]), 0, 100);
-        assert_eq!((b.known_secs, b.unknown_secs, b.min), (0, 100, None));
-    }
-
-    #[test]
-    fn anchor_proves_an_absent_world_empty_from_the_anchor_on() {
-        let b = scope_bounds(vec![row(0, 1, 100)], &[1, 2], &anchors(&[(2, 0)]), 0, 100);
-        assert_eq!(
-            (b.known_secs, b.empty_secs, b.unknown_secs, b.min),
-            (100, 0, 0, Some(100))
-        );
-    }
-
-    #[test]
-    fn anchor_inside_the_window_leaves_the_time_before_it_unknown() {
-        let b = scope_bounds(vec![row(0, 1, 100)], &[1, 2], &anchors(&[(2, 40)]), 0, 100);
-        assert_eq!((b.known_secs, b.unknown_secs, b.min), (60, 40, Some(100)));
-    }
-
-    #[test]
-    fn anchor_never_overrides_a_row_observed_at_or_before_it() {
-        let rows = vec![row(0, 1, 100), row(10, 2, 50)];
-        let b = scope_bounds(rows.clone(), &[1, 2], &anchors(&[(2, 40)]), 0, 100);
-        // Nothing is claimed for world 2 before its first observation at 10.
-        assert_eq!((b.known_secs, b.unknown_secs, b.min), (90, 10, Some(50)));
-        let same_second = scope_bounds(rows, &[1, 2], &anchors(&[(2, 10)]), 0, 100);
-        assert_eq!(same_second.min, Some(50));
-    }
-
-    #[test]
-    fn anchor_before_the_window_is_superseded_by_a_later_seed_row() {
-        let b = scope_bounds(
-            vec![row(0, 1, 100), row(5, 2, 50)],
-            &[1, 2],
-            &anchors(&[(2, 0)]),
-            20,
-            100,
-        );
-        assert_eq!((b.known_secs, b.min), (80, Some(50)));
-    }
-
-    #[test]
-    fn anchored_worlds_with_no_rows_form_a_known_empty_board() {
-        let b = scope_bounds(vec![], &[1, 2], &anchors(&[(1, 0), (2, 0)]), 0, 100);
-        assert_eq!(
-            (b.known_secs, b.empty_secs, b.unknown_secs, b.min),
-            (100, 100, 0, None)
-        );
-    }
-
-    #[test]
-    fn anchor_at_or_after_the_window_end_changes_nothing() {
-        let b = scope_bounds(vec![row(0, 1, 100)], &[1, 2], &anchors(&[(2, 100)]), 0, 100);
-        assert_eq!((b.known_secs, b.unknown_secs), (0, 100));
-    }
-}
-
 /// Exact transitions shared by window bounds and bounded multi-item history.
 /// Hard limits throw instead of returning a truncated successful history.
 #[derive(Clone, Debug, Row, Deserialize)]
@@ -551,4 +422,133 @@ pub async fn batch(
         }
     }
     Ok(FloorHistoryBatch { series })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn change(timestamp: i64, world_id: i32, hq: u8, price: u32) -> Change {
+        Change {
+            timestamp,
+            world_id,
+            hq,
+            price,
+        }
+    }
+    #[test]
+    fn carries_quiet_worlds_and_removes_exhausted_floors() {
+        let points = sample(
+            vec![
+                change(0, 1, 0, 100),
+                change(0, 2, 0, 150),
+                change(10, 1, 0, 0),
+                change(20, 2, 0, 0),
+            ],
+            0,
+            30,
+            10,
+        );
+        assert_eq!(
+            points.iter().map(|p| p.price).collect::<Vec<_>>(),
+            vec![Some(100), Some(150), None, None]
+        );
+    }
+    #[test]
+    fn does_not_invent_history_and_keeps_quality_states_separate() {
+        let points = sample(
+            vec![
+                change(10, 1, 0, 100),
+                change(10, 1, 1, 180),
+                change(20, 1, 0, 0),
+            ],
+            0,
+            25,
+            10,
+        );
+        assert_eq!(
+            points.iter().map(|p| p.price).collect::<Vec<_>>(),
+            vec![None, Some(100), Some(180), Some(180)]
+        );
+        assert_eq!(points.last().unwrap().timestamp, 25);
+    }
+
+    fn row(timestamp: i64, world_id: i32, price: u32) -> WindowChange {
+        WindowChange {
+            item_id: 7,
+            hq: 0,
+            world_id,
+            timestamp,
+            price,
+        }
+    }
+    fn anchors(pairs: &[(i32, i64)]) -> FloorAnchors {
+        pairs.iter().copied().collect()
+    }
+    fn scope_bounds(
+        rows: Vec<WindowChange>,
+        worlds: &[i32],
+        anchors: &FloorAnchors,
+        from: i64,
+        to: i64,
+    ) -> ultros_api_types::floor_history::FloorBounds {
+        bounds(&seeded(&rows, worlds, anchors), worlds, from, to)
+    }
+
+    #[test]
+    fn world_without_rows_stays_unknown_without_an_anchor() {
+        let b = scope_bounds(vec![row(0, 1, 100)], &[1, 2], &anchors(&[]), 0, 100);
+        assert_eq!((b.known_secs, b.unknown_secs, b.min), (0, 100, None));
+    }
+
+    #[test]
+    fn anchor_proves_an_absent_world_empty_from_the_anchor_on() {
+        let b = scope_bounds(vec![row(0, 1, 100)], &[1, 2], &anchors(&[(2, 0)]), 0, 100);
+        assert_eq!(
+            (b.known_secs, b.empty_secs, b.unknown_secs, b.min),
+            (100, 0, 0, Some(100))
+        );
+    }
+
+    #[test]
+    fn anchor_inside_the_window_leaves_the_time_before_it_unknown() {
+        let b = scope_bounds(vec![row(0, 1, 100)], &[1, 2], &anchors(&[(2, 40)]), 0, 100);
+        assert_eq!((b.known_secs, b.unknown_secs, b.min), (60, 40, Some(100)));
+    }
+
+    #[test]
+    fn anchor_never_overrides_a_row_observed_at_or_before_it() {
+        let rows = vec![row(0, 1, 100), row(10, 2, 50)];
+        let b = scope_bounds(rows.clone(), &[1, 2], &anchors(&[(2, 40)]), 0, 100);
+        // Nothing is claimed for world 2 before its first observation at 10.
+        assert_eq!((b.known_secs, b.unknown_secs, b.min), (90, 10, Some(50)));
+        let same_second = scope_bounds(rows, &[1, 2], &anchors(&[(2, 10)]), 0, 100);
+        assert_eq!(same_second.min, Some(50));
+    }
+
+    #[test]
+    fn anchor_before_the_window_is_superseded_by_a_later_seed_row() {
+        let b = scope_bounds(
+            vec![row(0, 1, 100), row(5, 2, 50)],
+            &[1, 2],
+            &anchors(&[(2, 0)]),
+            20,
+            100,
+        );
+        assert_eq!((b.known_secs, b.min), (80, Some(50)));
+    }
+
+    #[test]
+    fn anchored_worlds_with_no_rows_form_a_known_empty_board() {
+        let b = scope_bounds(vec![], &[1, 2], &anchors(&[(1, 0), (2, 0)]), 0, 100);
+        assert_eq!(
+            (b.known_secs, b.empty_secs, b.unknown_secs, b.min),
+            (100, 100, 0, None)
+        );
+    }
+
+    #[test]
+    fn anchor_at_or_after_the_window_end_changes_nothing() {
+        let b = scope_bounds(vec![row(0, 1, 100)], &[1, 2], &anchors(&[(2, 100)]), 0, 100);
+        assert_eq!((b.known_secs, b.unknown_secs), (0, 100));
+    }
 }

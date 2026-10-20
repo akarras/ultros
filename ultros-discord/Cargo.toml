@@ -12,7 +12,7 @@ chrono.workspace = true
 futures.workspace = true
 itertools.workspace = true
 lodestone = { git = "https://github.com/akarras/lodestone.git", branch = "master", default-features = false, features = ["rustls-tls"] }
-poise = "0.6.2"
+poise = "0.7.1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde_json.workspace = true
 tokio.workspace = true
