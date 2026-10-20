@@ -50,6 +50,8 @@ const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080';
       }
 
       await checkGeometry('image pending');
+      // A visible lazy image can precede its network request by one frame.
+      if (maps.length === 0) await page.waitForRequest(request => new URL(request.url()).pathname.startsWith('/static/map/'));
       assert.ok(maps.length > 0, 'preview must request its map image');
       await Promise.all(maps.splice(0).map(request => request.continue()));
       await page.waitForFunction(() => {

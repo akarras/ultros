@@ -1,8 +1,11 @@
+use crate::i18n::*;
 use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::{components::Outlet, hooks::use_location};
 use ultros_api_types::plugin::{BrowserSelection, PluginWebsiteInfo, SCOPES};
 use ultros_frontend_core::plugin_browser as browser;
+mod setup;
+pub use setup::PluginSetup;
 
 #[derive(Clone, Copy)]
 struct PluginContext {
@@ -16,6 +19,7 @@ pub fn is_plugin_path(path: &str) -> bool {
 
 #[component]
 pub fn PluginLayout() -> impl IntoView {
+    let i18n = use_i18n();
     let info = Resource::new_blocking(|| (), |_| async { browser::info().await.ok() });
     let account = Resource::new_blocking(
         || (),
@@ -38,27 +42,27 @@ pub fn PluginLayout() -> impl IntoView {
         <div class="main-content plugin-page p-2 sm:p-6">
             <div class="mx-auto max-w-4xl space-y-6">
                 <header class="space-y-3">
-                    <p class="text-sm font-semibold text-[color:var(--color-text-muted)]">"ULTROS IN GAME"</p>
-                    <h1 class="text-3xl sm:text-4xl font-bold">"Your market tools, in Eorzea"</h1>
-                    <p class="text-[color:var(--color-text-muted)] max-w-prose">"Look up prices, share your shopping lists with the website, and receive alerts while you play."</p>
+                    <p class="text-sm font-semibold text-[color:var(--color-text-muted)]">{t!(i18n, plugin_brand)}</p>
+                    <h1 class="text-3xl sm:text-4xl font-bold">{t!(i18n, plugin_heading)}</h1>
+                    <p class="text-[color:var(--color-text-muted)] max-w-prose">{t!(i18n, plugin_intro)}</p>
                 </header>
-                <nav class="plugin-tabs" aria-label="Game plugin">
-                    <a href="/plugin" aria-current=move || matches!(location.pathname.get().as_str(), "/plugin" | "/plugin/").then_some("page")>"Setup guide"</a>
-                    <a href="/plugin/verify" aria-current=move || (location.pathname.get() == "/plugin/verify").then_some("page")>"Connect game"</a>
-                    <a href="/plugin/devices" aria-current=move || (location.pathname.get() == "/plugin/devices").then_some("page")>"Connected clients"</a>
+                <nav class="plugin-tabs" aria-label=move || t_string!(i18n, plugin_nav)>
+                    <a href="/plugin" aria-current=move || matches!(location.pathname.get().as_str(), "/plugin" | "/plugin/").then_some("page")>{t!(i18n, plugin_nav_guide)}</a>
+                    <a href="/plugin/verify" aria-current=move || (location.pathname.get() == "/plugin/verify").then_some("page")>{t!(i18n, plugin_nav_connect)}</a>
+                    <a href="/plugin/devices" aria-current=move || (location.pathname.get() == "/plugin/devices").then_some("page")>{t!(i18n, plugin_nav_clients)}</a>
                 </nav>
-                <Suspense fallback=|| view! { <p role="status">"Loading plugin setup…"</p> }>
+                <Suspense fallback=move || view! { <p role="status">{t!(i18n, plugin_loading)}</p> }>
                     {move || match info.get().flatten() {
                         Some(config) if config.localhost => Some(view! {
                             <div class="plugin-notice" role="note">
-                                <strong>"Localhost development"</strong>
-                                <p>"This website connects to "<code>{config.origin}</code>". In the plugin’s Settings, enable the localhost development target before connecting. Your production account connections are separate."</p>
+                                <strong>{t!(i18n, plugin_guide_development)}</strong>
+                                <p>{t!(i18n, plugin_local_body, origin=config.origin.clone())}</p>
                             </div>
                         }),
                         _ => None,
                     }}
                 </Suspense>
-                <Show when=move || ready.get() fallback=|| view! { <p role="status">"Opening plugin setup…"</p> }>
+                <Show when=move || ready.get() fallback=move || view! { <p role="status">{t!(i18n, plugin_opening)}</p> }>
                     <Outlet />
                 </Show>
             </div>
@@ -68,26 +72,12 @@ pub fn PluginLayout() -> impl IntoView {
 
 #[component]
 fn SignInNotice(#[prop(default = "/plugin/verify")] next: &'static str) -> impl IntoView {
+    let i18n = use_i18n();
     view! {
         <div class="space-y-3">
-            <p>"Sign in with the Discord account you use on Ultros. After signing in, you’ll return here."</p>
-            <a class="btn-primary inline-flex" href=format!("/login?next={next}") rel="external">"Sign in with Discord"</a>
+            <p>{t!(i18n, plugin_signin_intro)}</p>
+            <a class="btn-primary inline-flex" href=format!("/login?next={next}") rel="external">{t!(i18n, plugin_signin_button)}</a>
         </div>
-    }
-}
-
-#[component]
-pub fn PluginSetup() -> impl IntoView {
-    view! {
-        <Title text="Game plugin setup • Ultros" />
-        <section class="panel p-5 sm:p-7 space-y-4">
-            <h2 class="text-xl font-bold">"Ultros game connections"</h2>
-            <p>"Connect your game to your Ultros account to sync lists, save private retainer listings and receive alerts."</p>
-            <div class="flex flex-wrap gap-3">
-                <a class="btn-primary" href="/plugin/verify">"Connect my game"</a>
-                <a class="btn-secondary" href="/plugin/devices">"Connected clients"</a>
-            </div>
-        </section>
     }
 }
 

@@ -464,6 +464,17 @@ case " ${LEPTOS_FEATURES:-} " in
         ;;
 esac
 
+# Opt-in game connection/installation flows. Requires plugin-localhost and
+# test-auth on an isolated server with ULTROS_PLUGIN_ENABLED=true.
+if [ "${RUN_DALAMUD:-0}" = "1" ]; then
+    log "running plugin installation, consent, release and private-retainer E2E"
+    dalamud_exit=0
+    for suite in test:plugin-link-bootstrap test:dalamud-releases test:dalamud-guide test:dalamud-direct-link test:dalamud-retainers; do
+        ( cd integration && BASE_URL="$BASE_URL" npm run "$suite" ) || dalamud_exit=$?
+    done
+    if [ "$dalamud_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then test_exit="$dalamud_exit"; fi
+fi
+
 # Optional focused dashboard screenshots — covers the new home-page
 # MarketPulse + Trends ConfidenceBadge + item view surfaces. Captured into
 # integration/artifacts/dashboard/ regardless of the broader suite outcome.
