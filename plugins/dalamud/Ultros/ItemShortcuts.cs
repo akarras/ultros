@@ -40,6 +40,11 @@ internal sealed class ItemShortcuts : IDisposable
         if(raw==0||ItemUtil.IsEventItem(raw))return;
         var id=ItemUtil.GetBaseId(raw).ItemId;
         if(!Plugin.Data.GetExcelSheet<Lumina.Excel.Sheets.Item>().HasRow(id))return;
+        var view=worker.View;
+        var destination=ListEditTarget.Capture(view);
+        var listName=view.Cart?.Name??"active list";
+        if(listName.Length>32)listName=listName[..32]+"…";
+        args.AddMenuItem(new MenuItem{Name=destination is null?"Add to Ultros list…":$"Add to {listName}",PrefixChar='U',OnClicked=_=>window.AddToList((int)id,destination)});
         args.AddMenuItem(new MenuItem{Name="Search Ultros",PrefixChar='U',OnClicked=_=>window.ShowItem((int)id)});
         args.AddMenuItem(new MenuItem{Name="Open Ultros website",PrefixChar='U',OnClicked=_=>
         {

@@ -99,6 +99,20 @@ public sealed class ClientWorker : IDisposable
         if(!CartCommands.Edit(target,connection?.Session,cart,CanEdit(),edit)){RejectChangedDestination();return Task.CompletedTask;}
         estimate=null;nextCart=DateTimeOffset.MinValue;status="Saved locally; synchronizing…";return Task.CompletedTask;
     });
+    public bool AddItem(ListEditTarget target,int item,string quality="any",int quantity=1)
+    {
+        if(!target.Matches(View)||item<=0||quantity is <1 or >1_000_000||quality is not ("any" or "nq" or "hq"))return false;
+        return Offer(()=>{
+            if(!target.Matches(connection?.Session,cart?.Id,CanEdit(),cart?.InstanceId)) {
+                status="The list or account changed. Choose the destination and add the item again.";
+                return Task.CompletedTask;
+            }
+            cart!.Edit(new{kind="add",item_id=item,quality,need=quantity});
+            estimate=null;nextCart=DateTimeOffset.MinValue;
+            status="Item added to the selected list. Saved locally; synchronizing…";
+            return Task.CompletedTask;
+        });
+    }
     public bool RetrySave(CartCommandTarget? target)=>target is not null&&Offer(()=>{
         if(connection?.Connected!=true||target?.Matches(connection?.Session,cart)!=true){RejectChangedDestination();return Task.CompletedTask;}
         cart!.Save();nextCart=DateTimeOffset.MinValue;return Task.CompletedTask;

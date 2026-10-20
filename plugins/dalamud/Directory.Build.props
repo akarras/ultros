@@ -1,7 +1,8 @@
 <Project>
   <PropertyGroup>
     <!-- One checked-in version for every managed assembly and release package. -->
-    <UltrosPluginVersion>1.0.0.0</UltrosPluginVersion>
+    <UltrosPluginVersion>1.1.0.0</UltrosPluginVersion>
+    <UltrosPluginReleaseNotes>Add items to your selected list from in-game item and recipe context menus, or while checking an item's prices.</UltrosPluginReleaseNotes>
     <Version>$(UltrosPluginVersion)</Version>
     <AssemblyVersion>$(UltrosPluginVersion)</AssemblyVersion>
     <FileVersion>$(UltrosPluginVersion)</FileVersion>
