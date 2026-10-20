@@ -1,7 +1,7 @@
 use super::{Context, Error};
 use crate::ffxiv::helpers::{
-    discord_locale_to_xiv_language, localized_item_matches, localized_item_name,
-    resolve_item_id_any_locale, truncate_100,
+    autocomplete_response, discord_locale_to_xiv_language, localized_item_matches,
+    localized_item_name, resolve_item_id_any_locale, truncate_100,
 };
 use anyhow::anyhow;
 use itertools::Itertools;
@@ -115,32 +115,34 @@ pub(crate) fn list_to_choice(
 async fn autocomplete_list_name(
     ctx: Context<'_>,
     partial: &str,
-) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> {
+) -> poise::serenity_prelude::CreateAutocompleteResponse {
     let partial = partial.to_ascii_lowercase();
-    ctx.data()
-        .db
-        .get_lists_for_user(ctx.author().id.get() as i64)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(l, _)| l)
-        .filter(move |l| l.name.to_ascii_lowercase().contains(&partial))
-        .map(|l| list_to_choice(&l))
+    autocomplete_response(
+        ctx.data()
+            .db
+            .get_lists_for_user(ctx.author().id.get() as i64)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(l, _)| l)
+            .filter(|l| l.name.to_ascii_lowercase().contains(&partial))
+            .map(|l| list_to_choice(&l)),
+    )
 }
 
 async fn autocomplete_item_name_global(
     ctx: Context<'_>,
     partial: &str,
-) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> {
+) -> poise::serenity_prelude::CreateAutocompleteResponse {
     let user_lang = discord_locale_to_xiv_language(ctx.locale());
-    localized_item_matches(partial, user_lang)
-        .into_iter()
-        .map(move |m| {
-            poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id.to_string())
-        })
-        .take(25)
-        .collect::<Vec<_>>()
-        .into_iter()
+    autocomplete_response(
+        localized_item_matches(partial, user_lang)
+            .into_iter()
+            .map(|m| {
+                poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id.to_string())
+            })
+            .take(25),
+    )
 }
 
 /// Share a list directly with a Discord user

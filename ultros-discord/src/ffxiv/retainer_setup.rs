@@ -1071,6 +1071,29 @@ pub(super) async fn register_character(
 }
 
 #[cfg(test)]
+/// Render a `CreateReply` to the JSON Discord would actually receive.
+///
+/// poise 0.7 made `CreateReply`'s fields private, so tests go through the
+/// public `to_slash_initial_response` conversion instead of reading `embeds`
+/// / `components` / `ephemeral` directly. Note that `ephemeral(true)` is
+/// carried as the EPHEMERAL message flag here, not as its own field.
+fn reply_json(reply: poise::CreateReply) -> serde_json::Value {
+    serde_json::to_value(reply.to_slash_initial_response(
+        poise::serenity_prelude::CreateInteractionResponseMessage::new(),
+    ))
+    .unwrap()
+}
+
+#[cfg(test)]
+/// Whether a rendered reply carries Discord's EPHEMERAL message flag.
+fn is_ephemeral(reply: &serde_json::Value) -> bool {
+    const EPHEMERAL: u64 = 1 << 6;
+    reply["flags"]
+        .as_u64()
+        .is_some_and(|flags| flags & EPHEMERAL != 0)
+}
+
+#[cfg(test)]
 #[path = "retainer_setup_tests.rs"]
 mod command_tests;
 
@@ -1175,11 +1198,11 @@ mod tests {
             View::Alerts,
         ] {
             session.view = view;
-            let reply = session.reply(|id| format!("World {id}"));
-            assert_eq!(reply.ephemeral, Some(true));
-            let embed = serde_json::to_value(&reply.embeds[0]).unwrap();
+            let reply = reply_json(session.reply(|id| format!("World {id}")));
+            assert!(is_ephemeral(&reply));
+            let embed = &reply["embeds"][0];
             assert!(embed["description"].as_str().unwrap().chars().count() <= 4096);
-            let rows = serde_json::to_value(reply.components.unwrap()).unwrap();
+            let rows = &reply["components"];
             assert!(rows.as_array().unwrap().len() <= 5);
             for row in rows.as_array().unwrap() {
                 assert!(row["components"].as_array().unwrap().len() <= 5);
@@ -1210,9 +1233,8 @@ mod tests {
         session.view = View::List;
         session.list_loaded = true;
         session.retainers = vec![(owned(1, None), retainer(1, 20))];
-        let reply = session.reply(|id| format!("World {id}"));
-        let embed = serde_json::to_value(&reply.embeds[0]).unwrap();
-        let text = embed["description"].as_str().unwrap();
+        let reply = reply_json(session.reply(|id| format!("World {id}")));
+        let text = reply["embeds"][0]["description"].as_str().unwrap();
         assert!(text.contains("Unassigned"));
         assert!(text.contains("Dawnkeeper") && text.contains("World 20"));
         let items: Vec<_> = (0..61).collect();

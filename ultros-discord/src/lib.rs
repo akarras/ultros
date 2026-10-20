@@ -2,6 +2,17 @@
 #![recursion_limit = "256"]
 
 mod ffxiv;
+// The `/help` command below is not in `commands()`, so poise never registers it
+// and nothing calls into this module. That predates the poise 0.7 migration —
+// on 0.6 the command body called `poise::builtins::help`, which lives in
+// another crate, so nothing here looked unused. 0.7 deleted that builtin, the
+// implementation moved into this module, and the existing gap became visible
+// (`dead_code` does not report the wrapper `poise::command` generates, so it
+// surfaces on this module instead). Registering `help()` is a behaviour change
+// — it would publish a new slash command — so it is deliberately left out of
+// this migration; see the PR for the follow-up.
+#[allow(dead_code)]
+mod help;
 mod qa;
 
 use ultros_alerts as alerts;
@@ -17,7 +28,7 @@ use ultros_server_core::{env_flag::env_flag_enabled, event, event::EventType};
 pub use ffxiv::admin::spawn_market_reconciliation;
 
 use chrono::Local;
-use poise::{builtins::HelpConfiguration, serenity_prelude as serenity};
+use poise::serenity_prelude as serenity;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use ultros_api_types::world_helper::WorldHelper;
@@ -70,12 +81,7 @@ async fn help(
     ctx: Context<'_>,
     #[description = "Specific command to show help for"] command: Option<String>,
 ) -> Result<(), Error> {
-    let config = HelpConfiguration {
-        extra_text_at_bottom: "ultros 🦑",
-        ..Default::default()
-    };
-    poise::builtins::help(ctx, command.as_deref(), config).await?;
-    Ok(())
+    help::help(ctx, command.as_deref()).await
 }
 
 #[poise::command(slash_command, prefix_command)]
@@ -241,7 +247,7 @@ pub async fn start_discord(
             commands: commands(),
             skip_checks_for_owners: false,
             pre_command: |ctx| Box::pin(async move {
-                tracing::info!(command = ctx.command().qualified_name,
+                tracing::info!(command = %ctx.command().qualified_name,
                     channel_id = ctx.channel_id().get(), "Discord command started");
             }),
             command_check: Some(|ctx| Box::pin(async move {
@@ -258,9 +264,9 @@ pub async fn start_discord(
                     tracing::error!(%error, "Discord framework error handler failed");
                 }
             }),
-            event_handler: |_ctx, event, _framework, data| {
+            event_handler: |framework, event| {
                 Box::pin(async move {
-                    handle_event(event, data).await;
+                    handle_event(event, framework.user_data).await;
                     Ok(())
                 })
             },
@@ -375,7 +381,7 @@ mod tests {
         assert_eq!(
             add.parameters
                 .iter()
-                .map(|p| p.name.as_str())
+                .map(|p| p.name.as_ref())
                 .collect::<Vec<_>>(),
             ["retainer", "world", "character"]
         );

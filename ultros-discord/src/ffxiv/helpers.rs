@@ -182,21 +182,36 @@ pub(crate) fn localized_item_matches(
     out
 }
 
+/// Wrap autocomplete suggestions in the response builder poise 0.7 requires.
+///
+/// poise 0.6 let an autocomplete callback return any serializable iterator and
+/// built the payload itself; 0.7 takes a `CreateAutocompleteResponse` directly.
+/// This keeps each call site's own ordering and truncation intact — it only
+/// changes the container.
+pub(crate) fn autocomplete_response(
+    choices: impl IntoIterator<Item = poise::serenity_prelude::AutocompleteChoice>,
+) -> poise::serenity_prelude::CreateAutocompleteResponse {
+    poise::serenity_prelude::CreateAutocompleteResponse::new()
+        .set_choices(choices.into_iter().collect())
+}
+
 /// Discord autocomplete handler for item-name string args. Searches every supported
 /// locale for substring matches; deduplicates by item id; prefers the user's locale
 /// for display when the same item matched in multiple locales. The choice value is
 /// the FFXIV item id stringified so that [`resolve_item_id`] can always find it
 /// regardless of whether the display name was truncated to 100 characters.
-pub(crate) async fn autocomplete_item<'a>(
+pub(crate) async fn autocomplete_item(
     ctx: Context<'_>,
-    partial: &'a str,
-) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> + 'a {
+    partial: &str,
+) -> poise::serenity_prelude::CreateAutocompleteResponse {
     let user_lang = discord_locale_to_xiv_language(ctx.locale());
-    localized_item_matches(partial, user_lang)
-        .into_iter()
-        .map(move |m| {
-            poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id.to_string())
-        })
+    autocomplete_response(
+        localized_item_matches(partial, user_lang)
+            .into_iter()
+            .map(|m| {
+                poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id.to_string())
+            }),
+    )
 }
 
 /// Resolve a user-supplied item name (case-insensitive exact match) to an FFXIV item id.
