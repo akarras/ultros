@@ -289,7 +289,23 @@ async function main() {
     assert.notEqual(await page.$eval(quantityInput, node => node.value), await page.$eval(quantityInput, node => node.dataset.handoffCommitted), "cycle starts with an unfinished draft");
     const tripBeforeCycle = await page.$$eval("[data-shop-key]", nodes => nodes.map(node => node.dataset.shopKey));
     const worldBeforeCycle = await text(tid("shop-stop-title"));
-    const rowBeforeCycle = (await api("GET", "/api/v1/list/" + accountId))[1].find(row => row.item_id === item);
+    // The total above confirms local document state, not server acceptance.
+    // Subsequent fixture writes replay this full row through REST; capturing
+    // an older quantity here could explicitly undo the local quantity edit.
+    let rowBeforeCycle, projectedRows;
+    const projectionUntil = Date.now() + 90000;
+    while (Date.now() < projectionUntil) {
+      projectedRows = (await api("GET", "/api/v1/list/" + accountId))[1];
+      const bronze = projectedRows.find(row => row.item_id === item);
+      const iron = projectedRows.find(row => row.item_id === added);
+      if (bronze?.quantity === 4 && bronze.acquired === 0 && iron?.quantity === 1) {
+        rowBeforeCycle = bronze;
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert(rowBeforeCycle, "local quantity and added row must reach the server before REST fixture writes: "
+      + JSON.stringify(projectedRows));
     await page.evaluate(selector => { window.__priceCycleInput = document.querySelector(selector); window.__priceCycleNext = document.querySelector('[data-testid="shop-next-world"]'); window.__priceCycleUpdateCount = window.__priceDocUpdates.length; }, quantityInput);
     unavailableAccount = true;
     const deniedPrices = page.waitForResponse(response => new URL(response.url()).pathname === `/api/v1/list/${accountId}/listings` && response.status() === 200);

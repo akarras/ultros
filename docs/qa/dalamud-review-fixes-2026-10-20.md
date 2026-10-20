@@ -175,3 +175,16 @@ was deliberately empty, so this does not validate a newly packaged ZIP.
 This build does not validate a current-toolchain native plugin DLL or
 physical FFXIV acceptance. Package production and in-game acceptance remain
 separate release work.
+
+The next required aggregate passed 11 of 12 suites, including adoption and
+sync, but `device-build-prices.cjs` timed out waiting for 40 gil after its
+availability simulation; the rendered subtotal was 20 gil. A focused
+diagnostic passed with a captured server quantity of four and the same
+quantity after the fixture's restoration. That retry does not establish
+the failed run's root cause. The fixture previously observed only local
+pricing before capturing a full server row for several REST replays. It
+now requires the server projection to contain the quantity-four edit and
+the newly added Iron row before capturing that snapshot. This adds a
+bounded assertion and retains the final 40-gil assertion. Both failed
+aggregate reports remain recorded; final aggregate status is tracked
+separately rather than inferred from passing individual retries.
