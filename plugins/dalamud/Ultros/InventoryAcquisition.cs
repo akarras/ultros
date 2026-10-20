@@ -50,7 +50,8 @@ internal sealed unsafe class InventoryAcquisition : IDisposable
         if(!config.InventoryProgressEnabled){Reset("Automatic inventory progress is off.");return;}
         if(!reader.Compatible||reader.GameBuild is null){Reset("Inventory reader compatibility could not be verified. Install a matching package.");return;}
         if(config.InventoryProgressGameBuild!=reader.GameBuild){Reset("Re-enable inventory progress for the current game build in Settings.");return;}
-        var destination=ListEditTarget.Capture(worker.View);
+        var view=worker.View;
+        var destination=ListEditTarget.CaptureInventory(view);
         if(destination is null||!Plugin.Player.IsLoaded||Plugin.Player.ContentId==0||Plugin.Condition[ConditionFlag.BetweenAreas]){
             Reset("Waiting for a loaded character and a writable active list.");return;
         }
@@ -60,6 +61,7 @@ internal sealed unsafe class InventoryAcquisition : IDisposable
             target=destination;character=Plugin.Player.ContentId;progress.Reset();candidate=null;pending=[];
             dirty=true;notBefore=Environment.TickCount64+500;Status="Establishing an inventory baseline…";
         }
+        if(!view.CanEdit){Status="Inventory progress paused while the active list is saved.";return;}
         if(pending.Length>0){
             if(!worker.ApplyInventoryGains(target,generation,pending)){Status="Waiting for the list worker…";return;}
             pending=[];Status="Watching inventory gains for the active list.";

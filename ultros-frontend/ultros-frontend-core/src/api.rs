@@ -461,7 +461,7 @@ pub async fn post_floor_history(
 
 /// Returns a list of the logged in user's retainers
 pub async fn get_retainers() -> AppResult<UserRetainers> {
-    fetch_api("/api/v1/user/retainer").await
+    fetch_api("/api/v2/user/retainer").await
 }
 
 /// Explicitly saved in-game rosters for the signed-in website account. Game IDs
@@ -499,7 +499,7 @@ pub async fn get_retainer_listing_view(
 }
 
 pub async fn get_user_retainer_listings() -> AppResult<UserRetainerListings> {
-    fetch_api("/api/v1/user/retainer/listings").await
+    fetch_api("/api/v2/user/retainer/listings").await
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]

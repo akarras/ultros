@@ -95,7 +95,7 @@ impl UltrosDb {
              LEFT JOIN active_listing l ON l.world_id=$1 AND l.item_id=i.item_id AND l.hq=q.hq
                AND l.quantity>0 AND l.price_per_unit BETWEEN 1 AND 999999999
                AND NOT EXISTS(SELECT 1 FROM owned_retainers o WHERE o.discord_id=$2 AND o.retainer_id=l.retainer_id)
-             LEFT JOIN listing_last_updated u ON u.world_id=$1 AND u.item_id=i.item_id
+             LEFT JOIN listing_board_review u ON u.world_id=$1 AND u.item_id=i.item_id
              GROUP BY i.item_id,q.hq,u.date_time",
             vec![world.into(),principal.owner.into(),serde_json::json!(items).into()]).await?;
         let mut prices = HashMap::new();

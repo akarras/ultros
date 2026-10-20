@@ -32,12 +32,55 @@ use ultros_db::{
 use url::Url;
 
 const APPROVAL_COOKIE: &str = "ultros_game_approval";
+fn parse_trusted_proxy(value: &str) -> anyhow::Result<ipnet::IpNet> {
+    if let Ok(ip) = value.parse::<IpAddr>() {
+        return Ok(ip.into());
+    }
+    Ok(value.parse()?)
+}
+
+fn forwarded_client(
+    mut peer: Option<IpAddr>,
+    headers: &HeaderMap,
+    proxies: &[ipnet::IpNet],
+) -> Option<IpAddr> {
+    let trusted = |ip: IpAddr| proxies.iter().any(|network| network.contains(&ip));
+    if !peer.is_some_and(trusted) {
+        return peer;
+    }
+    let mut values = headers.get_all("x-forwarded-for").iter();
+    let Some(value) = values
+        .next()
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| v.len() <= 512)
+    else {
+        return peer;
+    };
+    if values.next().is_some() {
+        return peer;
+    }
+    let Ok(mut chain) = value
+        .split(',')
+        .map(|part| part.trim().parse::<IpAddr>())
+        .collect::<Result<Vec<_>, _>>()
+    else {
+        return peer;
+    };
+    while peer.is_some_and(trusted) {
+        let Some(next) = chain.pop() else {
+            break;
+        };
+        peer = Some(next);
+    }
+    peer
+}
+
 #[derive(Clone)]
 pub(super) struct PluginConfig {
     origin: String,
     keys: PluginKeys,
     local: bool,
-    trusted_proxies: Vec<IpAddr>,
+    trusted_proxies: Vec<ipnet::IpNet>,
     minimum_version: releases::Version,
     release_root: Option<std::path::PathBuf>,
 }
@@ -118,8 +161,8 @@ impl PluginConfig {
             .unwrap_or_default()
             .split(',')
             .filter(|s| !s.trim().is_empty())
-            .map(|s| s.trim().parse::<IpAddr>())
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+            .map(|s| parse_trusted_proxy(s.trim()))
+            .collect::<anyhow::Result<Vec<_>>>()?;
         let minimum_version = std::env::var("ULTROS_PLUGIN_MINIMUM_VERSION")
             .unwrap_or_else(|_| releases::MINIMUM_VERSION.to_string())
             .parse::<releases::Version>()
@@ -245,32 +288,11 @@ async fn protect(
                 == Some(config.origin.as_str());
         }
     }
-    let mut peer = request
+    let peer = request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|c| c.0.ip());
-    if let Some(current) = peer
-        && config.trusted_proxies.contains(&current)
-        && let Some(forwarded) = request
-            .headers()
-            .get("x-forwarded-for")
-            .and_then(|h| h.to_str().ok())
-            .filter(|v| v.len() <= 512)
-    {
-        let chain = forwarded
-            .split(',')
-            .map(|part| part.trim().parse::<IpAddr>())
-            .collect::<std::result::Result<Vec<_>, _>>();
-        if let Ok(mut chain) = chain {
-            while peer.is_some_and(|ip| config.trusted_proxies.contains(&ip)) {
-                if let Some(ip) = chain.pop() {
-                    peer = Some(ip);
-                } else {
-                    break;
-                }
-            }
-        }
-    }
+    let peer = forwarded_client(peer, request.headers(), &config.trusted_proxies);
     request.extensions_mut().insert(ClientIp(
         peer.map(|ip| ip.to_string())
             .unwrap_or_else(|| "internal".into()),
@@ -480,6 +502,41 @@ fn session_cookie(jar: &PrivateCookieJar) -> Result<String, PluginApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn forwarded_addresses_cross_only_explicit_trusted_hops() {
+        let proxies = ["127.0.0.1", "173.245.48.0/20", "2001:db8:1234::/48"]
+            .map(|v| parse_trusted_proxy(v).unwrap());
+        let peer = Some("127.0.0.1".parse().unwrap());
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "198.51.100.111, 203.0.113.7, 173.245.48.9".parse().unwrap(),
+        );
+        assert_eq!(
+            forwarded_client(peer, &headers, &proxies),
+            Some("203.0.113.7".parse().unwrap())
+        );
+        let direct = Some("192.0.2.3".parse().unwrap());
+        assert_eq!(
+            forwarded_client(direct, &headers, &proxies),
+            direct,
+            "an untrusted caller cannot supply its own identity"
+        );
+        headers.insert(
+            "x-forwarded-for",
+            "2001:db8:abcd::7, 2001:db8:1234::9".parse().unwrap(),
+        );
+        assert_eq!(
+            forwarded_client(peer, &headers, &proxies),
+            Some("2001:db8:abcd::7".parse().unwrap())
+        );
+        headers.insert("x-forwarded-for", "invalid, 173.245.48.9".parse().unwrap());
+        assert_eq!(forwarded_client(peer, &headers, &proxies), peer);
+        headers.insert("x-forwarded-for", "203.0.113.7".parse().unwrap());
+        headers.append("x-forwarded-for", "198.51.100.111".parse().unwrap());
+        assert_eq!(forwarded_client(peer, &headers, &proxies), peer);
+        assert!(parse_trusted_proxy("not-a-network").is_err());
+    }
     #[test]
     fn origins_and_tokens_are_never_accepted_by_appearance_alone() {
         for origin in [

@@ -11,6 +11,8 @@ internal sealed class Connection : IDisposable
     private string? refresh;
     private string? access;
     private DateTimeOffset accessExpires;
+    private TokenPair? pendingVerification;
+    private DateTimeOffset nextRestore;
     private PairingChallenge? pairing;
     private DateTimeOffset nextPoll;
     private DateTimeOffset pairingExpires;
@@ -19,6 +21,7 @@ internal sealed class Connection : IDisposable
     internal UltrosEndpoint Endpoint => transport.Endpoint;
     internal DeviceSession? Session { get; private set; }
     internal bool Connected => access is not null;
+    internal bool CanRestore => refresh is not null;
     internal string Status { get; private set; } = "Disconnected";
     internal string StorageMode => credentials.Mode;
     internal string? HumanCode => pairing?.UserCode;
@@ -27,14 +30,14 @@ internal sealed class Connection : IDisposable
     internal bool HasScope(string scope) => Session?.Scopes.Contains(scope) == true;
     private sealed record Metadata(string Origin, DeviceSession Session);
 
-    internal Connection(string root, UltrosEndpoint endpoint, string profile)
+    internal Connection(string root, UltrosEndpoint endpoint, string profile, HttpMessageHandler? handler = null)
     {
         profile = AtomicFile.Profile(profile);
         Directory = Path.Combine(Path.GetFullPath(root), endpoint.Namespace, profile);
         credentials = new ProtectedCredentials(Directory, endpoint, profile);
         profileLock = new FileStream(Path.Combine(Directory, "owner.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         metadataPath = Path.Combine(Directory, "session.json");
-        transport = new Transport(endpoint);
+        transport = new Transport(endpoint, handler);
         try
         {
             if (File.Exists(metadataPath) && new FileInfo(metadataPath).Length <= 32 * 1024)
@@ -54,8 +57,19 @@ internal sealed class Connection : IDisposable
             refresh = credentials.Load();
             if (refresh is not null) await Renew(cancellation).ConfigureAwait(false);
         }
-        catch (ApiFailure e) when(e.Status==426) { access=null;refresh=null;Status=e.Message; }
-        catch { access = null; refresh = null; Status = "Reconnect — the previous session could not be restored."; }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }
+        catch (ApiFailure e) when(e.Status==426) { access=null;Status=e.Message; }
+        catch { access = null; Status = CanRestore ? "Waiting for Ultros to restore this connection…" : "Reconnect — the previous session could not be restored."; }
+    }
+
+    internal async Task<bool> Restore(CancellationToken cancellation, bool force = false)
+    {
+        if (Connected || !CanRestore || pairing is not null || !force && DateTimeOffset.UtcNow < nextRestore) return false;
+        try { await Renew(cancellation).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }
+        catch (ApiFailure e) when (e.Status == 426) { Status = e.Message; }
+        catch { if (CanRestore) Status = "Waiting for Ultros to restore this connection…"; }
+        return Connected;
     }
 
     internal async Task BeginPairing(string label, string[] scopes, CancellationToken cancellation)
@@ -99,6 +113,7 @@ internal sealed class Connection : IDisposable
         {
             var pair = await transport.Send<TokenPair>(HttpMethod.Post, "/api/v1/plugin/pairings/poll",
                 new { device_code = pending.DeviceCode }, null, cancellation).ConfigureAwait(false);
+            pairing = null;
             await StoreIssued(pair, replacementAccount, cancellation).ConfigureAwait(false);
             pairing = null; replacementAccount = null;
             return true;
@@ -110,12 +125,12 @@ internal sealed class Connection : IDisposable
         catch (HttpRequestException)
         {
             nextPoll = DateTimeOffset.UtcNow.AddSeconds(Math.Max(10, pending.Interval));
-            Status = "Waiting for Ultros; the connection code is still pending.";
+            if (pendingVerification is null) Status = "Waiting for Ultros; the connection code is still pending.";
         }
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
         {
             nextPoll = DateTimeOffset.UtcNow.AddSeconds(10);
-            Status = "Pairing response was uncertain. Retrying cannot issue a second token family.";
+            if (pendingVerification is null) Status = "Pairing response was uncertain. Retrying cannot issue a second token family.";
         }
         catch
         {
@@ -126,58 +141,100 @@ internal sealed class Connection : IDisposable
         return false;
     }
 
-    private async Task StoreIssued(TokenPair pair, string? expectedAccount, CancellationToken cancellation)
+    internal async Task StoreIssued(TokenPair pair, string? expectedAccount, CancellationToken cancellation)
     {
         if (pair.TokenType != "Bearer" || pair.AccessToken.Length > 128 || pair.RefreshToken.Length > 128
             || !pair.AccessToken.StartsWith("ult_a1.") || !pair.RefreshToken.StartsWith("ult_r1.")
             || pair.ExpiresIn is < 1 or > 900 || !ValidAccount(pair.AccountId)
             || expectedAccount is not null && pair.AccountId != expectedAccount)
         {
-            await TryRevoke(pair.RefreshToken).ConfigureAwait(false);
+            await Forget(pair.RefreshToken).ConfigureAwait(false);
             throw new InvalidOperationException("Ultros returned an invalid or different-account grant.");
         }
         try
         {
             credentials.Save(pair.RefreshToken);
-            var actual = await transport.Send<DeviceSession>(HttpMethod.Get, "/api/v1/plugin/session", null, pair.AccessToken, cancellation).ConfigureAwait(false);
+            refresh = pair.RefreshToken;
+            access = null;
+            accessExpires = DateTimeOffset.UtcNow.AddSeconds(pair.ExpiresIn);
+            pendingVerification = pair;
+        }
+        catch
+        {
+            await Forget(pair.RefreshToken).ConfigureAwait(false);
+            throw new InvalidOperationException("The issued session could not be verified and saved. Reconnect.");
+        }
+        await VerifyIssued(cancellation).ConfigureAwait(false);
+    }
+
+    private async Task VerifyIssued(CancellationToken cancellation)
+    {
+        var pair = pendingVerification ?? throw new InvalidOperationException("No issued session to verify.");
+        DeviceSession actual;
+        try { actual = await transport.Send<DeviceSession>(HttpMethod.Get, "/api/v1/plugin/session", null, pair.AccessToken, cancellation).ConfigureAwait(false); }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException || error is ApiFailure { Status: >= 500 or 429 })
+        {
+            // The rotation result is known and its NEW credential is saved.
+            // A read outage must not revoke its family or retry the old token.
+            nextRestore = DateTimeOffset.UtcNow.AddSeconds(15);
+            Status = "Waiting for Ultros to verify the saved connection…";
+            throw;
+        }
+        catch { await Forget(pair.RefreshToken).ConfigureAwait(false); throw; }
+        try
+        {
             if (actual.AccountId != pair.AccountId || actual.Id != pair.DeviceId)
                 throw new InvalidOperationException("The authenticated device identity changed.");
             AtomicFile.Write(metadataPath, JsonSerializer.SerializeToUtf8Bytes(new Metadata(Endpoint.Origin.AbsoluteUri, actual), Protocol.Json));
-            refresh = pair.RefreshToken;
-            access = pair.AccessToken;
-            accessExpires = DateTimeOffset.UtcNow.AddSeconds(pair.ExpiresIn);
-            Session = actual;
-            Status = "Connected";
+            Session = actual; access = pair.AccessToken; pendingVerification = null; Status = "Connected";
         }
-        catch
-        {
-            await TryRevoke(pair.RefreshToken).ConfigureAwait(false);
-            access = null; refresh = null;
-            try { credentials.Clear(); } catch { }
-            // A challenge was already redeemed. Treat any later failure as terminal,
-            // including a timeout verifying or saving the resulting session.
-            throw new InvalidOperationException("The issued session could not be verified and saved. Reconnect.");
-        }
+        catch { await Forget(pair.RefreshToken).ConfigureAwait(false); throw; }
     }
 
-    private async Task Renew(CancellationToken cancellation)
+    private async Task Forget(string token)
     {
+        access = null; refresh = null; pendingVerification = null;
+        await TryRevoke(token).ConfigureAwait(false);
+        try { credentials.Clear(); } catch { }
+        Status = "Reconnect — refresh failed or its result was uncertain.";
+    }
+
+    internal async Task Renew(CancellationToken cancellation)
+    {
+        nextRestore = DateTimeOffset.UtcNow.AddSeconds(15);
+        if (pendingVerification is not null && DateTimeOffset.UtcNow < accessExpires.AddSeconds(-45))
+        {
+            await VerifyIssued(cancellation).ConfigureAwait(false); return;
+        }
+        pendingVerification = null;
+        access = null;
         var old = refresh ?? throw new InvalidOperationException("Connect this game profile first.");
+        // No rotation has been sent yet: an offline server or maintenance
+        // response here leaves the original credential safe to restore later.
+        using (var capabilities = await transport.Send<JsonDocument>(HttpMethod.Get, "/api/v1/plugin/capabilities", null, null, cancellation).ConfigureAwait(false))
+            ClientBuild.CheckCapabilities(capabilities.RootElement);
+        cancellation.ThrowIfCancellationRequested();
+        TokenPair pair;
         try
         {
             // Never retry this POST after a timeout or uncertain response.
-            var pair = await transport.Send<TokenPair>(HttpMethod.Post, "/api/v1/plugin/session/refresh",
+            pair = await transport.Send<TokenPair>(HttpMethod.Post, "/api/v1/plugin/session/refresh",
                 new { refresh_token = old }, null, cancellation).ConfigureAwait(false);
-            await StoreIssued(pair, Session?.AccountId, cancellation).ConfigureAwait(false);
+        }
+        catch (ApiFailure error) when(error.Status==426)
+        {
+            // Compatibility rejected the POST before it consumed the old token.
+            // A successful preflight does not prevent a minimum-version change.
+            access=null;Status=error.Message;throw;
         }
         catch
         {
-            access = null; refresh = null;
-            await TryRevoke(old).ConfigureAwait(false);
-            try { credentials.Clear(); } catch { }
-            Status = "Reconnect — refresh failed or its result was uncertain.";
+            await Forget(old).ConfigureAwait(false);
             throw;
         }
+        // Once a usable pair arrives, only its new generation may be retained
+        // or revoked. Verification failures must never revoke the old token.
+        await StoreIssued(pair, Session?.AccountId, cancellation).ConfigureAwait(false);
     }
 
     internal async Task<T> Send<T>(HttpMethod method, string path, object? body, CancellationToken cancellation)
@@ -211,7 +268,7 @@ internal sealed class Connection : IDisposable
     {
         pairing = null;
         if (refresh is not null) await TryRevoke(refresh).ConfigureAwait(false);
-        access = null; refresh = null; Session = null;
+        access = null; refresh = null; pendingVerification = null; Session = null;
         credentials.Clear();
         if (File.Exists(metadataPath)) File.Delete(metadataPath);
         Status = "Disconnected";
@@ -228,5 +285,5 @@ internal sealed class Connection : IDisposable
         catch { }
     }
     private static bool ValidAccount(string value) => ulong.TryParse(value, out var id) && id > 0 && id.ToString() == value;
-    public void Dispose() { access = null; refresh = null; pairing = null; transport.Dispose(); profileLock.Dispose(); }
+    public void Dispose() { access = null; refresh = null; pendingVerification = null; pairing = null; transport.Dispose(); profileLock.Dispose(); }
 }

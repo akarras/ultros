@@ -12,6 +12,13 @@ internal static class ClientChecks
     }
     internal static async Task Run()
     {
+        Require(Transport.ResponseLimit("/api/v1/plugin/lists/1/sync") == 24 * 1024 * 1024,
+            "List sync does not allow its bounded combined version/snapshot envelope.");
+        Require(Transport.ResponseLimit("/api/v1/plugin/lists") == 12 * 1024 * 1024
+            && Transport.ResponseLimit("/api/v1/plugin/notifications") == 12 * 1024 * 1024,
+            "List sync enlarged unrelated HTTP response limits.");
+        await TransportDeadlineChecks.Run();
+        await ConnectionUpgradeChecks.Run();
         ListEditTargetChecks.Run();
         InventoryProgressChecks.Run();
         RetainerPriceChecks.Run();
