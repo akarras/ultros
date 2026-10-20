@@ -145,12 +145,20 @@ pub(crate) async fn real_time_data(
 ) -> Response {
     let user = user.ok();
     info!("Handling websocket");
-    ws.on_upgrade(move |websocket| async move {
-        info!("Upgrading websocket");
-        if let Err(e) = handle_socket(websocket, events, worlds, db, user, token, list_sync).await {
-            error!("{e:?}");
-        }
-    })
+    // A base64 snapshot/update and wide causal version share one list-sync
+    // envelope. Bound both the aggregate message and an unfragmented browser
+    // frame; document input/decompression limits still apply after decoding.
+    const MAX_SYNC_MESSAGE_BYTES: usize = 24 * 1024 * 1024;
+    ws.max_message_size(MAX_SYNC_MESSAGE_BYTES)
+        .max_frame_size(MAX_SYNC_MESSAGE_BYTES)
+        .on_upgrade(move |websocket| async move {
+            info!("Upgrading websocket");
+            if let Err(e) =
+                handle_socket(websocket, events, worlds, db, user, token, list_sync).await
+            {
+                error!("{e:?}");
+            }
+        })
 }
 
 fn janky_map_event_type<T, Y>(e: EventType<T>, data: Y) -> WEvent<Y> {

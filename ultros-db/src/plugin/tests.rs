@@ -7,6 +7,70 @@ use serde_json::json;
 use ultros_api_types::{list::ListPermission, plugin::*};
 use ultros_list_doc::{ListDocument, RowKey};
 
+fn disposable_plugin_database(url: &str) -> bool {
+    // Match a deliberately narrow URL grammar: no password, alternate host,
+    // escaped names, query options or fragment can redirect a destructive fixture.
+    let Some(address) = url.strip_prefix("postgres://ultros_plugin@127.0.0.1:") else {
+        return false;
+    };
+    let Some((port, database)) = address.split_once('/') else {
+        return false;
+    };
+    let Some(name) = database.strip_prefix("ultros_plugin_") else {
+        return false;
+    };
+    !port.is_empty()
+        && port.bytes().all(|c| c.is_ascii_digit())
+        && port.parse::<u16>().is_ok_and(|port| port > 0)
+        && !name.is_empty()
+        && name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+}
+
+#[test]
+fn disposable_plugin_database_guard_is_strict() {
+    assert!(disposable_plugin_database(
+        "postgres://ultros_plugin@127.0.0.1:55437/ultros_plugin_review_20261020"
+    ));
+    for url in [
+        "postgres://ultros_plugin@127.0.0.1:0/ultros_plugin_test",
+        "postgres://ultros_plugin@127.0.0.1:65536/ultros_plugin_test",
+        "postgres://ultros_plugin@localhost:55437/ultros_plugin_test",
+        "postgres://ultros_plugin:secret@127.0.0.1:55437/ultros_plugin_test",
+        "postgres://ultros_plugin@127.0.0.1:55437/ultros_plugin_test?host=elsewhere",
+        "postgres://ultros_plugin@127.0.0.1:55437/ultros_plugin_test#fragment",
+        "postgres://ultros_plugin@127.0.0.1:55437/production",
+        "postgres://ultros_plugin@127.0.0.1:55437/ultros_plugin_",
+    ] {
+        assert!(!disposable_plugin_database(url));
+    }
+}
+
+fn market_listing(name: &str, city: u32, price: u32, hq: bool) -> universalis::ListingView {
+    universalis::ListingView {
+        // Seller review age is intentionally old, and must not be reused as
+        // the time Ultros reconciled a complete board.
+        last_review_time: (chrono::Utc::now() - chrono::Duration::days(7)).into(),
+        price_per_unit: Some(price),
+        quantity: Some(1),
+        stain_id: None,
+        world_name: None,
+        world_id: None,
+        creator_name: None,
+        creator_id: None,
+        hq,
+        is_crafted: false,
+        listing_id: None,
+        materia: vec![],
+        on_mannequin: false,
+        retainer_city: city,
+        retainer_id: None,
+        retainer_name: name.into(),
+        seller_id: None,
+        total: price,
+        tax: 0,
+    }
+}
+
 async fn pair(
     db: &UltrosDb,
     keys: &PluginKeys,
@@ -76,7 +140,7 @@ async fn plugin_pairing_links_postgres() {
     let url = std::env::var("ULTROS_PLUGIN_TEST_DATABASE_URL")
         .expect("explicit disposable PostgreSQL URL required");
     assert!(
-        url.starts_with("postgres://ultros_plugin@127.0.0.1:55432/ultros_plugin_"),
+        disposable_plugin_database(&url),
         "refusing a non-test database"
     );
     let mut options = ConnectOptions::new(url);
@@ -194,7 +258,7 @@ async fn plugin_connected_flows_postgres() {
     let url = std::env::var("ULTROS_PLUGIN_TEST_DATABASE_URL")
         .expect("explicit disposable PostgreSQL URL required");
     assert!(
-        url.starts_with("postgres://ultros_plugin@127.0.0.1:55432/ultros_plugin_"),
+        disposable_plugin_database(&url),
         "refusing a non-test database"
     );
     let mut options = ConnectOptions::new(url);
@@ -207,6 +271,7 @@ async fn plugin_connected_flows_postgres() {
     let db = UltrosDb::from_connection(connection);
     let keys = PluginKeys::new(&[11; 32], &[29; 32], "http://localhost:8080").unwrap();
     let owner = 900_000_000_000_000_101_i64;
+    db.insert_default_retainer_cities().await.unwrap();
     let other = owner + 1;
     // Only these fixture accounts are reset. The URL assertion excludes configured app databases.
     exec(
@@ -766,8 +831,8 @@ async fn plugin_connected_flows_postgres() {
             .is_some()
     );
     let (first, second) = tokio::join!(
-        db.claim_notification_outbox(),
-        db.claim_notification_outbox()
+        db.claim_notification_outbox(true),
+        db.claim_notification_outbox(true)
     );
     let mut jobs = first.unwrap();
     jobs.extend(second.unwrap());
@@ -775,7 +840,12 @@ async fn plugin_connected_flows_postgres() {
     let job = jobs.pop().unwrap();
     assert!(db.authorize_notification_job(&job).await.unwrap().is_some());
     exec(&db.db,"UPDATE notification_outbox SET lease_until=now()-interval '1 second',next_attempt_at=now() WHERE id=$1",vec![job.id.into()]).await.unwrap();
-    let fresh = db.claim_notification_outbox().await.unwrap().pop().unwrap();
+    let fresh = db
+        .claim_notification_outbox(true)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
     assert!(
         db.finish_notification_job(&job, true, false)
             .await
@@ -849,6 +919,129 @@ async fn plugin_connected_flows_postgres() {
         .unwrap();
     assert!(db.plugin_list_snapshot(&read_only, list.id).await.is_err());
 
+    // Private registration can create unknown or client-reported city metadata.
+    // Both must yield to Universalis, without later private observations undoing it.
+    for (index, city) in [None, Some(1)].into_iter().enumerate() {
+        let name = format!("CityFixture{suffix}{index}");
+        let character = ObserveCharacter {
+            content_id: format!("70000{index}"),
+            name: format!("City Character {index}"),
+            home_world: 30000,
+            retainers: vec![ObservedRetainer {
+                content_id: format!("80000{index}"),
+                name: name.clone(),
+                city,
+            }],
+        };
+        db.register_plugin_retainers(
+            &principal,
+            &keys,
+            &RegisterRetainers {
+                operation_id: format!("city-{suffix}-{index}"),
+                character: character.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        let city_row = || {
+            one(
+                &db.db,
+                "SELECT id,retainer_city_id,xmin::text AS row_version FROM retainer WHERE world_id=30000 AND name=$1",
+                vec![name.clone().into()],
+            )
+        };
+        assert_eq!(
+            city_row()
+                .await
+                .unwrap()
+                .try_get::<i32>("", "retainer_city_id")
+                .unwrap(),
+            city.unwrap_or(0)
+        );
+        db.add_listings(
+            vec![market_listing(&name, 2, 100, false)],
+            universalis::ItemId(2),
+            universalis::WorldId(30000),
+        )
+        .await
+        .unwrap();
+        let authoritative = city_row().await.unwrap();
+        assert_eq!(
+            authoritative
+                .try_get::<i32>("", "retainer_city_id")
+                .unwrap(),
+            2
+        );
+        db.add_listings(
+            vec![market_listing(&name, 0, 100, false)],
+            universalis::ItemId(2),
+            universalis::WorldId(30000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            city_row()
+                .await
+                .unwrap()
+                .try_get::<i32>("", "retainer_city_id")
+                .unwrap(),
+            2,
+            "unknown authoritative metadata must preserve a known city"
+        );
+        // Exercise the upsert race fallback independently of the resolver's
+        // existing-row fast path.
+        assert_eq!(
+            db.store_retainer("", &name, universalis::WorldId(30000), 0)
+                .await
+                .unwrap()
+                .retainer_city_id,
+            2
+        );
+        let authoritative = city_row().await.unwrap();
+        db.add_listings(
+            vec![market_listing(&name, 2, 100, false)],
+            universalis::ItemId(2),
+            universalis::WorldId(30000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            city_row()
+                .await
+                .unwrap()
+                .try_get::<String>("", "row_version")
+                .unwrap(),
+            authoritative.try_get::<String>("", "row_version").unwrap(),
+            "unchanged public city must not cause a retainer write"
+        );
+        db.register_plugin_retainers(
+            &principal,
+            &keys,
+            &RegisterRetainers {
+                operation_id: format!("city-repeat-{suffix}-{index}"),
+                character,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            city_row()
+                .await
+                .unwrap()
+                .try_get::<i32>("", "retainer_city_id")
+                .unwrap(),
+            2
+        );
+        let id = authoritative.try_get::<i32>("", "id").unwrap();
+        exec(
+            &db.db,
+            "DELETE FROM active_listing WHERE retainer_id=$1",
+            vec![id.into()],
+        )
+        .await
+        .unwrap();
+    }
+
     let next = db
         .refresh_plugin_session(&tokens.refresh_token)
         .await
@@ -870,4 +1063,98 @@ async fn plugin_connected_flows_postgres() {
     println!(
         "Device pairing, scope isolation, private registration/upload, durable notification rollback/fencing, CRDT authorization and refresh reuse passed."
     );
+}
+
+#[tokio::test]
+#[ignore = "requires an idle disposable ULTROS_PLUGIN_TEST_DATABASE_URL"]
+async fn discordless_workers_preserve_discord_attempts_postgres() {
+    let url = std::env::var("ULTROS_PLUGIN_TEST_DATABASE_URL").unwrap();
+    assert!(
+        disposable_plugin_database(&url),
+        "refusing a non-test database"
+    );
+    let db = UltrosDb::from_connection(Database::connect(url).await.unwrap());
+    Migrator::up(db.get_connection(), None).await.unwrap();
+    let owner = 900_000_000_000_000_123_i64;
+    exec(
+        &db.db,
+        "DELETE FROM discord_user WHERE id=$1",
+        vec![owner.into()],
+    )
+    .await
+    .unwrap();
+    db.get_or_create_discord_user(owner as u64, "Readiness fixture".into())
+        .await
+        .unwrap();
+    let alert = one(
+        &db.db,
+        "INSERT INTO alert(owner,enabled,cooldown_seconds) VALUES($1,true,0) RETURNING id",
+        vec![owner.into()],
+    )
+    .await
+    .unwrap()
+    .try_get::<i32>("", "id")
+    .unwrap();
+    for (method, config) in [
+        ("DiscordChannel", json!({"channel_id":123})),
+        ("DiscordDm", json!({"user_id":owner})),
+        (
+            "Webhook",
+            json!({"url":"https://discord.com/api/webhooks/1/fixture"}),
+        ),
+    ] {
+        let endpoint = db
+            .create_endpoint(owner, method, method, config)
+            .await
+            .unwrap();
+        exec(
+            &db.db,
+            "INSERT INTO alert_notification_rule(alert_id,endpoint_id) VALUES($1,$2)",
+            vec![alert.into(), endpoint.into()],
+        )
+        .await
+        .unwrap();
+    }
+    exec(
+        &db.db,
+        "INSERT INTO alert_discord_destination(alert_id,channel_id) VALUES($1,456)",
+        vec![alert.into()],
+    )
+    .await
+    .unwrap();
+    let event = db
+        .accept_alert_fire(owner, fire(alert, "Readiness fixture"), json!({}))
+        .await
+        .unwrap()
+        .unwrap();
+    let jobs = db.claim_notification_outbox(false).await.unwrap();
+    let own: Vec<_> = jobs.iter().filter(|job| job.event_id == event.id).collect();
+    assert_eq!(own.len(), 1, "botless workers still claim webhooks");
+    let rows = query(&db.db, "SELECT o.attempts,n.method FROM notification_outbox o LEFT JOIN notification_endpoint n ON n.id=o.endpoint_id WHERE o.event_id=$1", vec![event.id.into()]).await.unwrap();
+    assert_eq!(rows.len(), 4);
+    for row in rows {
+        let webhook = row
+            .try_get::<Option<String>>("", "method")
+            .unwrap()
+            .as_deref()
+            == Some("Webhook");
+        assert_eq!(
+            row.try_get::<i32>("", "attempts").unwrap(),
+            i32::from(webhook)
+        );
+    }
+    db.finish_notification_job(own[0], true, false)
+        .await
+        .unwrap();
+    let jobs = db.claim_notification_outbox(true).await.unwrap();
+    let own: Vec<_> = jobs.iter().filter(|job| job.event_id == event.id).collect();
+    assert_eq!(
+        own.len(),
+        3,
+        "ready workers retain Discord endpoints and old-policy legacy jobs"
+    );
+    for job in own {
+        assert!(db.authorize_notification_job(job).await.unwrap().is_some());
+        db.finish_notification_job(job, true, false).await.unwrap();
+    }
 }

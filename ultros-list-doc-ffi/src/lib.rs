@@ -1,11 +1,28 @@
-//! Prototype document/sync ABI. Document and response handles are checked integer IDs,
+//! Document/sync ABI. Document and response handles are checked integer IDs,
 //! never Rust addresses. Responses are immutable: sizing/copying does not repeat an edit.
 //! The caller owns its input/output buffers; no Rust allocation crosses the ABI.
 
 #![recursion_limit = "256"]
+#![deny(unsafe_op_in_unsafe_fn)]
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unimplemented,
+        clippy::todo,
+        clippy::unreachable,
+        clippy::indexing_slicing,
+        clippy::string_slice,
+        clippy::arithmetic_side_effects,
+        clippy::exit,
+        clippy::undocumented_unsafe_blocks
+    )
+)]
 
 #[cfg(panic = "abort")]
-compile_error!("The prototype C ABI requires panic=unwind to contain Rust panics.");
+compile_error!("The document C ABI requires panic=unwind to contain Rust panics.");
 
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -19,6 +36,8 @@ use ultros_list_doc::{SyncPayload, client_sync::ClientSync};
 
 const MAX_SNAPSHOT: usize = 8 * 1024 * 1024;
 const MAX_REQUEST: usize = 24 * 1024 * 1024;
+// Encoded causal versions grow with historical writers, even after compaction.
+const MAX_VERSION_BASE64: usize = 8 * 1024 * 1024;
 const MAX_ROWS: usize = 256;
 const MAX_DOCUMENTS: usize = 16;
 const MAX_RESPONSES: usize = 64;
@@ -135,7 +154,7 @@ struct OnlineCheckpoint {
 impl Document {
     fn new(document: ListDocument) -> Result<Self, String> {
         if document.meta().name.chars().count() > 128 {
-            return Err("Snapshot name exceeds the prototype's 128-character limit".into());
+            return Err("Snapshot name exceeds the document's 128-character limit".into());
         }
         let undo = ListUndo::new(&document);
         Ok(Self {
@@ -194,7 +213,7 @@ impl Document {
                     .ok_or("Quantity overflow")?;
                 quantity(next, false)?;
                 if self.document.row(&key).is_none() && self.document.rows().len() >= MAX_ROWS {
-                    return Err("Prototype row limit reached".into());
+                    return Err("List row limit reached".into());
                 }
                 self.document.add_row(key, need, None)
             }
@@ -276,23 +295,23 @@ fn parse_quality(value: &str) -> Result<Quality, String> {
 fn quantity(value: i64, signed: bool) -> Result<(), String> {
     let min = if signed { -MAX_QUANTITY } else { 0 };
     if !(min..=MAX_QUANTITY).contains(&value) {
-        return Err("Prototype quantities must be within one million".into());
+        return Err("List quantities must be within one million".into());
     }
     Ok(())
 }
 
 fn validate_size(doc: &ListDocument) -> Result<(), String> {
     if doc.meta().name.chars().count() > 128 {
-        return Err("Snapshot name exceeds the prototype's 128-character limit".into());
+        return Err("Snapshot name exceeds the document's 128-character limit".into());
     }
     if doc.rows().len() > MAX_ROWS {
-        return Err("Snapshot exceeds the prototype's 256-row limit".into());
+        return Err("Snapshot exceeds the document's 256-row limit".into());
     }
     Ok(())
 }
 
 fn decode(snapshot: &str) -> Result<Vec<u8>, String> {
-    if snapshot.len() > MAX_SNAPSHOT.div_ceil(3) * 4 {
+    if snapshot.len() > MAX_SNAPSHOT.div_ceil(3).saturating_mul(4) {
         return Err("Snapshot exceeds 8 MiB".into());
     }
     let bytes = STANDARD
@@ -325,7 +344,7 @@ impl State {
         match request {
             Request::OpenSync { checkpoint } => {
                 if self.documents.len() >= MAX_DOCUMENTS {
-                    return Err("Prototype document limit reached".into());
+                    return Err("Open document limit reached".into());
                 }
                 let (document, mut sync) = if let Some(checkpoint) = checkpoint {
                     if checkpoint.format != 1 {
@@ -375,7 +394,7 @@ impl State {
                 kind,
                 payload,
             } => {
-                if version.len() > 65536 {
+                if version.len() > MAX_VERSION_BASE64 {
                     return Err("Invalid causal version".into());
                 }
                 let version = STANDARD
@@ -483,15 +502,15 @@ impl State {
             }
             Request::Open { snapshot } => {
                 if self.documents.len() >= MAX_DOCUMENTS {
-                    return Err("Prototype document limit reached".into());
+                    return Err("Open document limit reached".into());
                 }
                 let document = match snapshot {
                     Some(bytes) => {
                         ListDocument::from_snapshot(&decode(&bytes)?).map_err(|e| e.to_string())?
                     }
                     None => {
-                        let d = ListDocument::new();
-                        d.rename("Prototype cart").map_err(|e| e.to_string())?;
+                        let d = ListDocument::try_new().map_err(|e| e.to_string())?;
+                        d.rename("Cart").map_err(|e| e.to_string())?;
                         d
                     }
                 };
@@ -505,14 +524,10 @@ impl State {
                 self.documents.remove(&doc);
                 Ok(json!({ "ok": true }))
             }
-            other => {
-                let id = match &other {
-                    Request::View { doc }
-                    | Request::Edit { doc, .. }
-                    | Request::Export { doc }
-                    | Request::Import { doc, .. } => *doc,
-                    _ => unreachable!(),
-                };
+            other @ (Request::View { doc: id }
+            | Request::Edit { doc: id, .. }
+            | Request::Export { doc: id }
+            | Request::Import { doc: id, .. }) => {
                 let context = self
                     .documents
                     .get_mut(&id)
@@ -734,6 +749,81 @@ mod tests {
         assert_eq!(
             s.documents[&a].document.rows(),
             s.documents[&b].document.rows()
+        );
+    }
+
+    #[test]
+    fn last_accepted_online_edit_checkpoints_and_reopens_at_the_history_limit() {
+        let seed = ListDocument::new();
+        let row_key = RowKey::new(8, Some(false));
+        seed.add_row(row_key, 5, None).unwrap();
+        let meta = seed.inner().get_map("meta");
+        // Construct the historical fixture without 100,000 preflight roundtrips.
+        let operations = seed
+            .inner()
+            .oplog_vv()
+            .values()
+            .map(|n| i64::from(*n))
+            .sum::<i64>();
+        for count in operations..99_999 {
+            meta.insert("name", if count % 2 == 0 { "a" } else { "b" })
+                .unwrap();
+            seed.commit();
+        }
+        let checkpoint = json!({
+            "format": 1,
+            "snapshot": STANDARD.encode(seed.export_snapshot().unwrap()),
+            "state": ClientSync { ready: true, ..Default::default() },
+            "review_server": null,
+        });
+        let mut state = State::default();
+        let opened = call(
+            &mut state,
+            json!({"op":"open_sync","checkpoint":checkpoint}),
+        );
+        assert_eq!(opened["ok"], true);
+        let handle = opened["doc"].as_u64().unwrap();
+        assert_eq!(
+            edit(
+                &mut state,
+                handle,
+                json!({"kind":"set_need","item_id":8,"quality":"nq","need":4})
+            )["ok"],
+            true
+        );
+        let version = state.documents[&handle].document.version();
+        let saved = call(&mut state, json!({"op":"sync_checkpoint","doc":handle}));
+        assert_eq!(saved["ok"], true);
+        assert_eq!(
+            call(
+                &mut state,
+                json!({"op":"sync_persisted","doc":handle,"version":STANDARD.encode(&version)})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            edit(
+                &mut state,
+                handle,
+                json!({"kind":"set_need","item_id":8,"quality":"nq","need":3})
+            )["ok"],
+            false
+        );
+        assert_eq!(state.documents[&handle].document.version(), version);
+        let reopened = call(
+            &mut state,
+            json!({"op":"open_sync","checkpoint":saved["checkpoint"]}),
+        );
+        assert_eq!(reopened["ok"], true);
+        let restored = reopened["doc"].as_u64().unwrap();
+        assert_eq!(state.documents[&restored].document.version(), version);
+        assert_eq!(
+            state.documents[&restored]
+                .document
+                .row(&row_key)
+                .unwrap()
+                .need,
+            4
         );
     }
 
@@ -987,5 +1077,64 @@ mod tests {
                 1
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod large_version_tests {
+    use super::*;
+
+    #[test]
+    fn online_sync_accepts_real_versions_larger_than_64_kib() {
+        let server = ListDocument::new();
+        for peer in 1..=5000_u64 {
+            server.inner().set_peer_id(u64::MAX - peer).unwrap();
+            server
+                .inner()
+                .get_map("meta")
+                .insert("name", if peer % 2 == 0 { "a" } else { "b" })
+                .unwrap();
+            server.commit();
+        }
+        let version = STANDARD.encode(server.version());
+        assert!(version.len() > 65_536);
+        let mut state = State::default();
+        fn call(state: &mut State, value: Value) -> Value {
+            let input = serde_json::to_vec(&value).unwrap();
+            assert!(input.len() <= MAX_REQUEST);
+            let response = state.request(&input);
+            serde_json::from_slice(&state.responses.remove(&response).unwrap()).unwrap()
+        }
+        let doc = call(&mut state, json!({"op":"open_sync"}))["doc"]
+            .as_u64()
+            .unwrap();
+        let received = call(
+            &mut state,
+            json!({"op":"sync_receive","doc":doc,
+            "version":version,"kind":"snapshot","payload":STANDARD.encode(server.export_shallow().unwrap())}),
+        );
+        assert_eq!(received["ok"], true);
+        assert_eq!(received["view"]["recovery_review"], false);
+        call(
+            &mut state,
+            json!({"op":"sync_persisted","doc":doc,"version":received["view"]["version"]}),
+        );
+        assert_eq!(
+            call(
+                &mut state,
+                json!({"op":"edit","doc":doc,
+            "edit":{"kind":"add","item_id":8,"quality":"any","need":1}})
+            )["ok"],
+            true
+        );
+        let checkpoint =
+            call(&mut state, json!({"op":"sync_checkpoint","doc":doc}))["checkpoint"].clone();
+        assert_eq!(
+            call(
+                &mut state,
+                json!({"op":"open_sync","checkpoint":checkpoint})
+            )["ok"],
+            true
+        );
     }
 }

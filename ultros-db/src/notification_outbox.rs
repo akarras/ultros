@@ -4,7 +4,6 @@ use crate::{
     NewAlertEvent, UltrosDb,
     entity::{alert_event, notification_endpoint},
 };
-use chrono::Utc;
 use sea_orm::{DatabaseTransaction, EntityTrait, FromQueryResult, TransactionTrait};
 use serde_json::{Value as Json, json};
 use sha2::{Digest, Sha256};
@@ -16,6 +15,13 @@ pub struct OutboxJob {
     pub event_id: i64,
     pub owner: i64,
     pub payload: Json,
+}
+
+/// Legacy destinations retain their owner ping without exposing mention controls
+/// through user-defined endpoint configuration.
+pub enum AuthorizedDestination {
+    Endpoint(notification_endpoint::Model),
+    LegacyDiscordChannel { channel_id: i64, owner: i64 },
 }
 
 fn hash_config(method: &str, config: &Json) -> Vec<u8> {
@@ -181,9 +187,9 @@ impl UltrosDb {
         Ok(Some(event))
     }
 
-    pub async fn claim_notification_outbox(&self) -> Result<Vec<OutboxJob>> {
+    pub async fn claim_notification_outbox(&self, discord_ready: bool) -> Result<Vec<OutboxJob>> {
         let claim = super::plugin::crypto::random(16)?;
-        let rows=query(&self.db,"WITH picked AS (SELECT id FROM notification_outbox WHERE completed_at IS NULL AND cancelled_at IS NULL AND expires_at>now() AND attempts<8 AND next_attempt_at<=now() AND (lease_until IS NULL OR lease_until<now()) ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 4) UPDATE notification_outbox o SET claim=$1,lease_until=now()+interval '60 seconds',attempts=attempts+1 FROM picked p,alert_event e,alert a WHERE o.id=p.id AND e.id=o.event_id AND a.id=e.alert_id RETURNING o.id,o.event_id,o.payload,a.owner",vec![claim.clone().into()]).await?;
+        let rows=query(&self.db,"WITH picked AS (SELECT id FROM notification_outbox WHERE completed_at IS NULL AND cancelled_at IS NULL AND expires_at>now() AND attempts<8 AND next_attempt_at<=now() AND (lease_until IS NULL OR lease_until<now()) AND ($2 OR (legacy_destination_id IS NULL AND EXISTS(SELECT 1 FROM notification_endpoint n WHERE n.id=notification_outbox.endpoint_id AND n.method NOT IN ('DiscordDm','DiscordChannel')))) ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 4) UPDATE notification_outbox o SET claim=$1,lease_until=now()+interval '60 seconds',attempts=attempts+1 FROM picked p,alert_event e,alert a WHERE o.id=p.id AND e.id=o.event_id AND a.id=e.alert_id RETURNING o.id,o.event_id,o.payload,a.owner",vec![claim.clone().into(),discord_ready.into()]).await?;
         rows.into_iter()
             .map(|r| {
                 Ok(OutboxJob {
@@ -201,7 +207,7 @@ impl UltrosDb {
     pub async fn authorize_notification_job(
         &self,
         job: &OutboxJob,
-    ) -> Result<Option<notification_endpoint::Model>> {
+    ) -> Result<Option<AuthorizedDestination>> {
         let txn = self.db.begin().await?;
         lock_account(&txn, job.owner).await?;
         let row=one(&txn,"SELECT o.* FROM notification_outbox o JOIN alert_event e ON e.id=o.event_id JOIN alert a ON a.id=e.alert_id WHERE o.id=$1 AND o.claim=$2 AND o.lease_until>now() AND o.expires_at>now() AND o.completed_at IS NULL AND o.cancelled_at IS NULL AND a.owner=$3 FOR SHARE OF a,o",vec![job.id.into(),job.claim.clone().into(),job.owner.into()]).await?;
@@ -218,7 +224,7 @@ impl UltrosDb {
             {
                 return Ok(None);
             }
-            endpoint
+            AuthorizedDestination::Endpoint(endpoint)
         } else {
             let id = row
                 .try_get::<Option<i32>>("", "legacy_destination_id")?
@@ -227,15 +233,9 @@ impl UltrosDb {
             let Some(legacy) = rows.first() else {
                 return Ok(None);
             };
-            notification_endpoint::Model {
-                id: 0,
-                user_id: job.owner,
-                name: "Legacy alert destination".into(),
-                method: "DiscordChannel".into(),
-                config: json!({"channel_id":legacy.try_get::<i64>("","channel_id")?}),
-                created_at: Utc::now(),
-                disabled_at: None,
-                last_error: None,
+            AuthorizedDestination::LegacyDiscordChannel {
+                channel_id: legacy.try_get("", "channel_id")?,
+                owner: job.owner,
             }
         };
         txn.commit().await?;

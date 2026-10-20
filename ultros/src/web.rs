@@ -1646,6 +1646,30 @@ pub(crate) async fn user_retainers(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
 ) -> Result<impl IntoResponse, ApiError> {
+    let retainers = db
+        .get_all_owned_retainers_and_character(user.id)
+        .await?
+        .into_iter()
+        .map(|(character, retainers)| {
+            (
+                character.map(FfxivCharacter::from),
+                retainers
+                    .into_iter()
+                    .map(|(owned, retainer)| (owned.into(), retainer.into()))
+                    .collect(),
+            )
+        })
+        .collect();
+    Ok((
+        [(header::CACHE_CONTROL, "private, no-store")],
+        Json(ultros_api_types::user::UserRetainersV1 { retainers }),
+    ))
+}
+
+pub(crate) async fn user_retainers_v2(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+) -> Result<impl IntoResponse, ApiError> {
     Ok((
         [(header::CACHE_CONTROL, "private, no-store")],
         Json(db.website_retainers(user.id as i64).await?),
@@ -1664,6 +1688,30 @@ async fn user_game_retainers(
 }
 
 pub(crate) async fn user_retainer_listings(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+) -> Result<impl IntoResponse, ApiError> {
+    let db = &db;
+    let groups = db.get_all_owned_retainers_and_character(user.id).await?;
+    let retainers = try_join_all(groups.into_iter().map(|(character, retainers)| async move {
+        let retainers = try_join_all(retainers.into_iter().map(|(_, retainer)| async move {
+            let (_, listings) = db.get_retainer_listings(retainer.id).await?;
+            Ok::<_, anyhow::Error>((
+                Retainer::from(retainer),
+                listings.into_iter().map(ActiveListing::from).collect(),
+            ))
+        }))
+        .await?;
+        Ok::<_, anyhow::Error>((character.map(FfxivCharacter::from), retainers))
+    }))
+    .await?;
+    Ok((
+        [(header::CACHE_CONTROL, "private, no-store")],
+        Json(ultros_api_types::user::UserRetainerListingsV1 { retainers }),
+    ))
+}
+
+pub(crate) async fn user_retainer_listings_v2(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -3885,6 +3933,11 @@ fn api_router() -> Router<WebState> {
         .route("/api/v1/world_data", get(world_data))
         .route("/api/v1/current_user", get(current_user))
         .route("/api/v1/user/retainer", get(user_retainers))
+        .route("/api/v2/user/retainer", get(user_retainers_v2))
+        .route(
+            "/api/v2/user/retainer/listings",
+            get(user_retainer_listings_v2),
+        )
         .route("/api/v1/user/retainer/in-game", get(user_game_retainers))
         .route("/api/v1/retainer/reorder", post(reorder_retainer))
         .route(
@@ -4336,3 +4389,7 @@ mod pressure_route_tests {
         assert_eq!(bucket, 6 * 3600);
     }
 }
+
+#[cfg(test)]
+#[path = "web/retainer_compat_tests.rs"]
+mod retainer_compat_tests;

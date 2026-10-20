@@ -37,6 +37,21 @@ document; callers must fetch a complete snapshot. This prevents a later valid
 dependency from activating unvalidated queued data. Snapshot loads reject missing
 history outright. Full and shallow snapshots use the same validation.
 
+Local typed edits and complete undo groups also validate an isolated same-peer
+candidate before touching the live document. The saved result must reopen within
+the same 8 MiB snapshot, 32 MiB decoded-block and 100,000 retained-operation
+budgets. Undo reserves conservative capacity before popping its stack and can
+refuse an action that would not fit. Rejection preserves the last accepted work.
+Causal peer identities are retained without a lifetime writer-count ceiling;
+encoded snapshot and transport limits still apply.
+
+Once a server response acknowledges the exact current version, clients can trim
+50,000 or more retained operations to a shallow snapshot. This resets local undo
+and uses the durable replacement fence before editing or sending resumes. Pending
+local work is never trimmed. A disconnected list can reach its finite history
+budget and must sync before accepting more edits; its existing snapshot remains
+exportable. Legacy ancestry is proved by shared operations, not a schema marker.
+
 An unsupported or damaged account cache is retained exactly, with edits, sync and
 saves paused. The actual failure displays an export-recovery action; ordinary
 lists have no additional controls. Device restore validates before creating a

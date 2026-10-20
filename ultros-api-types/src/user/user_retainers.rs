@@ -108,3 +108,18 @@ pub struct UserRetainerListings {
     /// List of all the user's retainers. If no character is associated, it will be placed into the None.
     pub retainers: UserRetainerListWithListings,
 }
+
+/// Stable v1 wire formats for clients loaded before private game observations.
+/// Private character/listing variants are available only from the v2 routes.
+#[derive(Serialize, Deserialize)]
+pub struct UserRetainersV1 {
+    pub retainers: UserRetainerListV1,
+}
+pub type UserRetainerListV1 = Vec<(Option<FfxivCharacter>, Vec<(OwnedRetainer, Retainer)>)>;
+
+#[derive(Serialize, Deserialize)]
+pub struct UserRetainerListingsV1 {
+    pub retainers: UserRetainerListingsListV1,
+}
+pub type UserRetainerListingsListV1 =
+    Vec<(Option<FfxivCharacter>, Vec<(Retainer, Vec<ActiveListing>)>)>;
