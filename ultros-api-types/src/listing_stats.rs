@@ -143,6 +143,106 @@ impl From<BulkListingStatsColumnar> for BulkListingStats {
     }
 }
 
+/// Observed bounds are evidence, not a guarantee of uninterrupted ingestion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryCoverage {
+    pub first_observed_unix: Option<i64>,
+    pub last_observed_unix: Option<i64>,
+    /// Seconds between the first and last retained observations inside the
+    /// requested window. Quiet intervals and ingestion gaps are indistinguishable.
+    pub observed_span_secs: u64,
+    pub continuity_verified: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StockStatus {
+    #[default]
+    Unavailable,
+    NoSales,
+    Estimated,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ListingWindowStats {
+    pub window_days: u16,
+    pub from: i64,
+    pub to: i64,
+    pub additions: u64,
+    pub removals: u64,
+    pub listing_coverage: HistoryCoverage,
+    pub floor_min: Option<u32>,
+    pub floor_max: Option<u32>,
+    pub floor_known_secs: u64,
+    pub floor_empty_secs: u64,
+    pub floor_unknown_secs: u64,
+    pub matches: MatchedSalesStats,
+    pub stock_status: StockStatus,
+    pub days_of_stock: Option<f64>,
+    /// Same-listing price drops observed in the window: an `updated` row
+    /// whose price fell, or a removed-then-added pair on one listing id
+    /// within 600 s where the add is cheaper. Raises, same-price pairs,
+    /// the seed and id-less legacy listings are excluded.
+    #[serde(default)]
+    pub undercuts: u64,
+    /// `undercuts` per day of scope-wide listing coverage (clamped to at
+    /// least one day and at most the window). `None` only when the scope
+    /// observed no listing events at all in the window.
+    #[serde(default)]
+    pub undercuts_per_day: Option<f64>,
+    /// Median relative drop across those undercuts, in `0..1`. `None` when
+    /// `undercuts == 0`.
+    #[serde(default)]
+    pub undercut_median: Option<f64>,
+    /// Listings first seen in the window: seed rows and the add half of a
+    /// remove-then-add reprice are excluded. Nothing upstream reports when a
+    /// listing was posted, so "first seen" is the earliest of our observation
+    /// and the uploader's `lastReviewTime`.
+    #[serde(default)]
+    pub new_listings: u64,
+    /// Of `new_listings`, those whose board was observed at most an hour
+    /// before first sight, so the hour they are binned into is right to
+    /// within an hour.
+    #[serde(default)]
+    pub new_listings_pinned: u64,
+    /// `new_listings` by UTC hour of day of first sight.
+    #[serde(default, skip_serializing_if = "hours_empty")]
+    pub new_listing_hours: [u32; 24],
+    /// `undercuts` by UTC hour of day.
+    #[serde(default, skip_serializing_if = "hours_empty")]
+    pub undercut_hours: [u32; 24],
+}
+
+fn hours_empty(hours: &[u32; 24]) -> bool {
+    hours.iter().all(|n| *n == 0)
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ListingAgeOrigin {
+    #[default]
+    LastReviewTime,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MatchedSalesStats {
+    /// Conservative one-to-one matches, never every removal.
+    pub matched: u64,
+    pub ambiguous: u64,
+    pub repriced: u64,
+    pub unmatched: u64,
+    /// Raw sales in the game-time window without a durable websocket receipt.
+    pub sales_without_receipt: u64,
+    pub receipt_coverage: HistoryCoverage,
+    /// Distinct durable receipts observed in this window, before matching filters.
+    pub received_sales: u64,
+    /// Removals after this instant have not had complete +/-300s context.
+    pub settled_through_unix: i64,
+    pub pending: u64,
+    pub median_time_to_sell_secs: Option<u64>,
+    pub age_origin: ListingAgeOrigin,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,104 +470,4 @@ mod tests {
             BulkListingStatsColumnar::from(rows.clone())
         );
     }
-}
-
-/// Observed bounds are evidence, not a guarantee of uninterrupted ingestion.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HistoryCoverage {
-    pub first_observed_unix: Option<i64>,
-    pub last_observed_unix: Option<i64>,
-    /// Seconds between the first and last retained observations inside the
-    /// requested window. Quiet intervals and ingestion gaps are indistinguishable.
-    pub observed_span_secs: u64,
-    pub continuity_verified: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StockStatus {
-    #[default]
-    Unavailable,
-    NoSales,
-    Estimated,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ListingWindowStats {
-    pub window_days: u16,
-    pub from: i64,
-    pub to: i64,
-    pub additions: u64,
-    pub removals: u64,
-    pub listing_coverage: HistoryCoverage,
-    pub floor_min: Option<u32>,
-    pub floor_max: Option<u32>,
-    pub floor_known_secs: u64,
-    pub floor_empty_secs: u64,
-    pub floor_unknown_secs: u64,
-    pub matches: MatchedSalesStats,
-    pub stock_status: StockStatus,
-    pub days_of_stock: Option<f64>,
-    /// Same-listing price drops observed in the window: an `updated` row
-    /// whose price fell, or a removed-then-added pair on one listing id
-    /// within 600 s where the add is cheaper. Raises, same-price pairs,
-    /// the seed and id-less legacy listings are excluded.
-    #[serde(default)]
-    pub undercuts: u64,
-    /// `undercuts` per day of scope-wide listing coverage (clamped to at
-    /// least one day and at most the window). `None` only when the scope
-    /// observed no listing events at all in the window.
-    #[serde(default)]
-    pub undercuts_per_day: Option<f64>,
-    /// Median relative drop across those undercuts, in `0..1`. `None` when
-    /// `undercuts == 0`.
-    #[serde(default)]
-    pub undercut_median: Option<f64>,
-    /// Listings first seen in the window: seed rows and the add half of a
-    /// remove-then-add reprice are excluded. Nothing upstream reports when a
-    /// listing was posted, so "first seen" is the earliest of our observation
-    /// and the uploader's `lastReviewTime`.
-    #[serde(default)]
-    pub new_listings: u64,
-    /// Of `new_listings`, those whose board was observed at most an hour
-    /// before first sight, so the hour they are binned into is right to
-    /// within an hour.
-    #[serde(default)]
-    pub new_listings_pinned: u64,
-    /// `new_listings` by UTC hour of day of first sight.
-    #[serde(default, skip_serializing_if = "hours_empty")]
-    pub new_listing_hours: [u32; 24],
-    /// `undercuts` by UTC hour of day.
-    #[serde(default, skip_serializing_if = "hours_empty")]
-    pub undercut_hours: [u32; 24],
-}
-
-fn hours_empty(hours: &[u32; 24]) -> bool {
-    hours.iter().all(|n| *n == 0)
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ListingAgeOrigin {
-    #[default]
-    LastReviewTime,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MatchedSalesStats {
-    /// Conservative one-to-one matches, never every removal.
-    pub matched: u64,
-    pub ambiguous: u64,
-    pub repriced: u64,
-    pub unmatched: u64,
-    /// Raw sales in the game-time window without a durable websocket receipt.
-    pub sales_without_receipt: u64,
-    pub receipt_coverage: HistoryCoverage,
-    /// Distinct durable receipts observed in this window, before matching filters.
-    pub received_sales: u64,
-    /// Removals after this instant have not had complete +/-300s context.
-    pub settled_through_unix: i64,
-    pub pending: u64,
-    pub median_time_to_sell_secs: Option<u64>,
-    pub age_origin: ListingAgeOrigin,
 }

@@ -21,7 +21,7 @@ http02 = { package = "http", version = "0.2" }
 # installing OpenSSL dev headers separately, and on Linux it removes the libssl-dev
 # bootstrap requirement (CI still has libssl-dev installed; vendored is harmless there).
 openssl = { version = "0.10", features = ["vendored"] }
-poise = { version = "0.6.2" }
+poise = { version = "0.7.1" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

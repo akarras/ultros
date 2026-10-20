@@ -237,6 +237,20 @@ pub fn decompress_data(bytes: &[u8]) -> anyhow::Result<xiv_gen::Data> {
     Ok(data)
 }
 
+#[cfg(all(test, feature = "embed"))]
+mod test {
+    use crate::data;
+
+    #[test]
+    fn test_embed() {
+        data()
+            .items
+            .iter()
+            .find(|(_, i)| i.name == "Grade 2 Gemdraught of Mind")
+            .unwrap();
+    }
+}
+
 #[cfg(test)]
 mod version_test {
     use super::{pack_cache_key, pack_url, pack_version};
@@ -265,19 +279,5 @@ mod version_test {
         let version = pack_version("fr");
         assert_eq!(pack_url("fr"), format!("/static/data/{version}/fr.rkyv"));
         assert_eq!(pack_cache_key("fr"), format!("{version}-fr"));
-    }
-}
-
-#[cfg(all(test, feature = "embed"))]
-mod test {
-    use crate::data;
-
-    #[test]
-    fn test_embed() {
-        data()
-            .items
-            .iter()
-            .find(|(_, i)| i.name == "Grade 2 Gemdraught of Mind")
-            .unwrap();
     }
 }

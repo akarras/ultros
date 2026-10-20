@@ -188,6 +188,54 @@ fn has_error_code(text: &str, code: u32) -> bool {
     })
 }
 
+/// Cheaply-cloneable handle to a configured ClickHouse client.
+///
+/// The inner `Client` is wrapped in `Arc` so cloning is just a refcount bump —
+/// freely pass this around (into `WebState`, into the analyzer, into background
+/// tasks).
+#[derive(Clone)]
+pub struct ClickHouseClient {
+    inner: Arc<Client>,
+    snapshot_queue: Arc<listing_snapshots::Queue>,
+}
+
+impl ClickHouseClient {
+    /// Construct from environment variables. Reads:
+    /// - `CLICKHOUSE_URL` (default `http://localhost:8123`)
+    /// - `CLICKHOUSE_DATABASE` (default `ultros`)
+    /// - `CLICKHOUSE_USER` (default `ultros`)
+    /// - `CLICKHOUSE_PASSWORD` (default empty)
+    pub fn from_env() -> Self {
+        let url =
+            std::env::var("CLICKHOUSE_URL").unwrap_or_else(|_| "http://localhost:8123".to_string());
+        let database =
+            std::env::var("CLICKHOUSE_DATABASE").unwrap_or_else(|_| "ultros".to_string());
+        let user = std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "ultros".to_string());
+        let password = std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default();
+
+        let inner = Client::default()
+            .with_url(url)
+            .with_database(database)
+            .with_user(user)
+            .with_password(password);
+        Self {
+            inner: Arc::new(inner),
+            snapshot_queue: Arc::default(),
+        }
+    }
+
+    /// Access the underlying `clickhouse::Client`. Use for queries/inserts that
+    /// don't have a dedicated helper yet.
+    pub fn client(&self) -> &Client {
+        &self.inner
+    }
+
+    /// Apply DDL. Idempotent — safe to run on every startup.
+    pub async fn migrate(&self) -> Result<(), ClickHouseError> {
+        schema::apply(&self.inner).await
+    }
+}
+
 #[cfg(test)]
 mod error_kind_tests {
     use super::*;
@@ -378,53 +426,5 @@ mod error_kind_tests {
             "memory_limit_exceeded"
         );
         assert_eq!(ClickHouseErrorKind::Other.as_str(), "other");
-    }
-}
-
-/// Cheaply-cloneable handle to a configured ClickHouse client.
-///
-/// The inner `Client` is wrapped in `Arc` so cloning is just a refcount bump —
-/// freely pass this around (into `WebState`, into the analyzer, into background
-/// tasks).
-#[derive(Clone)]
-pub struct ClickHouseClient {
-    inner: Arc<Client>,
-    snapshot_queue: Arc<listing_snapshots::Queue>,
-}
-
-impl ClickHouseClient {
-    /// Construct from environment variables. Reads:
-    /// - `CLICKHOUSE_URL` (default `http://localhost:8123`)
-    /// - `CLICKHOUSE_DATABASE` (default `ultros`)
-    /// - `CLICKHOUSE_USER` (default `ultros`)
-    /// - `CLICKHOUSE_PASSWORD` (default empty)
-    pub fn from_env() -> Self {
-        let url =
-            std::env::var("CLICKHOUSE_URL").unwrap_or_else(|_| "http://localhost:8123".to_string());
-        let database =
-            std::env::var("CLICKHOUSE_DATABASE").unwrap_or_else(|_| "ultros".to_string());
-        let user = std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "ultros".to_string());
-        let password = std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default();
-
-        let inner = Client::default()
-            .with_url(url)
-            .with_database(database)
-            .with_user(user)
-            .with_password(password);
-        Self {
-            inner: Arc::new(inner),
-            snapshot_queue: Arc::default(),
-        }
-    }
-
-    /// Access the underlying `clickhouse::Client`. Use for queries/inserts that
-    /// don't have a dedicated helper yet.
-    pub fn client(&self) -> &Client {
-        &self.inner
-    }
-
-    /// Apply DDL. Idempotent — safe to run on every startup.
-    pub async fn migrate(&self) -> Result<(), ClickHouseError> {
-        schema::apply(&self.inner).await
     }
 }

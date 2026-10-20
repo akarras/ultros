@@ -22,7 +22,7 @@ axum-extra.workspace = true
 axum-macros = { workspace = true }
 cookie = "0.18.1"
 xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }
-poise = { version = "0.6.2" }
+poise = { version = "0.7.1" }
 chrono = { workspace = true }
 lodestone = { git = "https://github.com/akarras/lodestone.git", branch = "master", default-features = false, features = [
     "rustls-tls",
@@ -50,7 +50,7 @@ tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.6.10", features = ["full"] }
 sha2 = "0.11.0"
 base64 = "0.22.1"
-itertools = "0.14.0"
+itertools = "0.15.0"
 sitemap-rs = "0.4.0"
 ultros-api-types = { path = "../ultros-api-types", features = ["rkyv"] }
 # The `history` feature (on by default) is what makes the full changelog
