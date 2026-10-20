@@ -11,11 +11,16 @@ use ultros_api_types::plugin::*;
 use ultros_db::UltrosDb;
 use ultros_list_doc::{ListDocument, SyncPayload};
 
+// Base64 snapshot/update payloads (8 MiB binary) and a wide causal version
+// must fit together. Keep this envelope specific to list synchronization.
+const MAX_SYNC_VERSION_BASE64: usize = 8 * 1024 * 1024;
+const MAX_SYNC_BODY_BYTES: usize = 24 * 1024 * 1024;
+
 pub(super) fn router() -> Router<super::WebState> {
     let lists = Router::new()
         .route("/api/v1/plugin/lists", get(lists))
         .route("/api/v1/plugin/lists/{id}/sync", post(sync_list))
-        .layer(DefaultBodyLimit::max(12 * 1024 * 1024));
+        .layer(DefaultBodyLimit::max(MAX_SYNC_BODY_BYTES));
     Router::new()
         .route("/api/v1/plugin/characters", get(characters))
         .route("/api/v1/plugin/lists/{id}/estimate", get(estimate))
@@ -251,12 +256,7 @@ async fn sync_list(
     Path(id): Path<i32>,
     Json(request): Json<SyncList>,
 ) -> Result<Json<SyncedList>, PluginApiError> {
-    if request.version.len() > 65536 {
-        return Err(ultros_db::plugin::PluginError::Invalid("invalid_version").into());
-    }
-    let version = STANDARD
-        .decode(request.version)
-        .map_err(|_| ultros_db::plugin::PluginError::Invalid("invalid_version"))?;
+    let version = decode_sync_version(&request.version)?;
     if let Some(update) = request.update {
         if update.len() > 8 * 1024 * 1024 / 3 * 4 + 8 {
             return Err(ultros_db::plugin::PluginError::Invalid("update_too_large").into());
@@ -290,4 +290,48 @@ async fn sync_list(
         kind: kind.into(),
         payload: STANDARD.encode(payload),
     }))
+}
+
+fn decode_sync_version(encoded: &str) -> Result<Vec<u8>, PluginApiError> {
+    if encoded.len() > MAX_SYNC_VERSION_BASE64 {
+        return Err(ultros_db::plugin::PluginError::Invalid("invalid_version").into());
+    }
+    STANDARD
+        .decode(encoded)
+        .map_err(|_| ultros_db::plugin::PluginError::Invalid("invalid_version").into())
+}
+
+#[cfg(test)]
+mod version_bound_tests {
+    use super::*;
+
+    #[test]
+    fn real_wide_versions_fit_the_bounded_sync_envelope() {
+        let document = ListDocument::new();
+        for peer in 1..=5000_u64 {
+            document.inner().set_peer_id(u64::MAX - peer).unwrap();
+            document
+                .inner()
+                .get_map("meta")
+                .insert("name", if peer % 2 == 0 { "a" } else { "b" })
+                .unwrap();
+            document.commit();
+        }
+        let version = STANDARD.encode(document.version());
+        assert!(version.len() > 65_536);
+        assert_eq!(decode_sync_version(&version).unwrap(), document.version());
+        assert!(matches!(
+            document
+                .sync_payload(&decode_sync_version(&version).unwrap())
+                .unwrap(),
+            SyncPayload::UpToDate
+        ));
+        // Check the maximum combination arithmetically, without allocating
+        // a maximum-sized request or needing an authenticated database fixture.
+        let maximum_payload_base64 = (8_usize * 1024 * 1024).div_ceil(3) * 4;
+        let maximum_envelope = MAX_SYNC_VERSION_BASE64 + maximum_payload_base64 + 1024;
+        assert!(maximum_envelope > 12 * 1024 * 1024);
+        assert!(maximum_envelope < MAX_SYNC_BODY_BYTES);
+        assert!(decode_sync_version("invalid!").is_err());
+    }
 }

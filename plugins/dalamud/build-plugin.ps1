@@ -10,6 +10,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'release-source.ps1')
 if ($PublishRelease -and $StageOnly) { throw 'Choose staging or release publication.' }
 if ($PublishRelease -and ($Configuration -ne 'Release' -or $EnableLocalhost -or $KeepInstalledNative)) {
     throw 'Published releases require a full Release build, without localhost support or reused native binaries.'
@@ -75,6 +76,8 @@ $nativeConfiguration = $Configuration.ToLowerInvariant()
 $buildLock = $null
 Push-Location $repo
 try {
+    $initialSource = Get-PluginReleaseSource $repo
+    if ($PublishRelease -and $initialSource.Dirty) { throw 'Commit and validate the release sources before publishing.' }
     New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
     $buildLock = [IO.File]::Open((Join-Path $artifactRoot 'build.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     $installedInfo = $null
@@ -128,13 +131,14 @@ try {
         $referenceDirectory = if ($DalamudHome) { (Resolve-Path -LiteralPath $DalamudHome).Path } else { Join-Path $env:APPDATA 'XIVLauncher/addon/Hooks/dev' }
         $compatibility = @{ ClientStructsSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $referenceDirectory 'FFXIVClientStructs.dll')).Hash }
         $compatibility | ConvertTo-Json | Set-Content -Encoding utf8 -LiteralPath (Join-Path $staging 'capture-compatibility.json')
+        $finalSource = Get-PluginReleaseSource $repo
         $buildInfo=@{
             PluginVersion=([xml](Get-Content -Raw (Join-Path $PSScriptRoot "Directory.Build.props"))).Project.PropertyGroup.UltrosPluginVersion; NativeAbi=2; ServerProtocol=1; Target=$target; Configuration=$Configuration
             LocalhostEnabled=($Configuration -eq 'Debug' -or $EnableLocalhost.IsPresent)
             RustVersion=$(if ($KeepInstalledNative) { $installedInfo.RustVersion } else { & rustc --version }); DotnetSdk=(& dotnet --version)
             ReusedInstalledNative=$KeepInstalledNative.IsPresent
-            SourceCommit=(& git -C $repo rev-parse HEAD).Trim()
-            SourceDirty=[bool](& git -C $repo status --porcelain --untracked-files=normal -- plugins/dalamud ultros-list-doc ultros-list-doc-ffi vendor/loro-kv-store Cargo.toml Cargo.lock)
+            SourceCommit=$initialSource.Commit
+            SourceDirty=($initialSource.Dirty -or $finalSource.Dirty -or $initialSource.Commit -ne $finalSource.Commit)
             ClientStructsSha256=$compatibility.ClientStructsSha256
             NativeSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $staging 'ultros_list_doc_ffi.dll')).Hash
             CpuBaseline='x86-64'; PanicStrategy='unwind'

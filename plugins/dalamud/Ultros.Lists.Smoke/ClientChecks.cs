@@ -12,6 +12,14 @@ internal static class ClientChecks
     }
     internal static async Task Run()
     {
+        Require(Transport.ResponseLimit("/api/v1/plugin/lists/1/sync") == 24 * 1024 * 1024,
+            "List sync does not allow its bounded combined version/snapshot envelope.");
+        Require(Transport.ResponseLimit("/api/v1/plugin/lists") == 12 * 1024 * 1024
+            && Transport.ResponseLimit("/api/v1/plugin/notifications") == 12 * 1024 * 1024,
+            "List sync enlarged unrelated HTTP response limits.");
+        ListEditTargetChecks.Run();
+        await TransportDeadlineChecks.Run();
+        await ConnectionUpgradeChecks.Run();
         var observationTime=DateTimeOffset.UtcNow;
         var observedCharacter=new ObservedCharacter("123456789","Same Name",63,[]);
         var oldCharacter=new UnverifiedCharacter("1","Same Name",63,true,false,false,0,observationTime.AddDays(-1),[]);

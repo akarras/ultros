@@ -138,6 +138,9 @@ internal sealed class MainWindow : Window
     }
     private void Cart(ClientView v)
     {
+        var editTarget=CartCommandTarget.Capture(v);
+        var cartTarget=CartCommandTarget.Capture(v);
+        var recoveryTarget=RecoveryChoiceTarget.Capture(v);
         if(ImGui.Button("Refresh available lists"))Submit(worker.Refresh());
         ImGui.SameLine();
         if(ImGui.BeginCombo("Active list",v.Lists.FirstOrDefault(l=>l.List.Id==v.SelectedList)?.List.Name??"Cart"))
@@ -147,13 +150,13 @@ internal sealed class MainWindow : Window
         }
         if(v.Cart is not { } cart){ImGui.TextWrapped("Your online Cart is selected automatically when available. Create an online list named Cart on Ultros, or choose another list here.");return;}
         ImGui.TextUnformatted($"{cart.Name} · {(cart.AwaitingPersist?"UNSAVED — retry save":cart.RecoveryReview?"Recovery paused for review":"Saved locally")}");
-        if(ImGui.Button("Retry save / sync"))Submit(worker.RetrySave());
-        ImGui.SameLine();if(ImGui.Button("Refresh market estimate"))Submit(worker.Estimate());
+        if(ImGui.Button("Retry save / sync"))Submit(worker.RetrySave(cartTarget));
+        ImGui.SameLine();if(ImGui.Button("Refresh market estimate"))Submit(worker.Estimate(cartTarget));
         if(cart.RecoveryReview)
         {
             ImGui.TextWrapped("Both documents are preserved. Retry after resolving the conflict in Ultros, or keep the server copy. A recovery backup preserves the original local document.");
-            if(ImGui.Button("Retry recovery"))Submit(worker.RetryRecovery());
-            if(cart.HasServerCopy){ImGui.SameLine();if(ImGui.Button("Keep server copy (back up local)"))Submit(worker.UseServerCopy());}
+            if(ImGui.Button("Retry recovery"))Submit(worker.RetryRecovery(recoveryTarget));
+            if(cart.HasServerCopy){ImGui.SameLine();if(ImGui.Button("Keep server copy (back up local)"))Submit(worker.UseServerCopy(recoveryTarget));}
             return;
         }
         ImGui.BeginDisabled(!v.CanEdit);
@@ -162,9 +165,9 @@ internal sealed class MainWindow : Window
             ImGui.SetNextItemWidth(100);ImGui.InputInt("Add item ID",ref itemId);
             ImGui.SameLine();ImGui.SetNextItemWidth(80);ImGui.Combo("Quality",ref quality,Qualities,3);
             ImGui.SameLine();ImGui.SetNextItemWidth(85);ImGui.InputInt("Need",ref quantity);
-            if(ImGui.Button("Add to cart"))Submit(worker.Edit(new{kind="add",item_id=itemId,quality=Qualities[quality],need=quantity}));
-            ImGui.SameLine();if(ImGui.Button("Undo"))Submit(worker.Edit(new{kind="undo"}));
-            ImGui.SameLine();if(ImGui.Button("Redo"))Submit(worker.Edit(new{kind="redo"}));
+            if(ImGui.Button("Add to cart"))Submit(worker.Edit(editTarget,new{kind="add",item_id=itemId,quality=Qualities[quality],need=quantity}));
+            ImGui.SameLine();if(ImGui.Button("Undo"))Submit(worker.Edit(editTarget,new{kind="undo"}));
+            ImGui.SameLine();if(ImGui.Button("Redo"))Submit(worker.Edit(editTarget,new{kind="redo"}));
         }finally{ImGui.EndDisabled();}
         if(ImGui.BeginTable("cart-v2",6,ImGuiTableFlags.RowBg|ImGuiTableFlags.Borders|ImGuiTableFlags.SizingStretchProp))
         {
@@ -193,17 +196,17 @@ internal sealed class MainWindow : Window
                             var commit=ImGui.InputInt("##need",ref draft.Need,0,0,"%d",ImGuiInputTextFlags.EnterReturnsTrue);
                             var needActive=ImGui.IsItemActive();
                             commit|=ImGui.IsItemDeactivatedAfterEdit();
-                            if(commit){Submit(worker.Edit(new{kind="set_need",item_id=row.ItemId,quality=row.Quality,need=draft.Need}));drafts.Remove(key);}
+                            if(commit){Submit(worker.Edit(editTarget,new{kind="set_need",item_id=row.ItemId,quality=row.Quality,need=draft.Need}));drafts.Remove(key);}
                             ImGui.TableNextColumn();ImGui.SetNextItemWidth(-1);
                             var acquired=ImGui.InputInt("##acquired",ref draft.Acquired,0,0,"%d",ImGuiInputTextFlags.EnterReturnsTrue);
                             var acquiredActive=ImGui.IsItemActive();
                             acquired|=ImGui.IsItemDeactivatedAfterEdit();
-                            if(acquired){Submit(worker.Edit(new{kind="set_acquired",item_id=row.ItemId,quality=row.Quality,value=draft.Acquired}));drafts.Remove(key);}
+                            if(acquired){Submit(worker.Edit(editTarget,new{kind="set_acquired",item_id=row.ItemId,quality=row.Quality,value=draft.Acquired}));drafts.Remove(key);}
                             if(!commit&&!acquired&&(needActive||acquiredActive))drafts[key]=draft;
                             else drafts.Remove(key);
-                            ImGui.TableNextColumn();if(ImGui.Button("+1")){drafts.Remove(key);Submit(worker.Edit(new{kind="add_acquired",item_id=row.ItemId,quality=row.Quality,delta=1}));}
-                            ImGui.SameLine();if(ImGui.Button("+5")){drafts.Remove(key);Submit(worker.Edit(new{kind="add_acquired",item_id=row.ItemId,quality=row.Quality,delta=5}));}
-                            ImGui.TableNextColumn();if(ImGui.Button("Remove")){drafts.Remove(key);Submit(worker.Edit(new{kind="remove",item_id=row.ItemId,quality=row.Quality}));}
+                            ImGui.TableNextColumn();if(ImGui.Button("+1")){drafts.Remove(key);Submit(worker.Edit(editTarget,new{kind="add_acquired",item_id=row.ItemId,quality=row.Quality,delta=1}));}
+                            ImGui.SameLine();if(ImGui.Button("+5")){drafts.Remove(key);Submit(worker.Edit(editTarget,new{kind="add_acquired",item_id=row.ItemId,quality=row.Quality,delta=5}));}
+                            ImGui.TableNextColumn();if(ImGui.Button("Remove")){drafts.Remove(key);Submit(worker.Edit(editTarget,new{kind="remove",item_id=row.ItemId,quality=row.Quality}));}
                         }finally{ImGui.EndDisabled();}
                     }finally{ImGui.PopID();}
                 }

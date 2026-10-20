@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using Ultros.Lists;
 
 await Ultros.Lists.Smoke.ClientChecks.Run();
+await Ultros.Lists.Smoke.ConnectionChecks.Run();
 if(args is ["--client-only"])return;
 if(args is ["--native-shadow",var shadowNative,var shadowDirectory]){Ultros.Lists.Smoke.NativeShadowChecks.Run(shadowNative,shadowDirectory);return;}
 if(args is ["--http",var origin,var nativeDirectory]){Native.Configure(nativeDirectory);await Ultros.Lists.Smoke.HttpChecks.Run(origin);return;}
@@ -11,6 +12,7 @@ if (args.Length != 1) throw new ArgumentException("Pass the directory containing
 try { using var unavailable = Document.Open(); throw new Exception("Document opened before ABI verification."); }
 catch (InvalidOperationException) { }
 Native.Configure(args[0]);
+Ultros.Lists.Smoke.CartCommandChecks.Run();
 static void Require(bool condition, string message)
 {
     if (!condition) throw new Exception(message);
