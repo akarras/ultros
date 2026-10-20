@@ -14,7 +14,7 @@ internal sealed class MainWindow : Window
     private readonly InventoryAcquisition inventoryProgress;
     private readonly Configuration config;
     private string label="My game client";
-    private bool editLists,register,upload;
+    private bool editLists,register,upload,readRetainers;
     private bool permissionsInitialized;
     private bool localhost;
     private string localOrigin,profile;
@@ -43,7 +43,8 @@ internal sealed class MainWindow : Window
             Interlocked.Exchange(ref browserError,"Could not open your browser. Open the verification page on another device and enter the short code shown here.");
     }
     private static string ItemName(int id)=>Plugin.Data.GetExcelSheet<Item>().TryGetRow((uint)id,out var item)?item.Name.ToString():$"Item #{id}";
-    internal void ShowItem(int id){itemId=id;openItem=true;pendingMarket=true;IsOpen=true;}
+    internal Action<string>? OpenRetainerPrices { get; set; }
+    internal void ShowItem(int id,string? priceWorld=null){itemId=id;openItem=true;pendingMarket=true;IsOpen=true;if(priceWorld is not null){scope=priceWorld;automaticScope=false;}}
     internal void AddToList(int id,ListEditTarget? destination)
     {
         itemId=id;quality=0;quantity=1;openItem=false;pendingMarket=false;openLists=true;IsOpen=true;
@@ -56,7 +57,7 @@ internal sealed class MainWindow : Window
         var v=worker.View;
         if(automaticScope)scope=v.PriceRegion;
         if(pendingMarket&&scope.Length>0){pendingMarket=false;Submit(worker.FetchItem(itemId,scope));}
-        if(!permissionsInitialized&&v.Session is not null){editLists=v.Scopes.Contains("lists:write");register=v.Scopes.Contains("retainers:register");upload=v.Scopes.Contains("retainers:upload");permissionsInitialized=true;}
+        if(!permissionsInitialized&&v.Session is not null){editLists=v.Scopes.Contains("lists:write");register=v.Scopes.Contains("retainers:register");upload=v.Scopes.Contains("retainers:upload");readRetainers=v.Scopes.Contains("retainers:read");permissionsInitialized=true;}
         ImGui.TextUnformatted(v.Connected?$"Connected · {v.Session?.AccountName} · {v.Session?.Label}":"Connect this game client to Ultros");
         if(config.Localhost)ImGui.TextColored(new Vector4(1,.7f,.2f,1),"LOCALHOST DEVELOPMENT");
         ImGui.TextWrapped(v.Status);
@@ -81,9 +82,10 @@ internal sealed class MainWindow : Window
         ImGui.InputText("Client label",ref label,64);
         ImGui.TextWrapped("Approve permissions in your browser. Notification delivery and list reading are requested by default.");
         ImGui.Checkbox("Edit cart rows",ref editLists);
+        ImGui.Checkbox("View characters and retainer listings",ref readRetainers);
         ImGui.Checkbox("Observe and register retainers",ref register);
         ImGui.Checkbox("Upload private retainer listings",ref upload);
-        if(ImGui.Button(v.Connected?"Review new permissions":"Connect to Ultros"))Submit(worker.Pair(label,editLists,register,upload));
+        if(ImGui.Button(v.Connected?"Review new permissions":"Connect to Ultros"))Submit(worker.Pair(label,editLists,register,upload,readRetainers));
         if(v.HumanCode is { } code)
         {
             ImGui.Separator();
@@ -267,7 +269,15 @@ internal sealed class MainWindow : Window
                     if(ImGui.Button(character.UploadEnabled?"Pause this character's uploads":"Allow this character's uploads"))Submit(worker.UploadConsent(character.Id,!character.UploadEnabled));
                     ImGui.SameLine();if(ImGui.Button("Pause & delete snapshots"))Submit(worker.UploadConsent(character.Id,false,true));
                 }finally{ImGui.EndDisabled();}
-                foreach(var r in character.Retainers)ImGui.TextUnformatted($"  {r.Name} · {(r.GroupingConflict?"saved under another character":r.Registered?"saved":"observed")}{(r.PublicRetainerId is not null?" · market listings connected":"")}");
+                foreach(var r in character.Retainers) {
+                    ImGui.PushID(r.Id);
+                    try {
+                        ImGui.TextUnformatted($"{r.Name} · {(r.GroupingConflict?"saved under another character":r.Registered?"saved":"observed")}");
+                        ImGui.SameLine();ImGui.BeginDisabled(!v.Connected||!v.Scopes.Contains("retainers:read")||!r.Registered||r.PublicRetainerId is null);
+                        if(ImGui.SmallButton("Listings & prices"))OpenRetainerPrices?.Invoke(r.Id);
+                        ImGui.EndDisabled();
+                    }finally{ImGui.PopID();}
+                }
             }finally{ImGui.PopID();}
         }
     }

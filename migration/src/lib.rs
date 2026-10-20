@@ -53,6 +53,8 @@ mod m20260908_000001_group_role_member_added_at;
 mod m20260908_000002_group_sync_revision;
 mod m20260908_000003_market_sweep;
 
+mod m20261020_000001_listing_board_reviews;
+
 pub struct Migrator;
 mod m20261018_000001_plugin_devices;
 mod m20261018_000002_plugin_retainer_links;
@@ -121,6 +123,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261018_000002_plugin_retainer_links::Migration),
             Box::new(m20261018_000003_plugin_pairing_links::Migration),
             Box::new(m20261018_000004_game_retainer_listings::Migration),
+            Box::new(m20261020_000001_listing_board_reviews::Migration),
         ]
     }
 }

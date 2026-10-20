@@ -46,6 +46,16 @@ public sealed record PrivateListing(byte Slot, int ItemId, bool Hq, int Quantity
 public sealed record ListingCapture(string CaptureId, long BaseRevision, long CaptureEpoch, DateTimeOffset ObservedAt, bool Complete, PrivateListing[] Listings);
 public sealed record CaptureReceipt(long Revision, string Hash);
 public sealed record RetainerSnapshot(string RetainerId, long Revision, DateTimeOffset ReceivedAt, DateTimeOffset ObservedAt, PrivateListing[] Listings);
+public sealed record RetainerPriceLookup(string RetainerId, string Name, int WorldId, string WorldName, string Source,
+    DateTimeOffset? ObservedAt, DateTimeOffset FetchedAt, RetainerPriceQuote[] Listings);
+public sealed record RetainerPriceQuote(byte Slot, int ItemId, bool Hq, int Quantity, long CurrentPrice,
+    long? CompetitorPrice, DateTimeOffset? MarketCheckedAt, long? SuggestedPrice, string Status)
+{
+    // A window left open cannot keep offering a once-fresh cached suggestion.
+    public bool CanSuggest(DateTimeOffset now)=>Status=="fresh"&&SuggestedPrice is >=1 and <=999_999_999
+        &&CompetitorPrice is >=1 and <=999_999_999&&MarketCheckedAt is { } checkedAt
+        &&checkedAt>=now.AddMinutes(-30)&&checkedAt<=now.AddMinutes(1);
+}
 public sealed record GameAction(string Kind, int? ItemId, int? ListId);
 public sealed record GameDelivery(string Id, long? EventId, string Kind, string Title, string Body, GameAction Action, DateTimeOffset ExpiresAt);
 internal sealed record DeliveryBatch(GameDelivery[] Deliveries, int PollAfterMs);

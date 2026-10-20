@@ -37,6 +37,8 @@ Mutations revalidate grant authority inside their database transaction. Account/
 
 Observed characters are unverified game observations, not proof of Lodestone ownership. Private retainer uploads are owner-bound, consent/epoch checked, bounded and receipt-idempotent. They never write `active_listing`; only Universalis supplies public listings. Removing private snapshots or revoking consent must not make those observations public.
 
+The scoped retainer-price lookup rechecks the registered private roster and normal website ownership in its transaction. It returns at most twenty captured/cached rows and same-world, same-quality comparisons excluding the account's own retainers. It does not mutate public market data or control the game. Missing registration is a resource conflict rather than an authentication failure. Private lookup results are memory-only and bound to the connected account/device; suggestions require a market review within thirty minutes and expire in the UI too.
+
 ## Notifications and revocation
 
 The implemented game transport is bearer-authenticated HTTPS/SSE plus durable HTTP fetch/ack/read. **Game bearer tokens are not accepted by the browser market WebSocket.**

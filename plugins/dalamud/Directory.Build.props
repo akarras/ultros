@@ -1,8 +1,8 @@
 <Project>
   <PropertyGroup>
     <!-- One checked-in version for every managed assembly and release package. -->
-    <UltrosPluginVersion>1.2.0.0</UltrosPluginVersion>
-    <UltrosPluginReleaseNotes>Optionally mark matching items acquired in the active list when they enter your inventory. Existing inventory and moves within bags or equipment do not count.</UltrosPluginReleaseNotes>
+    <UltrosPluginVersion>1.3.0.0</UltrosPluginVersion>
+    <UltrosPluginReleaseNotes>Look up a registered retainer's captured listings beside the Markets window, compare same-world prices and copy a suggestion. Confirm each listing manually in game.</UltrosPluginReleaseNotes>
     <Version>$(UltrosPluginVersion)</Version>
     <AssemblyVersion>$(UltrosPluginVersion)</AssemblyVersion>
     <FileVersion>$(UltrosPluginVersion)</FileVersion>
