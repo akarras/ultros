@@ -15,11 +15,20 @@ internal sealed class ApiFailure : Exception
 }
 internal sealed class Transport : IDisposable
 {
+    private const int MaxResponse = 12 * 1024 * 1024;
+    private const int MaxListSyncResponse = 24 * 1024 * 1024;
+    // A list reply can contain both an 8 MiB base64 version and an 8 MiB
+    // binary snapshot encoded as base64. Other endpoints retain their limit.
+    internal static int ResponseLimit(string path) =>
+        path.StartsWith("/api/v1/plugin/lists/", StringComparison.Ordinal)
+        && path.EndsWith("/sync", StringComparison.Ordinal) ? MaxListSyncResponse : MaxResponse;
     private readonly HttpClient client;
+    private readonly TimeSpan requestTimeout;
     internal UltrosEndpoint Endpoint { get; }
-    internal Transport(UltrosEndpoint endpoint, HttpMessageHandler? handler = null)
+    internal Transport(UltrosEndpoint endpoint, HttpMessageHandler? handler = null, TimeSpan? requestTimeout = null)
     {
         Endpoint = endpoint;
+        this.requestTimeout = requestTimeout ?? TimeSpan.FromSeconds(15);
         client = new HttpClient(handler ?? new HttpClientHandler
         {
             UseCookies = false, AllowAutoRedirect = false,
@@ -28,6 +37,8 @@ internal sealed class Transport : IDisposable
     }
     internal async Task<T> Send<T>(HttpMethod method, string path, object? body, string? access, CancellationToken cancellation)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        deadline.CancelAfter(requestTimeout);
         using var request = new HttpRequestMessage(method, Endpoint.At(path));
         ClientBuild.AddHeaders(request);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -35,8 +46,8 @@ internal sealed class Transport : IDisposable
         if (access is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access);
         if (body is not null) request.Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(body, Protocol.Json));
         if (request.Content is not null) request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation).ConfigureAwait(false);
-        var bytes = await ReadBounded(response.Content, 12 * 1024 * 1024, cancellation).ConfigureAwait(false);
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+        var bytes = await ReadBounded(response.Content, ResponseLimit(path), deadline.Token).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             var code = "request_failed";

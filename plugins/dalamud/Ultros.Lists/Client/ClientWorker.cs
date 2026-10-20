@@ -8,7 +8,7 @@ public sealed record CartEstimate(string Version, string Scope, DateTimeOffset O
 public sealed record EstimateLine(int ItemId, bool? Hq, int Remaining, int PricedUnits, long Total, string Status);
 public sealed record ClientView(bool Connected, string Status, string StorageMode, string? HumanCode, string VerificationUrl,
     DeviceSession? Session, ListAccess[] Lists, int? SelectedList, CartView? Cart, bool CanEdit, UnverifiedCharacter[] Characters,
-    GameDelivery[] Inbox, MarketView? Market, SaleRow[] Sales, CartEstimate? Estimate, string[] Scopes, string PriceRegion = "", string NotificationTransport = "Polling", string RosterStatus = "", bool Registering = false, string? ApprovalUrl = null)
+    GameDelivery[] Inbox, MarketView? Market, SaleRow[] Sales, CartEstimate? Estimate, string[] Scopes, string PriceRegion = "", string NotificationTransport = "Polling", string RosterStatus = "", bool Registering = false, string? ApprovalUrl = null, Guid? CartInstance = null, long RecoveryRevision = 0)
 {
     public override string ToString() => $"ClientView {{ Connected = {Connected}, pairing credentials redacted }}";
 }
@@ -48,6 +48,10 @@ public sealed class ClientWorker : IDisposable
     private int captureGeneration;
     public void CancelQueuedCaptures()=>Interlocked.Increment(ref captureGeneration);
     private int inventoryGeneration;
+    private int inventoryBatchReserved;
+    private PendingInventory? pendingInventory;
+    private DateTimeOffset nextInventory;
+    private sealed record PendingInventory(ListEditTarget Target, int Generation, InventoryBatch Batch);
     public int InventoryGeneration=>Volatile.Read(ref inventoryGeneration);
     public void CancelQueuedInventory()=>Interlocked.Increment(ref inventoryGeneration);
     private ClientView view;
@@ -79,7 +83,7 @@ public sealed class ClientWorker : IDisposable
         while(toasts.TryDequeue(out _)){}queuedToasts.Clear();CancelQueuedCaptures();
         status="Disconnected. Saved cart work remains bound to its original account and server.";
     });}
-    public bool Refresh()=>Offer(async()=>{await RefreshAccount();nextNotifications=DateTimeOffset.MinValue;nextCart=DateTimeOffset.MinValue;});
+    public bool Refresh()=>Offer(async()=>{await connection!.Restore(stop.Token,true);await RefreshAccount();nextNotifications=DateTimeOffset.MinValue;nextCart=DateTimeOffset.MinValue;});
     public bool SelectList(int id){CancelQueuedInventory();return Offer(()=>OpenList(id));}
     private async Task OpenList(int id)
     {
@@ -95,15 +99,22 @@ public sealed class ClientWorker : IDisposable
         worlds??=await connection!.Public<WorldDirectory>("/api/v1/world_data",stop.Token);
         priceRegion=worlds.RegionFor(current,home);
     });
-    public bool Edit(object edit)=>Offer(()=>{
-        if(!CanEdit())throw new InvalidOperationException("Connect with list editing and select a writable cart.");
-        cart!.Edit(edit);estimate=null;nextCart=DateTimeOffset.MinValue;status="Saved locally; synchronizing…";return Task.CompletedTask;
+    private bool MatchesDestination(ListEditTarget? target) => connection?.Connected==true
+        &&target?.MatchesDestination(connection.Session,cart?.Id,cart?.InstanceId)==true;
+    private bool RejectChangedDestination()
+    {
+        status="The list or account changed. Choose the destination and try again.";
+        return false;
+    }
+    public bool Edit(CartCommandTarget? target,object edit)=>target is not null&&Offer(()=>{
+        if(!CartCommands.Edit(target,connection?.Session,cart,CanEdit(),edit)){RejectChangedDestination();return Task.CompletedTask;}
+        estimate=null;nextCart=DateTimeOffset.MinValue;status="Saved locally; synchronizing…";return Task.CompletedTask;
     });
     public bool AddItem(ListEditTarget target,int item,string quality="any",int quantity=1)
     {
         if(!target.Matches(View)||item<=0||quantity is <1 or >1_000_000||quality is not ("any" or "nq" or "hq"))return false;
         return Offer(()=>{
-            if(!target.Matches(connection?.Session,cart?.Id,CanEdit())) {
+            if(!target.Matches(connection?.Session,cart?.Id,CanEdit(),cart?.InstanceId)) {
                 status="The list or account changed. Choose the destination and add the item again.";
                 return Task.CompletedTask;
             }
@@ -115,28 +126,74 @@ public sealed class ClientWorker : IDisposable
     }
     public bool ApplyInventoryGains(ListEditTarget target,int generation,InventoryGain[] gains)
     {
-        if(generation!=InventoryGeneration||!target.Matches(View)||gains.Length>4096)return false;
-        var pending=gains.ToArray();
-        return Offer(()=>{
-            if(generation!=InventoryGeneration||!target.Matches(connection?.Session,cart?.Id,CanEdit()))return Task.CompletedTask;
-            var deltas=InventoryProgress.Allocate(cart!.Document.View.Rows,pending);
-            long applied=0;
-            foreach(var delta in deltas) {
-                if(generation!=InventoryGeneration)break;
-                cart.Edit(new{kind="add_acquired",item_id=delta.ItemId,quality=delta.Quality,delta=delta.Quantity});
-                applied+=delta.Quantity;
+        if(generation!=InventoryGeneration||!target.Matches(View)||gains.Length>4096
+            ||Interlocked.CompareExchange(ref inventoryBatchReserved,1,0)!=0)return false;
+        var gainsCopy=gains.ToArray();
+        var accepted=Offer(()=>{
+            if(generation!=InventoryGeneration||!MatchesDestination(target)||!CanTrackInventory()) {
+                Interlocked.Exchange(ref inventoryBatchReserved,0);return Task.CompletedTask;
             }
-            if(applied>0){estimate=null;nextCart=DateTimeOffset.MinValue;status=$"Marked {applied:N0} units acquired from inventory. Saved locally; synchronizing…";}
+            pendingInventory=new(target,generation,new InventoryBatch(InventoryProgress.Allocate(cart!.Document.View.Rows,gainsCopy)));
+            ResumeInventory();
             return Task.CompletedTask;
         });
+        if(!accepted)Interlocked.Exchange(ref inventoryBatchReserved,0);
+        return accepted;
     }
-    public bool RetrySave()=>Offer(()=>{cart?.Save();nextCart=DateTimeOffset.MinValue;return Task.CompletedTask;});
-    public bool UseServerCopy()=>Offer(()=>{cart?.UseServer();nextCart=DateTimeOffset.MinValue;return Task.CompletedTask;});
-    public bool RetryRecovery()=>Offer(()=>{cart?.Backup("recovery-original");cart?.Document.RetryRecovery();cart?.Save();nextCart=DateTimeOffset.MinValue;return Task.CompletedTask;});
-    public bool Estimate()=>Offer(async()=>{
-        if(cart is null)throw new InvalidOperationException("Select a cart first.");
+    private void ResumeInventory()
+    {
+        if(pendingInventory is not { } pending)return;
+        if(pending.Generation!=InventoryGeneration||!MatchesDestination(pending.Target)) {
+            pendingInventory=null;Interlocked.Exchange(ref inventoryBatchReserved,0);return;
+        }
+        var activeCart=cart!;
+        if(activeCart.Document.View.RecoveryReview)return;
+        nextInventory=DateTimeOffset.UtcNow.AddSeconds(15);
+        try {
+            // A previously queued manual edit may also have failed to save.
+            if(activeCart.Document.View.AwaitingPersist)activeCart.Save();
+            // Persist an already-mutated delta before attempting any later delta.
+            pending.Batch.Resume(
+                delta=>activeCart.Document.Edit(new{kind="add_acquired",item_id=delta.ItemId,quality=delta.Quality,delta=delta.Quantity}),
+                ()=>activeCart.Save(),
+                ()=>pending.Generation==InventoryGeneration&&MatchesDestination(pending.Target)&&CanEdit(),
+                delta=>InventoryProgress.ClampToRemaining(activeCart.Document.View.Rows,delta));
+            estimate=null;nextCart=DateTimeOffset.MinValue;
+            status=$"Marked {pending.Batch.Applied:N0} units acquired from inventory. Saved locally; synchronizing...";
+            if(pending.Batch.Complete){pendingInventory=null;Interlocked.Exchange(ref inventoryBatchReserved,0);}
+        }
+        catch(Exception) when(pending.Batch.AwaitingPersist||activeCart.Document.View.AwaitingPersist) {
+            estimate=null;
+            status=$"Inventory progress paused after {pending.Batch.Applied:N0} units; retry saving to finish the retained batch.";
+        }
+        catch(Exception) {
+            // Native admission can require a sync/ack before the next edit fits.
+            // Keep the unmutated cursor and let the rest of the worker loop run.
+            status="Inventory progress is waiting for cart synchronization. Remaining gains are retained.";
+            nextCart=DateTimeOffset.MinValue;
+        }
+    }
+    public bool RetrySave(CartCommandTarget? target)=>target is not null&&Offer(()=>{
+        if(connection?.Connected!=true||target?.Matches(connection?.Session,cart)!=true){RejectChangedDestination();return Task.CompletedTask;}
+        cart!.Save();ResumeInventory();nextCart=DateTimeOffset.MinValue;return Task.CompletedTask;
+    });
+    private bool Recover(RecoveryChoiceTarget? target,bool useServer)=>target is not null&&Offer(()=>{
+        if(connection?.Connected==true&&target.Matches(connection.Session,cart)&&(!useServer||cart!.Document.View.HasServerCopy)) {
+            // A server-copy choice supersedes pending inventory for the discarded document.
+            if(useServer)CancelQueuedInventory();
+            CartCommands.Recover(target,connection?.Session,cart,useServer);
+            nextCart=DateTimeOffset.MinValue;
+        }
+        else status="The recovery choices changed. Review the current copies and choose again.";
+        return Task.CompletedTask;
+    });
+    public bool UseServerCopy(RecoveryChoiceTarget? target)=>Recover(target,true);
+    public bool RetryRecovery(RecoveryChoiceTarget? target)=>Recover(target,false);
+    public bool Estimate(CartCommandTarget? target)=>target is not null&&Offer(async()=>{
+        if(connection?.Connected!=true||target?.Matches(connection?.Session,cart)!=true){RejectChangedDestination();return;}
         await SyncCart();
-        estimate=await connection!.Send<CartEstimate>(HttpMethod.Get,$"/api/v1/plugin/lists/{cart.Id}/estimate",null,stop.Token);
+        if(!target.Matches(connection?.Session,cart))return;
+        estimate=await connection!.Send<CartEstimate>(HttpMethod.Get,$"/api/v1/plugin/lists/{cart!.Id}/estimate",null,stop.Token);
         status="Market estimate refreshed. Prices are not reserved; whole stacks may cost more.";
     });
     public bool Observe(ObservedCharacter observation)=>Offer(async()=>{
@@ -206,6 +263,9 @@ public sealed class ClientWorker : IDisposable
     });
 
     private static string PositiveId(string id)=>long.TryParse(id,out var value)&&value>0&&value.ToString()==id?id:throw new ArgumentException("Invalid identifier.");
+    private bool CanTrackInventory()=>connection?.Connected==true&&connection.HasScope("lists:write")&&cart is not null
+        &&!cart.AccessDenied&&lists.Any(list=>list.List.Id==cart.Id&&list.CanWrite)
+        &&cart.Document.View.Ready&&!cart.Document.View.RecoveryReview;
     private bool CanEdit()=>connection?.Connected==true&&connection.HasScope("lists:write")&&cart is not null
         &&!cart.AccessDenied
         &&lists.Any(l=>l.List.Id==cart.Id&&l.CanWrite)&&cart.Document.View.Ready&&!cart.Document.View.RecoveryReview&&!cart.Document.View.AwaitingPersist;
@@ -298,14 +358,28 @@ public sealed class ClientWorker : IDisposable
     private void Publish()
     {
         var connected=connection?.Connected==true;
-        Volatile.Write(ref view,new ClientView(connected,status,connection?.StorageMode??"",connection?.HumanCode,connection?.VerificationUrl??endpoint.At("/plugin/verify").AbsoluteUri,
-            connection?.Session,connected?lists:[],cart?.Id,cart?.Document.View,CanEdit(),connected?characters:[],connected?inbox.ToArray():[],market,sales,estimate,connection?.Session?.Scopes??[],priceRegion,Volatile.Read(ref feedReady)!=0?"Live notifications (SSE)":"Polling fallback",connected?rosterStatus:"",registering,connection?.ApprovalUrl));
+        var visibleStatus=pendingInventory is { } pending&&cart?.Document.View.AwaitingPersist==true
+            ? $"Inventory progress paused after {pending.Batch.Applied:N0} units; retry saving to finish the retained batch."
+            : status;
+        Volatile.Write(ref view,new ClientView(connected,visibleStatus,connection?.StorageMode??"",connection?.HumanCode,connection?.VerificationUrl??endpoint.At("/plugin/verify").AbsoluteUri,
+            connection?.Session,connected?lists:[],cart?.Id,cart?.Document.View,CanEdit(),connected?characters:[],connected?inbox.ToArray():[],market,sales,estimate,connection?.Session?.Scopes??[],priceRegion,Volatile.Read(ref feedReady)!=0?"Live notifications (SSE)":"Polling fallback",connected?rosterStatus:"",registering,connection?.ApprovalUrl,cart?.InstanceId,cart?.RecoveryRevision??0));
+    }
+    private async Task<Connection> AcquireConnection()
+    {
+        for(var attempt=0;;attempt++) {
+            stop.Token.ThrowIfCancellationRequested();
+            try{return new Connection(root,endpoint,profile);}
+            catch(IOException) when(attempt<20) {
+                status="Waiting for the previous Ultros instance to finish closing...";Publish();
+                await Task.Delay(500,stop.Token);
+            }
+        }
     }
     private async Task Run()
     {
         try
         {
-            connection=new Connection(root,endpoint,profile);
+            connection=await AcquireConnection();
             await connection.Initialize(stop.Token);status=connection.Status;Publish();
             while(!stop.IsCancellationRequested)
             {
@@ -319,7 +393,9 @@ public sealed class ClientWorker : IDisposable
                 }
                 try
                 {
+                    if(pendingInventory is not null&&(pendingInventory.Generation!=InventoryGeneration||DateTimeOffset.UtcNow>=nextInventory))ResumeInventory();
                     if(await connection.PollPairing(stop.Token)){status=connection.Status;nextLists=nextNotifications=nextCart=DateTimeOffset.MinValue;}
+                    if(await connection.Restore(stop.Token)){status=connection.Status;nextLists=nextNotifications=nextCart=DateTimeOffset.MinValue;}
                     if(connection.Connected)
                     {
                         if(loadedDevice!=connection.Session!.Id){CancelQueuedInventory();await StopFeed();cart?.Dispose();cart=null;estimate=null;rosterStatus="";LoadInbox();nextLists=nextNotifications=DateTimeOffset.MinValue;}
@@ -328,7 +404,10 @@ public sealed class ClientWorker : IDisposable
                         if(DateTimeOffset.UtcNow>=nextNotifications&&connection.HasScope("notifications:read"))await PollNotifications();
                         if(DateTimeOffset.UtcNow>=nextCart&&cart is not null){await SyncCart();nextCart=DateTimeOffset.UtcNow.AddSeconds(60);}
                     }
-                    else if(notificationFeed is not null)await StopFeed();
+                    else {
+                        if(connection.CanRestore)status=connection.Status;
+                        if(notificationFeed is not null)await StopFeed();
+                    }
                 }
                 catch(OperationCanceledException)when(stop.IsCancellationRequested){throw;}
                 catch(Exception e){status=e is ApiFailure a?a.Message:SafeError(e);nextLists=nextNotifications=nextCart=DateTimeOffset.UtcNow.AddSeconds(15);}

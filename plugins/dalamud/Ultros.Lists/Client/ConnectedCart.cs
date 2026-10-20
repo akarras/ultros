@@ -9,17 +9,22 @@ internal sealed class ConnectedCart : IDisposable
     private readonly string origin;
     private readonly string account;
     internal int Id { get; }
+    internal Guid InstanceId { get; } = Guid.NewGuid();
+    internal long RecoveryRevision { get; private set; }
     internal bool CanWrite { get; set; }
     internal bool AccessDenied { get; private set; }
     internal Document Document { get; }
     private sealed record Saved(int Format, string Origin, string Account, int List, JsonElement Checkpoint);
 
-    internal ConnectedCart(Connection connection, int id)
+    internal ConnectedCart(Connection connection, int id) : this(connection.Directory,
+        connection.Endpoint.Origin.AbsoluteUri, connection.Session?.AccountId ?? throw new InvalidOperationException("Connect first."), id) { }
+
+    internal ConnectedCart(string profileDirectory, string origin, string account, int id)
     {
-        account = connection.Session?.AccountId ?? throw new InvalidOperationException("Connect first.");
-        origin = connection.Endpoint.Origin.AbsoluteUri;
+        this.account = account;
+        this.origin = origin;
         Id = id;
-        var directory = Path.Combine(connection.Directory, "accounts", account, "lists");
+        var directory = Path.Combine(profileDirectory, "accounts", account, "lists");
         Directory.CreateDirectory(directory);
         path = Path.Combine(directory, id.ToString() + ".json");
         JsonElement? checkpoint = null;
@@ -49,11 +54,15 @@ internal sealed class ConnectedCart : IDisposable
         var bytes = JsonSerializer.SerializeToUtf8Bytes(new Saved(1, origin, account, Id, Document.Checkpoint()), Protocol.Json);
         AtomicFile.Write(path + "." + suffix, bytes);
     }
-    internal void UseServer()
+    internal void ResolveRecovery(bool useServer)
     {
+        // Consume a displayed choice before backup/mutation, even if saving fails.
+        RecoveryRevision++;
         Backup("recovery-original");
-        Document.UseServer(); Save();
+        if(useServer)Document.UseServer();else Document.RetryRecovery();
+        Save();
     }
+    internal string Receive(SyncReply reply){RecoveryRevision++;return Document.ReceiveSync(reply);}
     internal async Task Sync(Connection connection, CancellationToken cancellation)
     {
         if (connection.Session?.AccountId != account) throw new InvalidOperationException("Reconnect the cart's original account.");
@@ -69,7 +78,7 @@ internal sealed class ConnectedCart : IDisposable
             {
                 var reply = await connection.Send<SyncReply>(HttpMethod.Post, $"/api/v1/plugin/lists/{Id}/sync", request, cancellation).ConfigureAwait(false);
                 Backup("before-sync");
-                var status = Document.ReceiveSync(reply);
+                var status = Receive(reply);
                 if (Document.View.AwaitingPersist) Save();
                 if (Document.View.RecoveryReview || status == "snapshot_required") return;
                 var next = Document.PrepareSync();

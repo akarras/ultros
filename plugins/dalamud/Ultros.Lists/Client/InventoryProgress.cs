@@ -23,6 +23,15 @@ public sealed class InventoryProgress
             .Select(pair=>new InventoryGain(pair.Key.ItemId,pair.Key.Hq,pair.Value-baseline.GetValueOrDefault(pair.Key))).ToArray();
     }
 
+    public static AcquiredDelta? ClampToRemaining(IEnumerable<CartRow> rows, AcquiredDelta delta)
+    {
+        var row=rows.FirstOrDefault(row=>row.ItemId==delta.ItemId&&row.Quality==delta.Quality);
+        if(row is null||delta.Quantity<=0)return null;
+        var need=Math.Max(0,row.Need);
+        var quantity=Math.Min(delta.Quantity,need-Math.Clamp(row.Acquired,0,need));
+        return quantity>0?delta with{Quantity=quantity}:null;
+    }
+
     public static AcquiredDelta[] Allocate(IEnumerable<CartRow> rows, IEnumerable<InventoryGain> gains)
     {
         var remaining=new Dictionary<(int ItemId,string Quality),long>();
@@ -42,5 +51,30 @@ public sealed class InventoryProgress
             }
         }
         return deltas.Select(pair=>new AcquiredDelta(pair.Key.ItemId,pair.Key.Quality,pair.Value)).ToArray();
+    }
+}
+
+/// <summary>Resume a bounded batch after persistence failure without replaying mutated deltas.</summary>
+internal sealed class InventoryBatch(AcquiredDelta[] deltas)
+{
+    private int cursor;
+    private bool needsSave;
+    internal long Applied { get; private set; }
+    internal bool Complete => cursor == deltas.Length && !needsSave;
+    internal bool AwaitingPersist => needsSave;
+    internal void Resume(Action<AcquiredDelta> mutate, Action save, Func<bool> valid,
+        Func<AcquiredDelta,AcquiredDelta?>? revalidate=null)
+    {
+        if(needsSave){save();needsSave=false;}
+        while(cursor<deltas.Length&&valid()) {
+            var original=deltas[cursor];
+            var delta=revalidate is null?original:revalidate(original);
+            // Intervening synchronization can remove or finish an unattempted row.
+            if(delta is null){cursor++;continue;}
+            mutate(delta);
+            // Mutation succeeded even if its following disk write fails.
+            cursor++;Applied+=delta.Quantity;needsSave=true;
+            save();needsSave=false;
+        }
     }
 }

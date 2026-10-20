@@ -191,7 +191,7 @@ pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), 
         Edit::Add(item) => {
             let key = RowKey::new(item.item_id, item.hq);
             let acquired = item.acquired.unwrap_or(0) as i64;
-            undo.group(|| {
+            undo.group(|doc| {
                 doc.add_row(key, item.quantity.unwrap_or(1) as i64, item.target_price)?;
                 if acquired != 0 {
                     doc.add_acquired(&key, acquired)?;
@@ -199,8 +199,8 @@ pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), 
                 Ok(())
             })
         }
-        Edit::AddMany(items) => undo.group(|| {
-            for item in items {
+        Edit::AddMany(items) => undo.group(|doc| {
+            for item in &items {
                 let key = RowKey::new(item.item_id, item.hq);
                 doc.add_row(key, item.quantity.unwrap_or(1) as i64, item.target_price)?;
                 let acquired = item.acquired.unwrap_or(0) as i64;
@@ -215,15 +215,15 @@ pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), 
                 return Ok(());
             };
             let before = doc.row(&key).expect("find_key confirmed the row exists");
-            undo.group(|| apply_edit(doc, &before, &item))
+            undo.group(|doc| apply_edit(doc, &before, &item))
         }
-        Edit::Remove(id) => undo.group(|| match find_key(doc, id) {
+        Edit::Remove(id) => undo.group(|doc| match find_key(doc, id) {
             Some(key) => doc.remove_row(&key),
             None => Ok(()),
         }),
-        Edit::RemoveMany(ids) => undo.group(|| {
-            for id in ids {
-                if let Some(key) = find_key(doc, id) {
+        Edit::RemoveMany(ids) => undo.group(|doc| {
+            for id in &ids {
+                if let Some(key) = find_key(doc, *id) {
                     doc.remove_row(&key)?;
                 }
             }
@@ -231,9 +231,9 @@ pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), 
         }),
         Edit::SetQuality(ids, hq) => {
             let quality = Quality::from(hq);
-            undo.group(|| {
-                for id in ids {
-                    if let Some(key) = find_key(doc, id)
+            undo.group(|doc| {
+                for id in &ids {
+                    if let Some(key) = find_key(doc, *id)
                         && key.quality != quality
                     {
                         doc.set_quality(&key, quality)?;
@@ -242,7 +242,7 @@ pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), 
                 Ok(())
             })
         }
-        Edit::AddAcquired { item_id, hq, delta } => undo.group(|| {
+        Edit::AddAcquired { item_id, hq, delta } => undo.group(|doc| {
             let rows = doc.rows();
             let has_room = |r: &&RowSnapshot| r.key.item_id == item_id && r.acquired < r.need;
             // The row matching the quality the caller is looking at, if it
@@ -257,11 +257,11 @@ pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), 
             };
             doc.add_acquired(&row.key, delta)
         }),
-        Edit::Rename { name, scope } => undo.group(|| {
+        Edit::Rename { name, scope } => undo.group(|doc| {
             doc.rename(&name)?;
             doc.set_scope(scope)
         }),
-        Edit::SetScope(scope) => undo.group(|| doc.set_scope(scope)),
+        Edit::SetScope(scope) => undo.group(|doc| doc.set_scope(scope)),
     }
 }
 

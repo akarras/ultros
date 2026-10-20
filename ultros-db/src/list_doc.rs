@@ -161,7 +161,7 @@ async fn load_or_create(
         .all(txn)
         .await?;
     let snapshots: Vec<RowSnapshot> = rows.iter().map(row_snapshot).collect();
-    let doc = ListDocument::from_rows(meta_of(&list), &snapshots);
+    let doc = ListDocument::try_from_rows(meta_of(&list), &snapshots)?;
     let fresh = list_doc::ActiveModel {
         list_id: Set(list_id),
         snapshot: Set(doc.export_snapshot()?),

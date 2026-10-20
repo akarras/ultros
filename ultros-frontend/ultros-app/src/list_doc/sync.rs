@@ -414,6 +414,9 @@ pub fn start(
                 } else {
                     *last_diff_version.borrow_mut() = None;
                     *rebased_for.borrow_mut() = None;
+                    if let Err(error) = handle.compact_acknowledged(&version) {
+                        log::warn!("list {list_id}: acknowledged history could not compact: {error}");
+                    }
                 }
                 handle.set_status("live");
                 handle.save_now();
