@@ -114,8 +114,29 @@ async function main() {
       const column = tool === 'scrip-sources' ? 'scrip-type' : 'profit';
       const heading = `.virtual-grid-heading[data-column="${column}"]`;
       await page.waitForSelector(heading);
-      await page.$eval(heading, e => e.scrollIntoView({block: 'center', inline: 'nearest'}));
-      await page.click(heading, {button: 'right'});
+      // Grid scrolling dismisses column menus. Settle the setup scroll before
+      // opening, then use a visible point so Puppeteer does not scroll it again.
+      const point = await page.$eval(heading, async element => {
+        element.scrollIntoView({block: 'center', inline: 'nearest'});
+        const grid = element.closest('.virtual-grid');
+        let previous, stable = 0;
+        for (let frame = 0; frame < 120; frame++) {
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          const rect = element.getBoundingClientRect();
+          const position = JSON.stringify([scrollX, scrollY, grid.scrollTop, grid.scrollLeft, rect.x, rect.y, rect.width, rect.height]);
+          stable = position === previous ? stable + 1 : 0;
+          previous = position;
+          if (stable >= 3) {
+            const port = grid.getBoundingClientRect();
+            const left = Math.max(0, port.left, rect.left), right = Math.min(innerWidth, port.right, rect.right);
+            const top = Math.max(0, port.top, rect.top), bottom = Math.min(innerHeight, port.bottom, rect.bottom);
+            if (right <= left || bottom <= top) throw new Error('Filter heading is not visible');
+            return {x: (left + right) / 2, y: (top + bottom) / 2};
+          }
+        }
+        throw new Error('Filter heading scroll did not settle');
+      });
+      await page.mouse.click(point.x, point.y, {button: 'right'});
       const form = `form[data-metric-filter="${column}"]`;
       await page.waitForSelector(form);
       const value = tool === 'scrip-sources' ? 'OrangeCrafters' : '0';

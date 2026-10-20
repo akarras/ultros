@@ -147,12 +147,19 @@ async function main() {
     const capture={capture_id:crypto.randomUUID().replaceAll("-",""),base_revision:retainer.revision,capture_epoch:current.capture_epoch,observed_at:new Date().toISOString(),complete:true,listings:[{slot:0,item_id:8,hq:false,quantity:5,unit_price:100},{slot:1,item_id:8,hq:false,quantity:5,unit_price:100}]};
     assert.equal((await api("POST","/api/v1/plugin/retainers/"+retainer.id+"/listings",capture,access)).status,200);
     await page.waitForSelector('[data-listing-source="in-game"]',{timeout:15000});
-    const ownListings=await api("GET","/api/v1/user/retainer/listings",undefined,undefined,{Cookie:cookies});
+    const ownListings=await api("GET","/api/v2/user/retainer/listings",undefined,undefined,{Cookie:cookies});
     assert.match(ownListings.headers.get("cache-control"),/private.*no-store/);
     const gameGroup=ownListings.data.retainers.find(([group])=>group?.kind==="unverified"&&group.character.id===character.id);
     assert(gameGroup,"observed characters must be grouped in the normal API");
     const pendingRows=gameGroup[1].find(([r])=>r.id===retainer.public_retainer_id)[1];
     assert.equal(pendingRows.length,2);assert(pendingRows.every(row=>row.id.source==="in_game"));
+    const legacyRoster=await api("GET","/api/v1/user/retainer",undefined,undefined,{Cookie:cookies});
+    assert.equal(legacyRoster.status,200);
+    assert(legacyRoster.data.retainers.every(([group])=>group===null||("id" in group&&!('kind' in group))),"v1 characters must keep their flat legacy shape");
+    const legacyListings=await api("GET","/api/v1/user/retainer/listings",undefined,undefined,{Cookie:cookies});
+    assert.equal(legacyListings.status,200);
+    assert(legacyListings.data.retainers.flatMap(([,retainers])=>retainers.flatMap(([,rows])=>rows)).every(row=>typeof row.id==="number"),"v1 listing ids must remain numbers");
+    assert.equal(legacyListings.data.retainers.flatMap(([,retainers])=>retainers.filter(([r])=>r.id===retainer.public_retainer_id).flatMap(([,rows])=>rows)).length,0,"v1 must never include private captures");
     const publicRows=await api("GET","/api/v1/retainer/listings/"+retainer.public_retainer_id);
     assert.equal(publicRows.data.listings.length,0,"private uploads must not be injected into public listings");
     for(const route of ["/retainers/listings","/retainers/listings/"+retainer.public_retainer_id]){
@@ -167,7 +174,7 @@ async function main() {
     assert((await page.$eval("body",e=>e.innerText)).includes("GameFixtureRetainer"),"unverified characters must participate in Undercuts");
     assert.deepEqual(pageErrors,[],"private listing routes must hydrate without browser exceptions");
     assert.equal((await api("POST","/api/v1/plugin/characters/"+character.id+"/uploads",{enabled:false,delete_snapshots:true},access)).status,200);
-    const deleted=await api("GET","/api/v1/user/retainer/listings",undefined,undefined,{Cookie:cookies});
+    const deleted=await api("GET","/api/v2/user/retainer/listings",undefined,undefined,{Cookie:cookies});
     assert(deleted.data.retainers.flatMap(([,retainers])=>retainers.flatMap(([,rows])=>rows)).every(row=>row.id.source!=="in_game"),"deleting private captures must remove their website rows");
     if(process.env.DALAMUD_RETAINER_ONLY==="1"){
       console.log("PASS: integrated onboarding and consent, real retainer registration, normal unverified-character grouping, immediate private listings in SSR/hydrated All Listings and individual views, separate identical stacks, Undercuts, account isolation, public-table separation and deletion.");

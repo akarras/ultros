@@ -39,7 +39,7 @@ pub fn import_server_snapshot(
     if (!local.rows().is_empty() || !local.meta().name.is_empty())
         && local
             .common_base(&server)
-            .is_none_or(|base| base.schema().is_none())
+            .is_none_or(|base| !base.shares_history(&server))
     {
         return Ok(ImportReport { pending: true });
     }
@@ -207,7 +207,10 @@ impl ClientSync {
                 self.review_server = snapshot.map(<[u8]>::to_vec);
             }
             HandshakePlan::Recover => {
-                return self.rebase(local, snapshot.expect("snapshot recovery"), version);
+                let snapshot = snapshot.ok_or_else(|| {
+                    DocError::InvalidStructure("snapshot required for recovery".into())
+                })?;
+                return self.rebase(local, snapshot, version);
             }
             HandshakePlan::Converged => {
                 self.last_diff_version = None;
@@ -215,9 +218,14 @@ impl ClientSync {
             }
             HandshakePlan::SendDiff => {}
         }
+        let replacement = if self.review {
+            None
+        } else {
+            local.compact_acknowledged(version)?
+        };
         self.awaiting_persist = true;
         Ok(SyncStep {
-            replacement: None,
+            replacement,
             status: if self.review {
                 "review"
             } else {
@@ -352,5 +360,90 @@ mod tests {
         assert!(state.prepare(&replacement).is_err());
         state.persisted();
         assert!(state.prepare(&replacement).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod legacy_snapshot_tests {
+    use super::*;
+    use crate::RowKey;
+
+    fn legacy() -> ListDocument {
+        let raw = loro::LoroDoc::new();
+        raw.get_map("meta").insert("name", "Legacy").unwrap();
+        let row = raw
+            .get_map("rows")
+            .insert_container("1:any", loro::LoroMap::new())
+            .unwrap();
+        row.insert("need", 4_i64).unwrap();
+        raw.commit();
+        ListDocument::from_snapshot(&raw.export(loro::ExportMode::Snapshot).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn repeated_related_legacy_snapshots_merge_without_review() {
+        let server = legacy();
+        let local = ListDocument::empty_peer();
+        let mut sync = ClientSync::default();
+        let snapshot = server.export_snapshot().unwrap();
+        for _ in 0..2 {
+            sync.receive(
+                &local,
+                &server.version(),
+                SyncPayload::Snapshot(snapshot.clone()),
+            )
+            .unwrap();
+            assert!(!sync.review);
+            sync.persisted();
+        }
+        local.add_acquired(&RowKey::new(1, None), 2).unwrap();
+        server.add_row(RowKey::new(2, None), 3, None).unwrap();
+        sync.receive(
+            &local,
+            &server.version(),
+            SyncPayload::Snapshot(server.export_snapshot().unwrap()),
+        )
+        .unwrap();
+        assert!(!sync.review);
+        assert_eq!(local.schema(), None);
+        assert_eq!(local.rows().len(), 2);
+        assert_eq!(local.row(&RowKey::new(1, None)).unwrap().acquired, 2);
+    }
+
+    #[test]
+    fn identical_visible_legacy_lists_do_not_prove_shared_history() {
+        let local = legacy();
+        let server = legacy();
+        assert_eq!(local.rows(), server.rows());
+        let mut sync = ClientSync::default();
+        sync.receive(
+            &local,
+            &server.version(),
+            SyncPayload::Snapshot(server.export_snapshot().unwrap()),
+        )
+        .unwrap();
+        assert!(sync.review);
+    }
+
+    #[test]
+    fn compacted_shared_legacy_history_recovers_pending_acquisitions() {
+        let server = legacy();
+        let local = ListDocument::from_snapshot(&server.export_snapshot().unwrap()).unwrap();
+        local.add_acquired(&RowKey::new(1, None), 2).unwrap();
+        server.add_row(RowKey::new(2, None), 3, None).unwrap();
+        let mut sync = ClientSync::default();
+        let step = sync
+            .receive(
+                &local,
+                &server.version(),
+                SyncPayload::Snapshot(server.export_shallow().unwrap()),
+            )
+            .unwrap();
+        let replacement = step.replacement.unwrap();
+        assert!(!sync.review);
+        assert!(sync.awaiting_persist);
+        assert_eq!(replacement.schema(), None);
+        assert_eq!(replacement.rows().len(), 2);
+        assert_eq!(replacement.row(&RowKey::new(1, None)).unwrap().acquired, 2);
     }
 }
