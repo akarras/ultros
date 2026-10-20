@@ -1,6 +1,26 @@
 //! The list document: one Loro CRDT per list, shared by the server peer and
 //! the browser. No Leptos, no database, no network (spec section 1).
 
+// This code also runs inside the game process. Keep fallible operations on
+// Result/Option paths; tests may still use assertions and fixture unwraps.
+#![forbid(unsafe_code)]
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unimplemented,
+        clippy::todo,
+        clippy::unreachable,
+        clippy::indexing_slicing,
+        clippy::string_slice,
+        clippy::arithmetic_side_effects,
+        clippy::exit
+    )
+)]
+
+pub mod client_sync;
 pub mod document;
 pub mod key;
 pub mod recovery;

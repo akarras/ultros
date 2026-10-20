@@ -8,7 +8,7 @@
 //!                                            target: i64 (absent = none), acquired: Counter } }
 //! ```
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use loro::{
@@ -77,6 +77,7 @@ pub enum SyncPayload {
 #[derive(Clone)]
 pub struct ListDocument {
     doc: LoroDoc,
+    preflighting: bool,
 }
 
 impl Default for ListDocument {
@@ -102,6 +103,15 @@ fn decode_version(bytes: &[u8]) -> Option<VersionVector> {
     VersionVector::decode(bytes).ok()
 }
 
+/// Loro's postcard map encoding permits different peer orders. Compare causal
+/// contents, including versions produced before Ultros canonicalized output.
+pub fn versions_equal(left: &[u8], right: &[u8]) -> bool {
+    left == right
+        || decode_version(left)
+            .zip(decode_version(right))
+            .is_some_and(|(left, right)| left == right)
+}
+
 fn value_string(value: Option<ValueOrContainer>) -> Option<String> {
     match value {
         Some(ValueOrContainer::Value(LoroValue::String(s))) => Some(s.to_string()),
@@ -117,20 +127,31 @@ impl ListDocument {
     /// The schema write is one local commit, so a "fresh" document already has
     /// history; `from_snapshot` deliberately does not go through here, or every
     /// loaded copy would invent a redundant local operation of its own.
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::expect_used,
+            reason = "compatibility constructor: the pinned Loro insert on a fresh, attached map cannot fail; native callers use try_new"
+        )
+    )]
     pub fn new() -> Self {
+        Self::try_new().expect("fresh map insert")
+    }
+
+    /// Fallible construction for native hosts that must report initialization
+    /// failure instead of unwinding through their caller.
+    pub fn try_new() -> Result<Self, DocError> {
         let document = Self::blank();
-        document
-            .meta_map()
-            .insert(SCHEMA, SCHEMA_VERSION)
-            .expect("fresh map insert");
+        document.meta_map().insert(SCHEMA, SCHEMA_VERSION)?;
         document.doc.commit();
-        document
+        Ok(document)
     }
 
     /// No schema, no commits: the base for `from_snapshot`.
     fn blank() -> Self {
         Self {
             doc: LoroDoc::new(),
+            preflighting: false,
         }
     }
 
@@ -143,47 +164,229 @@ impl ListDocument {
     }
 
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self, DocError> {
+        loro_kv_store::decode_budget::with_decode_budget(32 * 1024 * 1024, || {
+            Self::from_snapshot_bounded(bytes)
+        })
+    }
+
+    fn from_snapshot_bounded(bytes: &[u8]) -> Result<Self, DocError> {
+        if bytes.len() > 8 * 1024 * 1024 {
+            return Err(DocError::InvalidStructure("snapshot byte limit".into()));
+        }
         let document = Self::blank();
         if document.doc.import(bytes)?.pending.is_some() {
             return Err(DocError::IncompleteSnapshot);
         }
         crate::validation::validate(&document.doc)?;
+        document.validate_history_budget()?;
         Ok(document)
     }
 
+    fn validate_history_budget(&self) -> Result<(), DocError> {
+        let version = self.doc.oplog_vv();
+        let root = self.doc.shallow_since_vv().to_vv();
+        let retained = version.iter().fold(0_u64, |sum, (peer, counter)| {
+            sum.saturating_add(
+                counter
+                    .saturating_sub(root.get(peer).copied().unwrap_or(0))
+                    .max(0) as u64,
+            )
+        });
+        if retained > 100_000 {
+            return Err(DocError::InvalidStructure("retained history limit".into()));
+        }
+        // Force lazy history blocks through the decompression budget now, on
+        // an isolated document, rather than first expanding them during undo.
+        drop(self.doc.export_json_updates(&root, &version));
+        Ok(())
+    }
+
+    /// Prove that a prospective local action is persistable before notifying live
+    /// observers or adding an undo step. The isolated peer uses the same writer
+    /// identity, so its prospective operation IDs match the live action.
+    pub(crate) fn preflight<R>(
+        &self,
+        edit: impl FnOnce(&Self) -> Result<R, DocError>,
+    ) -> Result<(), DocError> {
+        if self.preflighting {
+            return Ok(());
+        }
+        let mut candidate = Self::from_snapshot(&self.export_snapshot()?)?;
+        candidate.doc.set_peer_id(self.doc.peer_id())?;
+        candidate.preflighting = true;
+        edit(&candidate)?;
+        // Validate both encoded size and eager decoded history with the same
+        // limits that a future cache/checkpoint open will use.
+        drop(Self::from_snapshot(&candidate.export_snapshot()?)?);
+        Ok(())
+    }
+
+    pub(crate) fn prechecked(&self) -> Self {
+        let mut document = self.clone();
+        document.preflighting = true;
+        document
+    }
+
+    /// Undo can restore deleted rows (up to eight typed operations per source
+    /// operation). Skipped entries create no inverse operations; Loro stops at
+    /// the first nonempty inverse. Reserve the largest recorded source span
+    /// before asking Loro to pop anything. Each inverse operation carries at
+    /// most one scalar payload. The largest scalar in retained history or the
+    /// shallow baseline bounds its data; a per-operation allowance covers binary
+    /// identifiers, containers and change metadata without compression estimates.
+    pub(crate) fn reserve_undo(&self, source_operations: u64) -> Result<(), DocError> {
+        let version = self.doc.oplog_vv();
+        let root = self.doc.shallow_since_vv().to_vv();
+        let retained: u64 = version
+            .iter()
+            .map(|(peer, counter)| {
+                counter
+                    .saturating_sub(root.get(peer).copied().unwrap_or(0))
+                    .max(0) as u64
+            })
+            .sum();
+        let extra = source_operations.saturating_mul(8);
+        let history = self.doc.export_json_updates(&root, &version);
+        fn largest_scalar(value: &serde_json::Value) -> usize {
+            match value {
+                serde_json::Value::String(value) => value.len(),
+                serde_json::Value::Array(values) => {
+                    values.iter().map(largest_scalar).max().unwrap_or(0)
+                }
+                serde_json::Value::Object(values) => values
+                    .iter()
+                    .map(|(key, value)| key.len().max(largest_scalar(value)))
+                    .max()
+                    .unwrap_or(0),
+                _ => 0,
+            }
+        }
+        let history_scalar = largest_scalar(
+            &serde_json::to_value(&history)
+                .map_err(|_| DocError::InvalidStructure("undo history encoding".into()))?,
+        );
+        // A shallow root may hold the previous value of a renamed/deleted
+        // field, absent from the retained changes and latest visible state.
+        let snapshot = self.export_snapshot()?;
+        let (baseline, remaining) = loro_kv_store::decode_budget::with_decode_budget(
+            32 * 1024 * 1024,
+            || -> Result<_, DocError> {
+                let baseline = Self::from_snapshot(&snapshot)?;
+                Ok((
+                    baseline,
+                    loro_kv_store::decode_budget::remaining().unwrap_or(0),
+                ))
+            },
+        )?;
+        baseline
+            .doc
+            .checkout(&baseline.doc.shallow_since_frontiers())?;
+        let baseline_scalar = largest_scalar(
+            &serde_json::to_value(baseline.doc.get_deep_value())
+                .map_err(|_| DocError::InvalidStructure("undo baseline encoding".into()))?,
+        );
+        // A change may depend on every causal peer after a wide offline merge.
+        // Charge for that frontier explicitly instead of assuming a small header.
+        let frontier_overhead = version.len().saturating_add(1).saturating_mul(64);
+        let reserve = (extra as usize).saturating_mul(
+            history_scalar
+                .max(baseline_scalar)
+                .saturating_add(512)
+                .saturating_add(frontier_overhead),
+        );
+        if retained.saturating_add(extra) > 100_000
+            || snapshot.len().saturating_add(reserve) > 8 * 1024 * 1024
+            || reserve > remaining
+        {
+            return Err(DocError::InvalidStructure(
+                "undo needs more history capacity; sync this list before trying again".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Whether the documents share actual operations, including legacy history
+    /// which has no schema marker. Visible contents alone cannot prove ancestry.
+    pub(crate) fn shares_history(&self, other: &Self) -> bool {
+        self.doc
+            .oplog_vv()
+            .intersection(&other.doc.oplog_vv())
+            .iter()
+            .any(|(_, counter)| *counter > 0)
+    }
+
+    /// Trim only history whose exact current version the server acknowledged.
+    /// The caller must replace undo/subscriptions and durably save this copy
+    /// before accepting another edit. A pending local operation forbids trimming.
+    pub fn compact_acknowledged(&self, acknowledged: &[u8]) -> Result<Option<Self>, DocError> {
+        if !versions_equal(&self.version(), acknowledged) {
+            return Ok(None);
+        }
+        let version = self.doc.oplog_vv();
+        let root = self.doc.shallow_since_vv().to_vv();
+        let retained: u64 = version
+            .iter()
+            .map(|(peer, counter)| {
+                counter
+                    .saturating_sub(root.get(peer).copied().unwrap_or(0))
+                    .max(0) as u64
+            })
+            .sum();
+        if retained < 50_000 {
+            return Ok(None);
+        }
+        Ok(Some(Self::from_snapshot(&self.export_shallow()?)?))
+    }
+
     /// Build a document from relational rows: the server's first-touch path.
+    /// Fallible first-touch constructor for persisted server documents.
+    pub fn try_from_rows(meta: MetaSnapshot, rows: &[RowSnapshot]) -> Result<Self, DocError> {
+        if rows.iter().map(|r| r.key).collect::<BTreeSet<_>>().len() != rows.len() {
+            return Err(DocError::InvalidStructure("duplicate row keys".into()));
+        }
+        let document = Self::build_rows(meta, rows)?;
+        Self::from_snapshot(&document.export_snapshot()?)
+    }
+
+    /// Trusted construction helper. Production persistence should use
+    /// `try_from_rows`, which checks the resulting serialized/decode budgets.
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::expect_used,
+            reason = "legacy trusted fixture constructor; persisted/server input uses try_from_rows and the native ABI does not call this"
+        )
+    )]
     pub fn from_rows(meta: MetaSnapshot, rows: &[RowSnapshot]) -> Self {
         debug_assert_eq!(
             rows.iter().map(|r| r.key).collect::<BTreeSet<_>>().len(),
             rows.len(),
             "from_rows was given duplicate row keys; the later row would silently overwrite the earlier one"
         );
-        let document = Self::new();
+        Self::build_rows(meta, rows).expect("trusted fresh row insert")
+    }
+
+    fn build_rows(meta: MetaSnapshot, rows: &[RowSnapshot]) -> Result<Self, DocError> {
+        let document = Self::try_new()?;
         let meta_map = document.meta_map();
-        // Inserting plain values into a fresh attached map cannot fail.
-        meta_map
-            .insert(NAME, meta.name.as_str())
-            .expect("fresh map insert");
+        meta_map.insert(NAME, meta.name.as_str())?;
         if let Some(scope) = meta.scope {
-            meta_map
-                .insert(SCOPE, encode_scope(scope).as_str())
-                .expect("fresh map insert");
+            meta_map.insert(SCOPE, encode_scope(scope).as_str())?;
         }
         // `new()` already wrote `meta.schema`.
         for row in rows {
-            document
-                .insert_row(row.key, row.need, row.target, row.acquired)
-                .expect("fresh row insert");
+            document.insert_row(row.key, row.need, row.target, row.acquired)?;
         }
         document.doc.commit();
-        document
+        Ok(document)
     }
 
     pub fn peer_id(&self) -> u64 {
         self.doc.peer_id()
     }
 
-    /// The raw document, for the undo manager.
+    /// Trusted raw access for undo and fixtures. Raw writes/commit bypass typed
+    /// action preflight and must not be used by client edit or persistence flows.
     pub fn inner(&self) -> &LoroDoc {
         &self.doc
     }
@@ -297,17 +500,20 @@ impl ListDocument {
         }
     }
 
+    /// Commit trusted raw writes. Supported client edits use checked typed methods.
     pub fn commit(&self) {
         self.doc.commit();
     }
 
     pub fn rename(&self, name: &str) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.rename(name))?;
         self.meta_map().insert(NAME, name)?;
         self.doc.commit();
         Ok(())
     }
 
     pub fn set_scope(&self, scope: AnySelector) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.set_scope(scope))?;
         self.meta_map()
             .insert(SCOPE, encode_scope(scope).as_str())?;
         self.doc.commit();
@@ -321,6 +527,7 @@ impl ListDocument {
     /// two devices each adding 3 to a row of 2 converge to 5, not 8.
     /// `acquired` is the only additive field.
     pub fn add_row(&self, key: RowKey, need: i64, target: Option<i64>) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.add_row(key, need, target))?;
         match self.row_container(&key) {
             Some(row) => {
                 let current = value_i64(row.get(NEED)).unwrap_or(0);
@@ -339,6 +546,7 @@ impl ListDocument {
     }
 
     pub fn remove_row(&self, key: &RowKey) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.remove_row(key))?;
         if self.row_container(key).is_none() {
             return Err(DocError::MissingRow(*key));
         }
@@ -348,6 +556,7 @@ impl ListDocument {
     }
 
     pub fn set_need(&self, key: &RowKey, need: i64) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.set_need(key, need))?;
         let row = self.row_container(key).ok_or(DocError::MissingRow(*key))?;
         row.insert(NEED, need.max(0))?;
         self.doc.commit();
@@ -355,6 +564,7 @@ impl ListDocument {
     }
 
     pub fn set_target(&self, key: &RowKey, target: Option<i64>) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.set_target(key, target))?;
         let row = self.row_container(key).ok_or(DocError::MissingRow(*key))?;
         match target {
             Some(target) => row.insert(TARGET, target)?,
@@ -371,6 +581,7 @@ impl ListDocument {
     /// Move the row to another quality, carrying every field. Merges into a
     /// row that already has the target quality. Returns the new key.
     pub fn set_quality(&self, key: &RowKey, quality: Quality) -> Result<RowKey, DocError> {
+        self.preflight(|candidate| candidate.set_quality(key, quality))?;
         let snapshot = self.row(key).ok_or(DocError::MissingRow(*key))?;
         let new_key = RowKey {
             item_id: key.item_id,
@@ -381,20 +592,20 @@ impl ListDocument {
         }
         // Validate arithmetic before deleting the source: a rejected move must
         // leave both rows intact, including any pending document transaction.
-        let destination = self.row_container(&new_key);
-        let combined_need = destination
-            .as_ref()
+        let destination = self
+            .row_container(&new_key)
             .map(|existing| {
-                value_i64(existing.get(NEED))
+                let need = value_i64(existing.get(NEED))
                     .unwrap_or(0)
                     .checked_add(snapshot.need)
-                    .ok_or(DocError::QuantityOverflow)
+                    .ok_or(DocError::QuantityOverflow)?;
+                Ok::<_, DocError>((existing, need))
             })
             .transpose()?;
         self.rows_map().delete(&key.to_string())?;
         match destination {
-            Some(existing) => {
-                existing.insert(NEED, combined_need.expect("destination was validated"))?;
+            Some((existing, need)) => {
+                existing.insert(NEED, need)?;
                 if let Some(target) = snapshot.target {
                     existing.insert(TARGET, target)?;
                 }
@@ -410,6 +621,7 @@ impl ListDocument {
 
     /// Values are exact up to 2^53; the counter is an f64 underneath.
     pub fn add_acquired(&self, key: &RowKey, delta: i64) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.add_acquired(key, delta))?;
         let row = self.row_container(key).ok_or(DocError::MissingRow(*key))?;
         if delta != 0 {
             Self::counter(&row)?.increment(delta as f64)?;
@@ -432,9 +644,32 @@ impl ListDocument {
         self.add_acquired(key, delta)
     }
 
-    /// The encoded version vector: what this document has seen.
+    /// The encoded version vector: what this document has seen. Sorted peers
+    /// keep tokens stable across merge order, snapshot reload and runtimes.
+    /// This remains the same postcard map accepted by Loro's decoder.
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::expect_used,
+            reason = "postcard alloc serialization of an integer-only BTreeMap has no fallible user serializer or bounded output buffer"
+        )
+    )]
     pub fn version(&self) -> Vec<u8> {
-        self.doc.oplog_vv().encode()
+        let sorted: BTreeMap<_, _> = self
+            .doc
+            .oplog_vv()
+            .iter()
+            .map(|(&peer, &counter)| (peer, counter))
+            .collect();
+        postcard::to_allocvec(&sorted).expect("integer version map serializes")
+    }
+
+    /// Check operations, including losing/no-op metadata writes, rather than
+    /// only comparing the final projection when enforcing row-only grants.
+    pub fn row_only_since(&self, version: &[u8]) -> Result<bool, DocError> {
+        let start = decode_version(version)
+            .ok_or_else(|| DocError::InvalidStructure("invalid causal version".into()))?;
+        Ok(self.doc.export_json_updates(&start,&self.doc.oplog_vv()).changes.iter().all(|change|change.ops.iter().all(|op|!matches!(&op.container,loro::ContainerID::Root{name,..} if name.as_ref()!="rows"))))
     }
 
     /// Reconstruct the latest causally shared state from our durable operation
@@ -497,11 +732,17 @@ impl ListDocument {
     }
 
     pub fn import(&self, bytes: &[u8]) -> Result<ImportReport, DocError> {
+        if bytes.len() > 8 * 1024 * 1024 {
+            return Err(DocError::InvalidStructure("update byte limit".into()));
+        }
         // Never validate after mutating the live document: observers, undo and
         // persistence would already have seen a rejected partial projection.
         // Snapshot cloning also works for shallow documents (fork does not).
         let candidate = Self::from_snapshot(&self.export_snapshot()?)?;
-        let status = candidate.doc.import(bytes).map_err(|error| match error {
+        let status = loro_kv_store::decode_budget::with_decode_budget(32 * 1024 * 1024, || {
+            candidate.doc.import(bytes)
+        })
+        .map_err(|error| match error {
             // The bytes are well formed but hang off history a shallow
             // snapshot dropped. The caller answers with a fresh snapshot.
             loro::LoroError::ImportUpdatesThatDependsOnOutdatedVersion => {
@@ -512,8 +753,18 @@ impl ListDocument {
         if status.pending.is_some() {
             return Ok(ImportReport { pending: true });
         }
-        crate::validation::validate(&candidate.doc)?;
-        self.doc.import(bytes)?;
+        loro_kv_store::decode_budget::with_decode_budget(32 * 1024 * 1024, || {
+            crate::validation::validate(&candidate.doc)?;
+            candidate.validate_history_budget()
+        })?;
+        // Separate acceptable histories can become too large when combined.
+        // Validate the persisted merged form before touching the live peer.
+        drop(Self::from_snapshot(&candidate.export_snapshot()?)?);
+        // Each phase gets the same fresh limit. Spending the preflight's budget
+        // must not cause a valid live import to fail halfway through.
+        loro_kv_store::decode_budget::with_decode_budget(32 * 1024 * 1024, || {
+            self.doc.import(bytes)
+        })?;
         Ok(ImportReport { pending: false })
     }
 
@@ -650,6 +901,40 @@ mod tests {
         assert_eq!(copy.rows(), doc.rows());
         assert_eq!(copy.meta(), doc.meta());
         assert!(ListDocument::from_snapshot(b"not a snapshot").is_err());
+    }
+
+    #[test]
+    fn causal_versions_survive_opposite_merge_order_and_reopening() {
+        let base = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 100, 0)]);
+        let snapshot = base.export_snapshot().unwrap();
+        let mut updates = Vec::new();
+        for _ in 0..16 {
+            let peer = ListDocument::from_snapshot(&snapshot).unwrap();
+            peer.add_acquired(&RowKey::new(1, None), 1).unwrap();
+            updates.push(peer.export_since(&base.version()).unwrap());
+        }
+        let left = ListDocument::from_snapshot(&snapshot).unwrap();
+        let right = ListDocument::from_snapshot(&snapshot).unwrap();
+        for update in &updates {
+            left.import(update).unwrap();
+        }
+        for update in updates.iter().rev() {
+            right.import(update).unwrap();
+        }
+        let reopened = ListDocument::from_snapshot(&left.export_snapshot().unwrap()).unwrap();
+        assert_eq!(left.rows(), right.rows());
+        assert_eq!(left.version(), right.version());
+        assert_eq!(left.version(), reopened.version());
+        assert_eq!(
+            VersionVector::decode(&left.version()).unwrap(),
+            left.inner().oplog_vv()
+        );
+        assert!(matches!(
+            right
+                .sync_payload(&left.inner().oplog_vv().encode())
+                .unwrap(),
+            SyncPayload::UpToDate
+        ));
     }
 
     #[test]
@@ -879,6 +1164,20 @@ mod tests {
     }
 
     #[test]
+    fn fallible_constructors_preserve_schema_and_reject_duplicate_rows() {
+        let fresh = ListDocument::try_new().unwrap();
+        assert_eq!(fresh.schema(), Some(SCHEMA_VERSION));
+        assert!(fresh.rows().is_empty());
+        ListDocument::from_snapshot(&fresh.export_snapshot().unwrap()).unwrap();
+
+        let duplicate = row(1, Quality::Any, 4, 2);
+        assert!(matches!(
+            ListDocument::try_from_rows(meta(), &[duplicate, duplicate]),
+            Err(DocError::InvalidStructure(path)) if path == "duplicate row keys"
+        ));
+    }
+
+    #[test]
     fn a_new_document_carries_the_schema_version() {
         assert_eq!(ListDocument::new().schema(), Some(SCHEMA_VERSION));
         assert_eq!(
@@ -984,5 +1283,68 @@ mod tests {
             "an unreadable version gets everything"
         );
         assert!(a.is_ahead_of(&[]));
+    }
+}
+
+#[cfg(test)]
+mod budget_lifecycle_tests {
+    use super::*;
+
+    fn near_limit() -> ListDocument {
+        let document = ListDocument::new();
+        let meta = document.inner().get_map("meta");
+        for index in 1..100_000 {
+            meta.insert("name", if index % 2 == 0 { "a" } else { "b" })
+                .unwrap();
+            document.commit();
+        }
+        document
+    }
+
+    #[test]
+    fn refused_local_edit_leaves_the_last_accepted_snapshot_reopenable() {
+        let document = near_limit();
+        let before = document.version();
+        let name = document.meta().name;
+        assert!(document.rename("over budget").is_err());
+        assert_eq!(document.version(), before);
+        assert_eq!(document.meta().name, name);
+        let reopened = ListDocument::from_snapshot(&document.export_snapshot().unwrap()).unwrap();
+        assert_eq!(reopened.version(), before);
+        assert_eq!(reopened.meta(), document.meta());
+    }
+
+    #[test]
+    fn acknowledged_compaction_preserves_causality_and_refuses_pending_work() {
+        let document = near_limit();
+        assert!(document.compact_acknowledged(&[]).unwrap().is_none());
+        let version = document.version();
+        let compacted = document.compact_acknowledged(&version).unwrap().unwrap();
+        assert_eq!(compacted.version(), version);
+        assert_eq!(compacted.meta(), document.meta());
+        compacted.rename("more work").unwrap();
+        assert!(compacted.compact_acknowledged(&version).unwrap().is_none());
+        ListDocument::from_snapshot(&compacted.export_snapshot().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn shallow_documents_keep_more_than_4096_writer_versions() {
+        let document = ListDocument::new();
+        let key = RowKey::new(1, None);
+        document.add_row(key, 10_000, None).unwrap();
+        let row = document.row_container(&key).unwrap();
+        let counter = ListDocument::counter(&row).unwrap();
+        for peer in 1..=4097 {
+            document.inner().set_peer_id(peer).unwrap();
+            counter.increment(1.0).unwrap();
+            document.commit();
+        }
+        let version = document.version();
+        let reopened = ListDocument::from_snapshot(&document.export_shallow().unwrap()).unwrap();
+        assert_eq!(reopened.version(), version);
+        assert!(reopened.inner().oplog_vv().len() > 4096);
+        reopened.add_acquired(&key, 1).unwrap();
+        assert_eq!(reopened.row(&key).unwrap().acquired, 4098);
+        ListDocument::from_snapshot(&reopened.export_snapshot().unwrap()).unwrap();
     }
 }

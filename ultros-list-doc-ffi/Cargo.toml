@@ -1,0 +1,15 @@
+[package]
+name = "ultros-list-doc-ffi"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Experimental C ABI for the Ultros list document; no network or credentials."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+base64 = "0.22.1"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+ultros-list-doc = { path = "../ultros-list-doc" }

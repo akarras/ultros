@@ -2,6 +2,32 @@
 //! or leave half of a rejected operation in the document.
 use ultros_list_doc::{DocError, ListDocument, MetaSnapshot, Quality, RowKey, RowSnapshot};
 
+#[test]
+fn hidden_compressed_history_is_rejected_before_it_can_expand_without_a_limit() {
+    let raw = loro::LoroDoc::new();
+    raw.get_map("meta")
+        .insert("schema", ultros_list_doc::SCHEMA_VERSION)
+        .unwrap();
+    raw.get_map("meta")
+        .insert("name", "x".repeat(20 * 1024 * 1024))
+        .unwrap();
+    raw.commit();
+    raw.get_map("meta")
+        .insert("name", "Small visible name")
+        .unwrap();
+    raw.commit();
+    let encoded = raw.export(loro::ExportMode::Snapshot).unwrap();
+    assert!(
+        encoded.len() < 8 * 1024 * 1024,
+        "compressed fixture should bypass a wire-only check"
+    );
+    let result = std::panic::catch_unwind(|| ListDocument::from_snapshot(&encoded));
+    assert!(
+        matches!(result, Ok(Err(_))),
+        "reject the compressed history through an error, not a panic"
+    );
+}
+
 fn seeded() -> ListDocument {
     let doc = ListDocument::new();
     doc.rename("Safe list").unwrap();
@@ -247,7 +273,26 @@ fn explicit_versions_other_than_current_are_never_treated_as_legacy() {
 fn row_identity_bounds_and_out_of_range_counter_values_are_rejected() {
     for item in [-1, 0, i32::MAX] {
         let doc = ListDocument::new();
-        doc.add_row(RowKey::new(item, None), 1, None).unwrap();
+        let before = doc.version();
+        assert!(matches!(
+            doc.add_row(RowKey::new(item, None), 1, None),
+            Err(DocError::InvalidStructure(_))
+        ));
+        assert_eq!(doc.version(), before);
+        assert!(doc.rows().is_empty());
+        // The typed API now rejects before mutation; backups still need an
+        // independent malformed raw fixture at the decoder boundary.
+        let row = doc
+            .inner()
+            .get_map("rows")
+            .insert_container(&format!("{item}:any"), loro::LoroMap::new())
+            .unwrap();
+        row.insert("item", i64::from(item)).unwrap();
+        row.insert("quality", "any").unwrap();
+        row.insert("need", 1_i64).unwrap();
+        row.insert_container("acquired", loro::LoroCounter::new())
+            .unwrap();
+        doc.commit();
         assert!(matches!(
             ListDocument::from_snapshot(&doc.export_snapshot().unwrap()),
             Err(DocError::InvalidStructure(_))
@@ -361,4 +406,65 @@ fn full_row_keys_keep_known_hash_collisions_independent() {
     undo.undo().unwrap();
     assert_eq!(doc.row(&first).unwrap().need, 9);
     assert_eq!(doc.row(&second).unwrap().need, 3);
+}
+
+#[test]
+fn large_historical_versions_keep_full_shallow_and_collaborative_sync_working() {
+    let document = seeded();
+    for peer in 1..=5000_u64 {
+        document.inner().set_peer_id(u64::MAX - peer).unwrap();
+        document
+            .inner()
+            .get_map("meta")
+            .insert("name", if peer % 2 == 0 { "a" } else { "b" })
+            .unwrap();
+        document.commit();
+    }
+    assert!(document.inner().oplog_vv().len() > 4096);
+    assert!(document.version().len() > 49_152); // base64 necessarily exceeds 64 KiB
+    let subscribe = ultros_api_types::websocket::ClientMessage::SubscribeListDoc {
+        subscription_id: Some(1),
+        list_id: 1,
+        expected_user_id: Some(1),
+        version: document.version(),
+    };
+    let browser_message = serde_json::to_string(&subscribe).unwrap();
+    let browser_json: serde_json::Value = serde_json::from_str(&browser_message).unwrap();
+    assert!(
+        browser_json["SubscribeListDoc"]["version"].is_string(),
+        "browser causal bytes must use the base64 wire representation"
+    );
+    assert!(browser_message.len() > 65_536);
+    assert!(browser_message.len() < 16 * 1024 * 1024);
+    let decoded: ultros_api_types::websocket::ClientMessage =
+        serde_json::from_str(&browser_message).unwrap();
+    assert!(matches!(decoded,
+        ultros_api_types::websocket::ClientMessage::SubscribeListDoc { version, .. }
+        if version == document.version()));
+    let receiver = ListDocument::empty_peer();
+    receiver
+        .import(&document.export_snapshot().unwrap())
+        .unwrap();
+    assert_eq!(receiver.rows(), document.rows());
+    let snapshot = document.export_shallow().unwrap();
+    let receiver = ListDocument::empty_peer();
+    let mut state = ultros_list_doc::client_sync::ClientSync::default();
+    let received = state
+        .receive(
+            &receiver,
+            &document.version(),
+            ultros_list_doc::SyncPayload::Snapshot(snapshot.clone()),
+        )
+        .unwrap();
+    let receiver = received.replacement.unwrap_or(receiver);
+    assert_eq!(receiver.version(), document.version());
+    let writer = ListDocument::from_snapshot(&snapshot).unwrap();
+    let before = writer.version();
+    writer.add_acquired(&RowKey::new(1, None), 1).unwrap();
+    receiver
+        .import(&writer.export_since(&before).unwrap())
+        .unwrap();
+    let reopened = ListDocument::from_snapshot(&receiver.export_snapshot().unwrap()).unwrap();
+    assert_eq!(reopened.rows()[0].acquired, 1);
+    assert_eq!(reopened.rows()[0].need, document.rows()[0].need);
 }

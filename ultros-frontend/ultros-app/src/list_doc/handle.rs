@@ -373,6 +373,11 @@ impl ListDocHandle {
                 "offline changes are paused for review".into(),
             ));
         }
+        if self.recovery_persisting.try_get_untracked().unwrap_or(true) {
+            return Err(DocError::InvalidStructure(
+                "save the replacement document before editing".into(),
+            ));
+        }
         self.with_doc(|doc| {
             let mut result = Ok(());
             if self
@@ -417,26 +422,22 @@ impl ListDocHandle {
     /// Probe snapshot imports away from the live document. A parked/partial
     /// import must not alter the history or projection used to recover intent.
     pub fn import_server_snapshot(&self, bytes: &[u8]) -> Result<ImportReport, DocError> {
-        let probe = self.with_doc(|doc| -> Result<ImportReport, DocError> {
-            let server = ListDocument::from_snapshot(bytes)?;
-            if !server.can_export_since(&doc.version()) {
-                // Recover before importing: even an apparently successful
-                // shallow merge could resolve a same-field conflict and erase
-                // the local value the player needs to review.
-                return Ok(ImportReport { pending: true });
-            }
-            let copy = ListDocument::from_snapshot(&doc.export_snapshot()?)?;
-            copy.import(bytes)
-        });
-        match probe {
-            Some(Ok(ImportReport { pending: true }) | Err(DocError::OutdatedDependency)) => {
-                Ok(ImportReport { pending: true })
-            }
+        if self.incompatible() {
+            return Err(DocError::InvalidStructure(
+                "saved copy; export recovery and update Ultros".into(),
+            ));
+        }
+        if self.is_closed_or_disposed() {
+            return Ok(ImportReport { pending: false });
+        }
+        match self.with_doc(|doc| ultros_list_doc::client_sync::import_server_snapshot(doc, bytes))
+        {
             Some(Err(error)) => {
                 self.pause_incompatible_import(&error);
                 Err(error)
             }
-            _ => self.import(bytes),
+            Some(result) => result,
+            None => Ok(ImportReport { pending: false }),
         }
     }
 
@@ -476,7 +477,10 @@ impl ListDocHandle {
     }
 
     pub fn undo(&self) -> bool {
-        if !self.has_readable_content() || self.writes_rejected() {
+        if !self.has_readable_content()
+            || self.writes_rejected()
+            || self.recovery_persisting.try_get_untracked().unwrap_or(true)
+        {
             return false;
         }
         let mut done = false;
@@ -487,7 +491,10 @@ impl ListDocHandle {
     }
 
     pub fn redo(&self) -> bool {
-        if !self.has_readable_content() || self.writes_rejected() {
+        if !self.has_readable_content()
+            || self.writes_rejected()
+            || self.recovery_persisting.try_get_untracked().unwrap_or(true)
+        {
             return false;
         }
         let mut done = false;
@@ -504,7 +511,10 @@ impl ListDocHandle {
     pub fn can_undo(&self) -> bool {
         let _ = self.revision.try_get();
         let _ = self.recovery_state.try_get();
-        if !self.has_readable_content() || self.writes_rejected() {
+        if !self.has_readable_content()
+            || self.writes_rejected()
+            || self.recovery_persisting.try_get().unwrap_or(true)
+        {
             return false;
         }
         self.undo
@@ -515,7 +525,10 @@ impl ListDocHandle {
     pub fn can_redo(&self) -> bool {
         let _ = self.revision.try_get();
         let _ = self.recovery_state.try_get();
-        if !self.has_readable_content() || self.writes_rejected() {
+        if !self.has_readable_content()
+            || self.writes_rejected()
+            || self.recovery_persisting.try_get().unwrap_or(true)
+        {
             return false;
         }
         self.undo
@@ -528,6 +541,7 @@ impl ListDocHandle {
         let _ = self.recovery_state.try_get();
         self.has_readable_content()
             && !self.writes_rejected()
+            && !self.recovery_persisting.try_get().unwrap_or(true)
             && self
                 .undo
                 .try_with_value(|undo| undo.can_undo_purchase())
@@ -1014,6 +1028,29 @@ impl ListDocHandle {
         }
     }
 
+    /// Drop only history the server has acknowledged, through the same durable
+    /// replacement fence used by recovery. Pending work keeps its original base.
+    pub fn compact_acknowledged(&self, version: &[u8]) -> Result<bool, DocError> {
+        if self.is_closed_or_disposed()
+            || self.incompatible()
+            || self.recovery_paused()
+            || self.recovery_persisting.get_untracked()
+            || !self.content_ready.get_untracked()
+        {
+            return Ok(false);
+        }
+        let Some(fresh) = self
+            .with_doc(|doc| doc.compact_acknowledged(version))
+            .transpose()?
+            .flatten()
+        else {
+            return Ok(false);
+        };
+        self.replace_document(fresh);
+        self.save_now();
+        Ok(true)
+    }
+
     fn replace_document(&self, fresh: ListDocument) {
         self.recovery_persisting.set(true);
         self.replacement_source.set_value(Some(self.try_version()));
@@ -1161,6 +1198,63 @@ impl ListDocHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(not(feature = "hydrate"))]
+    fn acknowledged_compaction_preserves_pending_work_and_waits_for_storage() {
+        Owner::new().with(|| {
+            let document = ListDocument::new();
+            let meta = document.inner().get_map("meta");
+            for index in 0..50_000 {
+                meta.insert("name", if index % 2 == 0 { "a" } else { "b" })
+                    .unwrap();
+                document.commit();
+            }
+            let original = document.export_snapshot().unwrap();
+            let acknowledged = document.version();
+            let handle = ListDocHandle::open_loaded(
+                1,
+                1,
+                Some(store::Loaded {
+                    snapshot: original.clone(),
+                    permission: 3,
+                    content_ready: Some(true),
+                }),
+            );
+            handle
+                .apply(Edit::SetScope(
+                    ultros_api_types::world_helper::AnySelector::World(63),
+                ))
+                .unwrap();
+            assert!(handle.can_undo());
+            let pending = handle.try_version();
+            assert!(!handle.compact_acknowledged(&acknowledged).unwrap());
+            assert_eq!(handle.try_version(), pending);
+            assert!(handle.can_undo(), "unacknowledged history remains intact");
+            assert!(handle.compact_acknowledged(&pending).unwrap());
+            assert_eq!(handle.try_version(), pending);
+            assert!(handle.recovery_persisting.get_untracked());
+            assert_eq!(handle.save_state.get_untracked(), SaveState::Failed);
+            assert!(!handle.can_undo());
+            assert!(
+                handle
+                    .apply(Edit::SetScope(
+                        ultros_api_types::world_helper::AnySelector::World(64)
+                    ))
+                    .is_err()
+            );
+            assert_eq!(
+                handle.try_version(),
+                pending,
+                "failed storage keeps edits paused"
+            );
+            assert_eq!(handle.replacement_source.get_value(), Some(pending));
+            assert_eq!(
+                ListDocument::from_snapshot(&original).unwrap().version(),
+                acknowledged
+            );
+        });
+    }
 
     #[test]
     fn rejected_offline_work_is_preserved_while_the_view_uses_server_values() {
@@ -1479,6 +1573,10 @@ mod tests {
                     .pending
             );
             assert_eq!(compact.rows(), handle.rows());
+            // A native unit fixture has no browser disk callback. Complete its
+            // simulated acknowledgment before exercising the replacement's undo.
+            handle.recovery_persisting.set(false);
+            handle.replacement_source.set_value(None);
             handle
                 .with_doc(|doc| doc.set_need(&key, 16))
                 .unwrap()
