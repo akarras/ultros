@@ -5,7 +5,7 @@ use std::{
     collections::VecDeque,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicI64, Ordering},
+        atomic::{AtomicI64, AtomicU64, Ordering},
     },
 };
 
@@ -40,6 +40,7 @@ pub struct ListUndo {
     next_purchase: i64,
     tag: Arc<AtomicI64>,
     popped: Arc<Mutex<Vec<i64>>>,
+    largest_span: Arc<AtomicU64>,
 }
 
 impl ListUndo {
@@ -65,7 +66,18 @@ impl ListUndo {
         inner.set_max_undo_steps(Self::MAX_STEPS);
         let tag = Arc::new(AtomicI64::new(0));
         let current = tag.clone();
-        inner.set_on_push(Some(Box::new(move |_, _, _| {
+        let largest_span = Arc::new(AtomicU64::new(0));
+        let pushed_operations = largest_span.clone();
+        inner.set_on_push(Some(Box::new(move |_, span, _| {
+            let count = u64::from(span.end.abs_diff(span.start));
+            if interval_ms > 0 {
+                // A time-merged source entry can span multiple notifications.
+                // The default uses explicit groups instead; custom timed merge
+                // conservatively reserves everything recorded by this manager.
+                pushed_operations.fetch_add(count, Ordering::Relaxed);
+            } else {
+                pushed_operations.fetch_max(count, Ordering::Relaxed);
+            }
             let mut meta = UndoItemMeta::new();
             meta.set_value(LoroValue::I64(current.load(Ordering::Relaxed)));
             meta
@@ -77,12 +89,16 @@ impl ListUndo {
         let current = tag.clone();
         inner.set_on_pop(Some(Box::new(move |_, _, meta| {
             let inverse = match meta.value {
-                LoroValue::I64(tag) => -tag,
+                LoroValue::I64(tag) => tag.checked_neg().unwrap_or(0),
                 _ => 0,
             };
             current.store(inverse, Ordering::Relaxed);
             if inverse != 0 {
-                changes.lock().expect("purchase history lock").push(inverse);
+                // The callback cannot return an error. Keep a poisoned queue
+                // poisoned; history() reports it before any subsequent edit.
+                if let Ok(mut changes) = changes.lock() {
+                    changes.push(inverse);
+                }
             }
         })));
         Self {
@@ -92,6 +108,7 @@ impl ListUndo {
             next_purchase: 1,
             tag,
             popped,
+            largest_span,
         }
     }
 
@@ -110,14 +127,35 @@ impl ListUndo {
     }
 
     fn history(&mut self, redo: bool) -> Result<bool, DocError> {
+        if self.popped.is_poisoned() {
+            return Err(DocError::InvalidStructure(
+                "purchase history unavailable; reopen the saved list".into(),
+            ));
+        }
+        if if redo {
+            !self.can_redo()
+        } else {
+            !self.can_undo()
+        } {
+            return Ok(false);
+        }
+        self.doc
+            .reserve_undo(self.largest_span.load(Ordering::Relaxed))?;
         let _tag = self.tagged(0);
         let changed = if redo {
             self.inner.redo()
         } else {
             self.inner.undo()
         };
-        for tag in self.popped.lock().expect("purchase history lock").drain(..) {
-            if let Some(purchase) = self.purchases.iter_mut().find(|p| p.id == tag.abs()) {
+        let mut popped = self.popped.lock().map_err(|_| {
+            DocError::InvalidStructure("purchase history unavailable; reopen the saved list".into())
+        })?;
+        for tag in popped.drain(..) {
+            if let Some(purchase) = self
+                .purchases
+                .iter_mut()
+                .find(|p| Some(p.id) == tag.checked_abs())
+            {
                 purchase.active = tag > 0;
             }
         }
@@ -140,8 +178,7 @@ impl ListUndo {
         let id = self.next_purchase;
         self.next_purchase = id.checked_add(1).ok_or(DocError::QuantityOverflow)?;
         let _tag = self.tagged(id);
-        let doc = self.doc.clone();
-        self.group(|| doc.add_acquired(&key, quantity))?;
+        self.group(|doc| doc.add_acquired(&key, quantity))?;
         self.purchases.push_back(Purchase {
             id,
             key,
@@ -183,9 +220,16 @@ impl ListUndo {
         else {
             return Ok(false);
         };
-        let _tag = self.tagged(-purchase.id);
-        let doc = self.doc.clone();
-        self.group(|| doc.add_acquired(&purchase.key, -purchase.quantity))?;
+        let tag = purchase
+            .id
+            .checked_neg()
+            .ok_or(DocError::QuantityOverflow)?;
+        let delta = purchase
+            .quantity
+            .checked_neg()
+            .ok_or(DocError::QuantityOverflow)?;
+        let _tag = self.tagged(tag);
+        self.group(|doc| doc.add_acquired(&purchase.key, delta))?;
         if let Some(entry) = self.purchases.iter_mut().find(|p| p.id == purchase.id) {
             entry.active = false;
         }
@@ -204,7 +248,14 @@ impl ListUndo {
     ///
     /// The group is closed even if `f` panics: an open group would swallow
     /// every later edit into one step for the rest of the session.
-    pub fn group<R>(&mut self, f: impl FnOnce() -> Result<R, DocError>) -> Result<R, DocError> {
+    /// The deterministic callback runs first on an isolated candidate, then on
+    /// the live document. Use the supplied document and avoid other side effects.
+    pub fn group<R>(
+        &mut self,
+        f: impl Fn(&ListDocument) -> Result<R, DocError>,
+    ) -> Result<R, DocError> {
+        self.doc.preflight(|candidate| f(candidate))?;
+        let document = self.doc.prechecked();
         struct CloseGroup<'a>(&'a mut UndoManager);
 
         impl Drop for CloseGroup<'_> {
@@ -213,9 +264,16 @@ impl ListUndo {
             }
         }
 
+        let peer = document.peer_id();
+        let before = document.inner().oplog_vv().get(&peer).copied().unwrap_or(0);
         self.inner.group_start()?;
-        let _guard = CloseGroup(&mut self.inner);
-        f()
+        let guard = CloseGroup(&mut self.inner);
+        let result = f(&document);
+        drop(guard);
+        let after = document.inner().oplog_vv().get(&peer).copied().unwrap_or(0);
+        self.largest_span
+            .fetch_max(u64::from(after.abs_diff(before)), Ordering::Relaxed);
+        result
     }
 }
 
@@ -248,6 +306,28 @@ mod tests {
             }],
         );
         (doc, key)
+    }
+
+    #[test]
+    fn poisoned_purchase_history_returns_an_error_without_consuming_undo() {
+        let (doc, key) = doc();
+        let mut undo = ListUndo::new(&doc);
+        doc.set_need(&key, 5).unwrap();
+        let version = doc.version();
+        let undo_count = undo.inner.undo_count();
+        let queue = undo.popped.clone();
+        assert!(
+            std::panic::catch_unwind(move || {
+                let _guard = queue.lock().unwrap();
+                panic!("simulate a failed purchase-history callback");
+            })
+            .is_err()
+        );
+        assert!(undo.undo().is_err());
+        assert!(undo.redo().is_err());
+        assert_eq!(doc.version(), version);
+        assert_eq!(undo.inner.undo_count(), undo_count);
+        assert!(undo.popped.is_poisoned(), "do not reuse poisoned state");
     }
 
     #[test]
@@ -397,10 +477,10 @@ mod tests {
     fn default_manager_keeps_rapid_commits_as_separate_steps() {
         let (doc, key) = doc();
         let mut undo = ListUndo::new(&doc);
-        undo.group(|| doc.set_need(&key, 5)).unwrap();
-        undo.group(|| doc.set_need(&key, 9)).unwrap();
+        undo.group(|doc| doc.set_need(&key, 5)).unwrap();
+        undo.group(|doc| doc.set_need(&key, 9)).unwrap();
         let other = RowKey::new(11, None);
-        undo.group(|| {
+        undo.group(|doc| {
             doc.add_row(other, 2, None)?;
             doc.set_target(&other, Some(30))
         })
@@ -429,8 +509,20 @@ mod tests {
         let mut undo = ListUndo::with_merge_interval(&doc, 0);
         doc.remove_row(&key).unwrap();
         assert!(doc.row(&key).is_none());
+        let before_inverse: i64 = doc.inner().oplog_vv().values().map(|n| i64::from(*n)).sum();
         assert!(undo.undo().unwrap());
         assert_eq!(doc.row(&key), Some(before));
+        let after_inverse: i64 = doc.inner().oplog_vv().values().map(|n| i64::from(*n)).sum();
+        assert!(
+            after_inverse - before_inverse <= 8,
+            "the pinned decoder's full-row inverse exceeded the admission reserve"
+        );
+        assert_eq!(
+            ListDocument::from_snapshot(&doc.export_snapshot().unwrap())
+                .unwrap()
+                .rows(),
+            doc.rows()
+        );
     }
 
     #[test]
@@ -473,7 +565,7 @@ mod tests {
         let other = RowKey::new(11, None);
         doc.add_row(other, 1, None).unwrap();
         let mut undo = ListUndo::with_merge_interval(&doc, 0);
-        undo.group(|| {
+        undo.group(|doc| {
             doc.set_quality(&key, Quality::Hq)?;
             doc.set_quality(&other, Quality::Hq)?;
             Ok(())
@@ -518,5 +610,88 @@ mod tests {
             after, REMOTE_OVERWRITE_UNDO_RESULT,
             "Loro's behaviour changed; update the constant and the spec's section 3.3 note"
         );
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn conservative_byte_refusal_preserves_undo_and_observers() {
+        let raw = loro::LoroDoc::new();
+        raw.get_map("meta").insert("schema", 1_i64).unwrap();
+        raw.get_map("meta")
+            .insert("name", "x".repeat(2 * 1024 * 1024))
+            .unwrap();
+        raw.commit();
+        let document = ListDocument::from_snapshot(
+            &raw.export(loro::ExportMode::shallow_snapshot(&raw.state_frontiers()))
+                .unwrap(),
+        )
+        .unwrap();
+        let mut undo = ListUndo::new(&document);
+        document.rename("short").unwrap();
+        let before = document.version();
+        let count = undo.inner.undo_count();
+        let events = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = events.clone();
+        let _subscription = document.on_change(move || {
+            observed.fetch_add(1, Ordering::Relaxed);
+        });
+        assert!(undo.undo().is_err());
+        assert_eq!(undo.inner.undo_count(), count);
+        assert_eq!(document.version(), before);
+        assert_eq!(events.load(Ordering::Relaxed), 0);
+        ListDocument::from_snapshot(&document.export_snapshot().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_small_inverse_does_not_reserve_the_entire_lifetime_payload() {
+        let document = ListDocument::new();
+        let key = RowKey::new(1, None);
+        document.add_row(key, 1, None).unwrap();
+        let meta = document.inner().get_map("meta");
+        for index in 0..10_000 {
+            meta.insert("name", if index % 2 == 0 { "a" } else { "b" })
+                .unwrap();
+            document.commit();
+        }
+        let mut undo = ListUndo::new(&document);
+        document.set_need(&key, 7).unwrap();
+        assert!(undo.undo().unwrap());
+        assert_eq!(document.row(&key).unwrap().need, 1);
+        ListDocument::from_snapshot(&document.export_snapshot().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn refused_group_and_undo_do_not_mutate_or_consume_the_stack() {
+        let document = ListDocument::new();
+        let meta = document.inner().get_map("meta");
+        for index in 1..99_999 {
+            meta.insert("name", if index % 2 == 0 { "a" } else { "b" })
+                .unwrap();
+            document.commit();
+        }
+        let mut undo = ListUndo::new(&document);
+        let before = document.version();
+        assert!(
+            undo.group(|candidate| {
+                candidate.rename("first")?;
+                candidate.rename("second")
+            })
+            .is_err()
+        );
+        assert_eq!(document.version(), before);
+        assert!(!undo.can_undo());
+        document.rename("last accepted edit").unwrap();
+        let before = document.version();
+        let count = undo.inner.undo_count();
+        assert!(undo.undo().is_err());
+        assert_eq!(undo.inner.undo_count(), count);
+        assert!(undo.can_undo());
+        assert_eq!(document.version(), before);
+        assert_eq!(document.meta().name, "last accepted edit");
+        ListDocument::from_snapshot(&document.export_snapshot().unwrap()).unwrap();
     }
 }

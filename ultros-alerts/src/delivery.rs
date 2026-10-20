@@ -424,17 +424,36 @@ async fn send_to_channel(
 ) -> Result<()> {
     let channel_id = serenity_prelude::ChannelId::new(channel_id as u64);
     channel_id
-        .send_message(
-            ctx,
-            CreateMessage::new()
-                .embed(
-                    CreateEmbed::new()
-                        .color(Color::from_rgb(0, 200, 80))
-                        .title(title)
-                        .description(body),
-                )
-                .allowed_mentions(CreateAllowedMentions::new()),
-        )
+        .send_message(ctx, channel_message(title, body, None))
+        .await?;
+    Ok(())
+}
+
+fn channel_message(title: &str, body: &str, legacy_owner: Option<i64>) -> CreateMessage {
+    let message = CreateMessage::new().embed(
+        CreateEmbed::new()
+            .color(Color::from_rgb(0, 200, 80))
+            .title(title)
+            .description(body),
+    );
+    match legacy_owner {
+        Some(owner) => message
+            .content(format!("<@{owner}>"))
+            .allowed_mentions(CreateAllowedMentions::new().users([UserId::new(owner as u64)])),
+        None => message.allowed_mentions(CreateAllowedMentions::new()),
+    }
+}
+
+/// Only authorized legacy outbox destinations use the historical owner ping.
+pub(crate) async fn deliver_legacy_discord_channel(
+    channel_id: i64,
+    owner: i64,
+    title: &str,
+    body: &str,
+    ctx: &serenity_prelude::Context,
+) -> Result<()> {
+    serenity_prelude::ChannelId::new(channel_id as u64)
+        .send_message(ctx, channel_message(title, body, Some(owner)))
         .await?;
     Ok(())
 }
@@ -654,6 +673,24 @@ async fn send_webhook(url: &str, title: &str, body: &str) -> Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn legacy_channel_pings_only_owner_and_normal_channels_suppress_mentions() {
+        let legacy =
+            serde_json::to_value(channel_message("Undercut", "<@999> @everyone", Some(123)))
+                .unwrap();
+        assert_eq!(legacy["content"], "<@123>");
+        assert_eq!(legacy["allowed_mentions"]["users"], json!(["123"]));
+        assert_eq!(legacy["allowed_mentions"]["parse"], json!([]));
+        assert_eq!(legacy["allowed_mentions"]["roles"], json!([]));
+
+        let normal =
+            serde_json::to_value(channel_message("Alert", "<@123> @everyone", None)).unwrap();
+        assert!(normal.get("content").is_none());
+        assert_eq!(normal["allowed_mentions"]["parse"], json!([]));
+        assert_eq!(normal["allowed_mentions"]["users"], json!([]));
+        assert_eq!(normal["allowed_mentions"]["roles"], json!([]));
+    }
 
     #[test]
     fn push_endpoint_accepts_browser_providers_and_opaque_tokens() {

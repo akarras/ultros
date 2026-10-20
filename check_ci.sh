@@ -18,6 +18,11 @@ cargo fmt --all -- --check
 # Run cargo clippy check
 cargo clippy --locked --all-targets -- -D warnings
 
+# These libraries run inside the game process. Their crash-prevention lints
+# intentionally exempt test fixtures, so explicitly gate the production cfg
+# as well as --all-targets above (which also builds test harnesses).
+cargo clippy --locked -p ultros-list-doc -p ultros-list-doc-ffi --lib -- -D warnings
+
 # xiv-gen's csv_to_rkyv module (and its tests) only compile under this
 # non-default feature, so the workspace clippy above never sees it. Lint it
 # explicitly as well as executing its feature-gated tests below.

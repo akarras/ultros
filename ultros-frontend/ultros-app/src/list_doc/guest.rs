@@ -377,7 +377,7 @@ impl GuestListHandle {
         self.inner
             .undo
             .borrow_mut()
-            .group(|| self.inner.doc.rename(name.trim()))
+            .group(|doc| doc.rename(name.trim()))
             .map_err(|_| message("invalid"))?;
         self.schedule_save();
         Ok(())
@@ -397,7 +397,7 @@ impl GuestListHandle {
         self.inner
             .undo
             .borrow_mut()
-            .group(|| self.inner.doc.set_scope(scope))
+            .group(|doc| doc.set_scope(scope))
             .map_err(|_| message("invalid"))?;
         self.schedule_save();
         Ok(())

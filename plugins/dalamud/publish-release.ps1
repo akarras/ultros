@@ -5,6 +5,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'release-source.ps1')
 if ([string]::IsNullOrWhiteSpace($Changelog) -or [Text.Encoding]::UTF8.GetByteCount($Changelog) -gt 4096) {
     throw 'Release notes must contain between 1 and 4096 UTF-8 bytes.'
 }
@@ -27,10 +28,9 @@ if ([Reflection.AssemblyName]::GetAssemblyName((Join-Path $package 'Ultros.dll')
 if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $package 'ultros_list_doc_ffi.dll')).Hash -ne $build.NativeSha256) {
     throw 'The native library differs from the tested package.'
 }
-$sourceStatus = & git -C (Join-Path $PSScriptRoot '../..') status --porcelain --untracked-files=normal -- plugins/dalamud ultros-list-doc ultros-list-doc-ffi vendor/loro-kv-store Cargo.toml Cargo.lock
-if ($LASTEXITCODE -ne 0 -or $sourceStatus) { throw 'Commit and validate the release sources before publishing.' }
-$commit = & git -C (Join-Path $PSScriptRoot '../..') rev-parse HEAD
-if ($LASTEXITCODE -ne 0) { throw 'Could not identify the release commit.' }
+$source = Get-PluginReleaseSource (Join-Path $PSScriptRoot '../..')
+if ($source.Dirty) { throw 'Commit and validate the release sources before publishing.' }
+$commit = $source.Commit
 if ($build.SourceDirty -or $build.SourceCommit -ne $commit) { throw 'Rebuild from the clean release commit before publishing.' }
 
 New-Item -ItemType Directory -Path $ReleaseDirectory -Force | Out-Null

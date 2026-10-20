@@ -8,7 +8,7 @@ use sea_orm::{
     QueryFilter, QuerySelect, Statement,
 };
 use std::{
-    collections::{HashMap, HashSet, hash_map::Entry},
+    collections::{HashMap, HashSet},
     time::Instant,
 };
 use tracing::instrument;
@@ -599,13 +599,18 @@ impl UltrosDb {
             .into_iter()
             .map(|r| (r.name.clone(), r))
             .collect();
-        // determine missing retainers
+        // Public Universalis metadata is authoritative, including when a private
+        // registration created this identity first. Avoid writing unchanged rows.
+        // store_retainer's upsert also handles a concurrent first insertion.
         for (name, id, retainer_city) in queried_retainers {
-            if let Entry::Vacant(e) = retainers.entry(name.clone()) {
+            if retainers
+                .get(&name)
+                .is_none_or(|r| retainer_city > 0 && r.retainer_city_id != retainer_city)
+            {
                 let retainer = self
                     .store_retainer(&id, &name, world_id, retainer_city)
                     .await?;
-                e.insert(retainer);
+                retainers.insert(name, retainer);
             }
         }
         Ok(retainers)

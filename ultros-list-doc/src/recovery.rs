@@ -51,7 +51,8 @@ pub fn recover(
         .common_base(&fresh)
         .ok_or(RecoveryError::HistoryUnavailable)?;
     // Unrelated nonempty documents are not an offline branch of this list.
-    if base.schema().is_none() && (!local.rows().is_empty() || !local.meta().name.is_empty()) {
+    if !local.shares_history(&fresh) && (!local.rows().is_empty() || !local.meta().name.is_empty())
+    {
         return Err(RecoveryError::HistoryUnavailable);
     }
     let changes = diff_rows(&base.rows(), &local.rows());
@@ -125,6 +126,10 @@ pub fn recover(
         return Err(RecoveryError::Conflicts(conflicts));
     }
     let server_version = fresh.version();
+    // This document is isolated until the complete recovery succeeds. Replay
+    // once here, then validate the final serialized result as a single batch.
+    // Per-field preflights would repeatedly decode the entire growing history.
+    let fresh = fresh.prechecked();
     for change in changes {
         match change {
             RowChange::Added(row) => {
@@ -170,6 +175,7 @@ pub fn recover(
             fresh.set_scope(scope)?;
         }
     }
+    let fresh = ListDocument::from_snapshot(&fresh.export_snapshot()?)?;
     Ok(RecoveredDocument {
         changed: fresh.is_ahead_of(&server_version),
         document: fresh,

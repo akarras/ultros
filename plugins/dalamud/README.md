@@ -87,7 +87,23 @@ After pairing, a bearer-authenticated SSE connection wakes the durable notificat
 
 ABI 2 uses checked integer handles, immutable responses, caller-owned buffers and an allocation-free close export. Unwinding panics are caught and poisoned state fails closed; native faults, aborts and arbitrary OOM cannot be contained.
 
-Resource guards include 8 MiB snapshots, a 32 MiB decompression budget, 16 MiB per decoded block, 4,096 peers and 100,000 retained operations. The pinned decoder checks growth before extending buffers. The 256-row soft add/lab-import cap does not prevent reopening existing merged/undo states.
+Both `ultros-list-doc` and `ultros-list-doc-ffi` deny production Clippy lints for
+`unwrap`, `expect`, explicit panic/todo/unimplemented/unreachable, unchecked
+indexing/string slicing, arithmetic side effects and process exit. The shared
+document crate forbids unsafe code; FFI pointer operations require explicit
+unsafe blocks and safety comments. The ABI refuses to compile with `panic=abort`.
+Root `./check_ci.sh` runs these lints, including a non-test library build; fixture
+assertions remain available in tests.
+
+Three narrowly scoped, documented `expect_used` exceptions retain existing
+infallible APIs: the legacy `new` and trusted `from_rows` constructors (fresh
+attached maps with the pinned Loro), and integer-only postcard version-map
+serialization into a growable buffer. Native initialization uses `try_new`;
+production row import uses `try_from_rows`, which propagates errors and rejects
+duplicate keys. These lints do not inspect dependency internals or prove freedom
+from every possible panic. Dependency unwinds still rely on the ABI catch boundary.
+
+Resource guards include 8 MiB snapshots, a 32 MiB decompression budget, 16 MiB per decoded block and 100,000 retained operations. Local edits are checked before mutation, so accepting an edit cannot create a checkpoint that exceeds those limits. Undo reserves conservative capacity and can refuse before consuming its step. Clean, exactly acknowledged history compacts at 50,000 operations and waits for durable storage before edits resume; pending work is preserved. There is no lifetime peer-count ceiling and causal identities are never discarded. Encoded transport limits still apply, including 8 MiB of base64 causal-version text and a 24 MiB combined native/plugin list-sync envelope. Other plugin HTTP responses remain capped at 12 MiB. The browser realtime WebSocket permits a 24 MiB aggregate message or single frame for the combined list-sync envelope; the separate alerts WebSocket is unchanged. The pinned decoder checks growth before extending buffers. The 256-row soft add/lab-import cap does not prevent reopening existing merged/undo states.
 
 Connected document/HTTP/disk work runs on one background worker. Game memory is copied on the framework thread. The local merge lab remains synchronous.
 

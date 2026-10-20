@@ -1,14 +1,17 @@
 //! At-least-once external dispatch after durable alert acceptance.
 use crate::{
     delivery::{
-        PushOptions, deliver_non_discord_endpoint, deliver_to_endpoint, get_serenity_ctx,
-        permanent_failure_reason,
+        PushOptions, deliver_legacy_discord_channel, deliver_non_discord_endpoint,
+        deliver_to_endpoint, get_serenity_ctx, permanent_failure_reason,
     },
     event::{EventProducer, EventType, NotificationEvent},
     inbox::alert_event_to_api,
 };
 use std::time::Duration;
-use ultros_db::{UltrosDb, notification_outbox::OutboxJob};
+use ultros_db::{
+    UltrosDb,
+    notification_outbox::{AuthorizedDestination, OutboxJob},
+};
 
 pub fn start(
     db: UltrosDb,
@@ -26,7 +29,10 @@ pub fn start(
                 }
                 cleanup_at = std::time::Instant::now() + Duration::from_secs(60);
             }
-            let jobs = match db.claim_notification_outbox().await {
+            let jobs = match db
+                .claim_notification_outbox(get_serenity_ctx().is_some())
+                .await
+            {
                 Ok(jobs) => jobs,
                 Err(_) => {
                     tracing::warn!("notification outbox unavailable");
@@ -71,16 +77,26 @@ async fn run(db: &UltrosDb, notifications: &EventProducer<NotificationEvent>, jo
         topic: policy["topic"].as_str().map(str::to_string),
     };
     let result = tokio::time::timeout(Duration::from_secs(10), async {
-        if let Some(ctx) = get_serenity_ctx() {
-            deliver_to_endpoint(&endpoint, title, body, &push, db, &ctx).await
-        } else {
-            deliver_non_discord_endpoint(&endpoint, title, body, &push, db).await
+        match &endpoint {
+            AuthorizedDestination::Endpoint(endpoint) => {
+                if let Some(ctx) = get_serenity_ctx() {
+                    deliver_to_endpoint(endpoint, title, body, &push, db, &ctx).await
+                } else {
+                    deliver_non_discord_endpoint(endpoint, title, body, &push, db).await
+                }
+            }
+            AuthorizedDestination::LegacyDiscordChannel { channel_id, owner } => {
+                let ctx = get_serenity_ctx().ok_or_else(|| {
+                    anyhow::anyhow!("Discord destinations require the bot to be connected")
+                })?;
+                deliver_legacy_discord_channel(*channel_id, *owner, title, body, &ctx).await
+            }
         }
     })
     .await;
     let delivered = matches!(&result, Ok(Ok(())));
     let permanent = matches!(&result,Ok(Err(e)) if permanent_failure_reason(e).is_some());
-    if permanent && endpoint.id > 0 {
+    if permanent && let AuthorizedDestination::Endpoint(endpoint) = &endpoint {
         let _ = db
             .disable_endpoint_for_delivery_failure(endpoint.id, "Destination unavailable")
             .await;
