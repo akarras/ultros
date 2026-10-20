@@ -51,6 +51,11 @@ pub fn EndpointsPanel() -> impl IntoView {
     let on_test = move |id: i32| {
         spawn_local(async move {
             match test_endpoint(id).await {
+                Ok(r) if r.queued => {
+                    if let Some(t) = toasts {
+                        t.success("Queued for the connected game client.");
+                    }
+                }
                 Ok(r) if r.delivered => {
                     if let Some(t) = toasts {
                         t.success(t_string!(i18n, endpoints_test_delivered_toast));
@@ -171,11 +176,14 @@ pub fn EndpointsPanel() -> impl IntoView {
                                         EndpointMethod::WebPush { .. } => {
                                             t_string!(i18n, endpoints_method_web_push).to_string()
                                         }
+                                        EndpointMethod::InGame { .. } => "In game · approved device".into(),
                                         EndpointMethod::InApp {} => {
                                             t_string!(i18n, endpoints_method_in_app).to_string()
                                         }
                                     };
                                     let id = e.id;
+                                    let game=matches!(e.method,EndpointMethod::InGame { .. });
+                                    let can_delete=!matches!(e.method,EndpointMethod::InApp {}|EndpointMethod::InGame { .. });
                                     // Delivery disabled this endpoint after Discord
                                     // rejected it permanently (channel deleted, bot
                                     // removed). Without this the endpoint just looks
@@ -187,6 +195,7 @@ pub fn EndpointsPanel() -> impl IntoView {
                                             <div>
                                                 <div class="font-medium">{e.name.clone()}</div>
                                                 <div class="text-xs opacity-70">{label}</div>
+                                                <Show when=move||game><a class="link text-xs" href="/plugin/devices">"Manage connected game clients"</a></Show>
                                                 {disabled_reason.map(|reason| view! {
                                                     <div class="text-xs text-amber-400 mt-1">
                                                         {t!(i18n, endpoints_disabled_notice)}
@@ -200,13 +209,13 @@ pub fn EndpointsPanel() -> impl IntoView {
                                                     <Icon icon=i::BsSend />
                                                     <span class="ml-1">{t!(i18n, endpoints_test_button)}</span>
                                                 </button>
-                                                <button
+                                                <Show when=move||can_delete><button
                                                     class="btn-ghost text-negative"
                                                     aria-label=t_string!(i18n, endpoints_delete_aria)
                                                     on:click=move |_| on_delete(id)
                                                 >
                                                     <Icon icon=i::BiTrashSolid />
-                                                </button>
+                                                </button></Show>
                                             </div>
                                         </li>
                                     }

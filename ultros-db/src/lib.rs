@@ -12,6 +12,8 @@ pub mod list_projection_check;
 pub mod listings;
 pub mod lists;
 pub mod market_sweep;
+pub mod notification_outbox;
+pub mod plugin;
 pub mod recently_updated;
 pub mod retainers;
 pub mod sales;
@@ -353,7 +355,12 @@ impl UltrosDb {
         let model = Entity::insert(active_model)
             .on_conflict(
                 sea_query::OnConflict::columns([Column::Name, Column::WorldId].into_iter())
-                    .update_columns([Column::RetainerCityId])
+                    // Unknown source metadata must not erase a known city,
+                    // including when another ingestion inserts this identity
+                    // between the resolver's lookup and this upsert.
+                    .value(Column::RetainerCityId, sea_query::Expr::cust(
+                        "CASE WHEN excluded.retainer_city_id > 0 THEN excluded.retainer_city_id ELSE retainer.retainer_city_id END",
+                    ))
                     .to_owned(),
             )
             .exec_with_returning(&self.db)

@@ -12,6 +12,7 @@ pub mod inbox;
 pub mod list_update_alert_tracker;
 pub mod market_trigger_tracker;
 pub mod median_cache;
+pub mod outbox;
 pub mod price_alert_tracker;
 pub mod sold_alert;
 pub mod sold_matcher;

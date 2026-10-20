@@ -155,11 +155,12 @@ pub fn EditRetainers() -> impl IntoView {
                                                                 <For
                                                                     each=move || retainers.retainers.clone()
                                                                     key=move |(character, retainers)| (
-                                                                        character.as_ref().map(|c| c.id).unwrap_or_default(),
+                                                                        character.as_ref().map(|c| c.key()),
                                                                         retainers.iter().map(|(o, _r)| o.id).collect::<Vec<_>>(),
                                                                     )
 
                                                                     children=move |(character, retainers)| {
+                                                                        let observed_character = character.as_ref().is_some_and(|character| character.is_unverified());
                                                                         let retainers = RwSignal::new(retainers);
                                                                         Effect::new(move |_| {
                                                                             let retainers = retainers();
@@ -195,7 +196,8 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                 Either::Left(
                                                                                     view! {
                                                                                         <h3 class="text-xl font-bold mt-4 mb-2">
-                                                                                            {character.first_name} " " {character.last_name}
+                                                                                            {character.name()} " · " <WorldName id=AnySelector::World(character.world_id()) />
+                                                                                            {character.is_unverified().then(|| view! { <span class="ml-2 text-sm text-amber-300">"Unverified"</span> })}
                                                                                         </h3>
                                                                                     },
                                                                                 )
@@ -222,7 +224,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                             <div class="panel p-3 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
                                                                                                 <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 overflow-hidden flex-grow">
                                                                                                     <div class="flex flex-col">
-                                                                                                        <span class="font-bold truncate text-lg">{retainer_name}</span>
+                                                                                                        <a class="font-bold truncate text-lg underline" href=format!("/retainers/listings/{}",retainer.id)>{retainer_name}</a>
                                                                                                         <div class="opacity-80 text-sm">
                                                                                                             <WorldName id=AnySelector::World(world_id) />
                                                                                                         </div>
@@ -253,7 +255,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                                             }
                                                                                                         >
                                                                                                             <option value="">
-                                                                                                                {t!(i18n, retainers_no_character)}
+                                                                                                                {if observed_character { "Observed character".to_string() } else { t_string!(i18n, retainers_no_character).to_string() }}
                                                                                                             </option>
                                                                                                             <Suspense>
                                                                                                                 {move || characters.get().map(|chars| {

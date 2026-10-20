@@ -5,6 +5,7 @@ pub mod api;
 pub mod columnar_wire;
 pub mod components;
 pub mod global_state;
+pub mod plugin_browser;
 pub mod ws;
 pub use ultros_api_client::error;
 #[cfg(feature = "ssr")]

@@ -1,7 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use futures::future::{self, Either};
-use poise::serenity_prelude;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 use ultros_api_types::{
@@ -30,7 +29,6 @@ use super::undercut_alert::{RetainerAlertListener, RetainerAlertServices, Retain
 /// inbox) doesn't push `start_manager`'s argument count past clippy's
 /// `too_many_arguments` threshold.
 pub struct AlertManagerServices {
-    pub ctx: serenity_prelude::Context,
     pub token: CancellationToken,
     pub world_cache: Arc<WorldCache>,
     pub world_helper: Arc<WorldHelper>,
@@ -75,7 +73,6 @@ impl AlertManager {
         services: AlertManagerServices,
     ) {
         let AlertManagerServices {
-            ctx,
             token,
             world_cache,
             world_helper,
@@ -103,7 +100,6 @@ impl AlertManager {
                                 .create_retainer_alert_listener(
                                     &alert,
                                     &ultros_db,
-                                    &ctx,
                                     listings.resubscribe(),
                                     retainers.resubscribe(),
                                 )
@@ -123,7 +119,6 @@ impl AlertManager {
             listings.resubscribe(),
             alerts.resubscribe(),
             MarketTriggerServices {
-                ctx: ctx.clone(),
                 world_helper: world_helper.clone(),
                 notifications: notifications.clone(),
                 medians,
@@ -140,7 +135,6 @@ impl AlertManager {
             alerts.resubscribe(),
             lists.resubscribe(),
             PriceAlertServices {
-                ctx: ctx.clone(),
                 world_cache,
                 world_helper,
                 notifications: notifications.clone(),
@@ -155,7 +149,6 @@ impl AlertManager {
             ultros_db.clone(),
             lists.resubscribe(),
             alerts.resubscribe(),
-            ctx.clone(),
             notifications.clone(),
         )
         .await
@@ -169,7 +162,6 @@ impl AlertManager {
             history,
             retainers.resubscribe(),
             alerts.resubscribe(),
-            ctx.clone(),
             notifications.clone(),
         )
         .await
@@ -202,7 +194,6 @@ impl AlertManager {
                                                         .create_retainer_alert_listener(
                                                             &retainer_alert,
                                                             &ultros_db,
-                                                            &ctx,
                                                             listings.resubscribe(),
                                                             retainers.resubscribe(),
                                                         )
@@ -228,7 +219,6 @@ impl AlertManager {
                                             .create_retainer_alert_listener(
                                                 retainer_alert,
                                                 &ultros_db,
-                                                &ctx,
                                                 listings.resubscribe(),
                                                 retainers.resubscribe(),
                                             )
@@ -250,7 +240,6 @@ impl AlertManager {
         &mut self,
         alert: &alert_retainer_undercut::Model,
         ultros_db: &UltrosDb,
-        ctx: &serenity_prelude::Context,
         listings: EventBus<ListingEventData>,
         active_retainers: EventBus<OwnedRetainer>,
     ) {
@@ -267,7 +256,6 @@ impl AlertManager {
             listings,
             active_retainers,
             RetainerAlertServices {
-                ctx: ctx.clone(),
                 notifications: self.notifications.clone(),
             },
         )

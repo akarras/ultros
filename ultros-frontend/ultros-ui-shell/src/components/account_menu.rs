@@ -25,6 +25,11 @@ use leptos::prelude::*;
 #[component]
 pub fn AccountMenu() -> impl IntoView {
     let i18n = use_i18n();
+    let location = crate::components::app_link::use_location_or_default();
+    #[cfg(all(feature = "hydrate", not(feature = "ssr")))]
+    let protected_document = ultros_frontend_core::plugin_browser::document_ready();
+    #[cfg(any(not(feature = "hydrate"), feature = "ssr"))]
+    let protected_document = false;
     let (open, set_open) = signal(false);
     let user = Resource::new(move || {}, move |_| async move { get_login().await.ok() });
     let root_ref = NodeRef::<html::Div>::new();
@@ -47,8 +52,17 @@ pub fn AccountMenu() -> impl IntoView {
                     {move || {
                         match user.get().flatten() {
                             Some(auth) => {
+                                let avatar = auth.avatar.clone();
+                                let avatar_label = auth.username.clone();
                                 view! {
-                                    <img class="avatar" src=auth.avatar alt=auth.username.clone() />
+                                    {move || {
+                                        let path = location.pathname.get();
+                                        if protected_document || path == "/plugin" || path.starts_with("/plugin/") {
+                                            view! { <Icon icon=i::BsPersonCircle width="1.25em" height="1.25em" /> }.into_any()
+                                        } else {
+                                            view! { <img class="avatar" src=avatar.clone() alt=avatar_label.clone() /> }.into_any()
+                                        }
+                                    }}
                                     <span class="side-nav-label ml-2">{auth.username}</span>
                                 }
                                     .into_any()

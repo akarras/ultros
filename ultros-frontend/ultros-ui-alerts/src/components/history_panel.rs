@@ -188,7 +188,9 @@ pub fn HistoryPanel() -> impl IntoView {
                                                     .filter(|body| !body.is_empty());
                                                 let fired_abs = e.fired_at.to_rfc3339();
                                                 let price_str = e.matched_price.map(|p| p.to_string()).unwrap_or_else(|| "\u{2014}".into());
-                                                let delivered_str = if e.delivered {
+                                                let delivered_str = if e.pending_destinations>0 {
+                                                    format!("Queued · {} pending",e.pending_destinations)
+                                                } else if e.delivered {
                                                     "\u{2713}".to_string()
                                                 } else {
                                                     e.delivery_error.as_deref().unwrap_or("\u{2717}").to_string()
@@ -236,6 +238,7 @@ pub fn HistoryPanel() -> impl IntoView {
                                                                                 set_is_resending.set(true);
                                                                                 spawn_local(async move {
                                                                                     match resend_alert_event(event_id).await {
+                                                                                        Ok(r) if r.queued => { if let Some(t)=toasts {t.success("Queued for the connected game client.");} reset_and_refetch(version,before_id,rows,loading); }
                                                                                         Ok(r) if r.delivered => {
                                                                                             if let Some(t) = toasts {
                                                                                                 t.success(t_string!(i18n, history_resend_success_toast).to_string());

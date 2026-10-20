@@ -101,6 +101,10 @@ pub struct AlertEvent {
     pub matched_listing_id: Option<i64>,
     pub matched_price: Option<i32>,
     pub delivered: bool,
+    #[serde(default)]
+    pub accepted_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub pending_destinations: i32,
     pub delivery_error: Option<String>,
     /// When the user marked this event as read. `None` means unread.
     /// Additive field: defaults to `None` when deserializing payloads from
@@ -201,6 +205,10 @@ pub enum EndpointMethod {
     /// auto-created `InApp` endpoint; it is not created via the generic
     /// endpoints CRUD.
     InApp {},
+    /// An approved game device. Only device authorization can create it.
+    InGame {
+        device_id: String,
+    },
 }
 
 /// Body for `POST /api/v1/push/subscribe`. The browser obtains `endpoint`, `p256dh`,
@@ -267,6 +275,8 @@ pub struct DeleteEndpointResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResendResult {
     pub delivered: bool,
+    #[serde(default)]
+    pub queued: bool,
     pub error: Option<String>,
 }
 

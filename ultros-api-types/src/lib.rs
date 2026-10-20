@@ -13,6 +13,7 @@ pub mod listing_stats;
 mod listings;
 pub mod market_heat;
 pub mod market_pulse;
+pub mod plugin;
 pub mod price_density;
 pub mod price_series;
 pub mod recent_sales;

@@ -115,6 +115,21 @@ pub(crate) fn use_retainer_live(
     pairs: Signal<Option<Vec<ListedPair>>>,
     refetch: impl Fn() + Clone + 'static,
 ) -> RetainerLive {
+    // Private captures do not emit public market events. Keep an already-open
+    // account view current, including an initially empty roster. Background
+    // tabs and signed-out/loading/error states do not make polling requests.
+    #[cfg(not(feature = "ssr"))]
+    {
+        let refetch = refetch.clone();
+        let interval = StoredValue::new(Some(send_wrapper::SendWrapper::new(
+            gloo_timers::callback::Interval::new(5_000, move || {
+                if !document().hidden() && pairs.get_untracked().is_some() {
+                    refetch();
+                }
+            }),
+        )));
+        on_cleanup(move || interval.update_value(|interval| *interval = None));
+    }
     let (status, set_status) = signal("connecting".to_string());
     let (last_update, set_last_update) = signal(None::<DateTime<Utc>>);
     // Plain (Send) storage, not `new_local`: `on_cleanup` below runs when the

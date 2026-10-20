@@ -875,6 +875,7 @@ pub(crate) async fn resend_alert_event(
         .map_err(ApiError::from)?;
     if endpoints.is_empty() {
         return Ok(Json(ResendResult {
+            queued: false,
             delivered: false,
             error: Some("alert has no endpoints".into()),
         }));
@@ -888,6 +889,7 @@ pub(crate) async fn resend_alert_event(
     let push = crate::alerts::delivery::PushOptions::immediate("/alerts");
     let mut last_err: Option<String> = None;
     let mut any_ok = false;
+    let mut queued = false;
     let owner = user.id as i64;
     for endpoint in endpoints {
         // Defense in depth: today `set_alert_rules` is the only path that links endpoints
@@ -899,6 +901,26 @@ pub(crate) async fn resend_alert_event(
                 "endpoint {} not owned by caller; skipped",
                 endpoint.id
             ));
+            continue;
+        }
+        if endpoint.method == "InGame" {
+            match db
+                .enqueue_browser_game_delivery(
+                    owner,
+                    endpoint.id,
+                    Some(event_id),
+                    &format!("resend/{}", uuid::Uuid::new_v4()),
+                    title,
+                    &body,
+                )
+                .await
+            {
+                Ok(()) => {
+                    queued = true;
+                    crate::web::plugin::wake_notifications(owner);
+                }
+                Err(_) => last_err = Some("The game client is disconnected or unavailable".into()),
+            }
             continue;
         }
         let needs_ctx = matches!(endpoint.method.as_str(), "DiscordDm" | "DiscordChannel");
@@ -924,6 +946,7 @@ pub(crate) async fn resend_alert_event(
         }
     }
     Ok(Json(ResendResult {
+        queued,
         delivered: any_ok,
         error: last_err,
     }))

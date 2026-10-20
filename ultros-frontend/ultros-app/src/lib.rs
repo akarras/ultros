@@ -71,6 +71,7 @@ use crate::{
         lists::*,
         not_found::NotFound,
         npc_view::NpcView,
+        plugin::{PluginDevices, PluginLayout, PluginNotFound, PluginSetup, PluginVerify},
         recipe_analyzer::*,
         recipe_view::RecipeView,
         retainers::*,
@@ -366,9 +367,9 @@ fn boot_progress_script() -> String {
     .concat()
 }
 
-pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView {
+pub fn shell(options: LeptosOptions, bootstrap_script: String, plugin_page: bool) -> impl IntoView {
     let sheet_url = ["/", options.site_pkg_dir.as_ref(), "/ultros.css"].concat();
-    let error_reporting_script = error_reporting_script();
+    let error_reporting_script = (!plugin_page).then(error_reporting_script).flatten();
     view! {
         <!DOCTYPE html>
         // Chrome's Google Translate rewrites text nodes into `<font>` wrappers
@@ -387,6 +388,8 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
             <head>
                 <meta charset="utf-8" />
                 <meta name="google" content="notranslate" />
+                {plugin_page.then(|| view! { <meta id="ultros-plugin-document" name="ultros-plugin-document" content="true" /> })}
+                {plugin_page.then(|| view! { <script inner_html=include_str!("plugin-link-bootstrap.js") /> })}
                 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
                 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
                 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
@@ -423,13 +426,12 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
                 <AutoReload options=options.clone() />
                 <HydrationScripts options />
                 <MetaTags />
-                <script
-                    async
-                    src="https://www.googletagmanager.com/gtag/js?id=G-WYVZLM39M3"
-                ></script>
-                <script>
+                {(!plugin_page).then(|| view! {
+                    <script async src="https://www.googletagmanager.com/gtag/js?id=G-WYVZLM39M3"></script>
+                    <script>
     "window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());gtag('config', 'G-WYVZLM39M3');"
-                </script>
+                    </script>
+                })}
             </head>
             <body translate="no" class="notranslate">
                 <App />
@@ -695,6 +697,12 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                     <Routes fallback=NotFound>
                         <components::virtual_grid::fixture::GridFixtureRoutes/>
                         <Route path=path!("") view=HomePage />
+                        <ParentRoute path=path!("plugin") view=PluginLayout ssr=SsrMode::InOrder>
+                            <Route path=path!("") view=PluginSetup ssr=SsrMode::InOrder />
+                            <Route path=path!("verify") view=PluginVerify ssr=SsrMode::InOrder />
+                            <Route path=path!("devices") view=PluginDevices ssr=SsrMode::InOrder />
+                            <Route path=path!("*any") view=PluginNotFound ssr=SsrMode::InOrder />
+                        </ParentRoute>
                         <ParentRoute path=path!("retainers") view=Retainers>
                             <Route path=path!("edit") view=EditRetainers />
                             <Route path=path!("undercuts") view=RetainerUndercuts />

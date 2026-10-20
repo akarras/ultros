@@ -1,13 +1,11 @@
 //! Notification-inbox fire helper.
 //!
-//! Every alert tracker (`price_alert_tracker`, `list_update_alert_tracker`,
-//! `sold_alert`, `undercut_alert`) calls [`record_fire`] instead of writing to
-//! `alert_event` directly, so a fire is recorded *and* pushed to the owner's
-//! open inbox sockets (via the `notifications` bus in `crate::event`) in one
-//! place. REST (`ultros/src/web/api/alerts.rs`) reuses [`alert_event_to_api`]
+//! Every alert tracker calls [`record_fire`] to durably accept the fire before
+//! the outbox sends externally. REST reuses [`alert_event_to_api`]
 //! so the websocket push and the paginated history endpoint always agree on
 //! the wire shape.
 
+use crate::delivery::PushOptions;
 use tracing::error;
 use ultros_api_types::alert::AlertEvent;
 use ultros_db::{NewAlertEvent, UltrosDb, entity::alert_event};
@@ -24,6 +22,8 @@ pub fn alert_event_to_api(m: alert_event::Model) -> AlertEvent {
         matched_listing_id: m.matched_listing_id,
         matched_price: m.matched_price,
         delivered: m.delivered,
+        accepted_at: m.accepted_at.map(|dt| dt.with_timezone(&chrono::Utc)),
+        pending_destinations: m.pending_destinations,
         delivery_error: m.delivery_error,
         read_at: m.read_at.map(|dt| dt.with_timezone(&chrono::Utc)),
         title: m.title,
@@ -44,21 +44,18 @@ pub struct AlertFire<'a> {
     pub title: &'a str,
     pub body: &'a str,
     pub click_url: &'a str,
-    pub delivered: bool,
-    pub delivery_error: Option<String>,
+    pub push: &'a PushOptions,
 }
 
 /// Record an alert fire and broadcast it to the owner's open inbox sockets.
 ///
-/// Never propagates an error: a failed insert or a full/closed notification
-/// bus must not abort the delivery path that called this (Discord/webhook
-/// dispatch already happened by the time a tracker calls `record_fire`). Both
-/// failure modes are logged instead.
+/// Returns true only after the event, cooldown and every destination's work
+/// commit together. Callers advance memory cooldowns only after true.
 pub async fn record_fire(
     db: &UltrosDb,
     notifications: &EventProducer<NotificationEvent>,
     fire: AlertFire<'_>,
-) {
+) -> bool {
     let AlertFire {
         alert_id,
         owner,
@@ -68,27 +65,27 @@ pub async fn record_fire(
         title,
         body,
         click_url,
-        delivered,
-        delivery_error,
+        push,
     } = fire;
     let inserted = db
-        .record_alert_event(NewAlertEvent {
+        .accept_alert_fire(owner,NewAlertEvent {
             alert_id,
             item_id,
             matched_listing_id,
             matched_price,
-            delivered,
-            delivery_error,
+            delivered:false,
+            delivery_error:None,
             title: title.to_string(),
             body: body.to_string(),
             click_url: click_url.to_string(),
-        })
+        },serde_json::json!({"click_url":push.click_url,"ttl_secs":push.ttl_secs,"topic":push.topic}))
         .await;
     let model = match inserted {
-        Ok(model) => model,
+        Ok(Some(model)) => model,
+        Ok(None) => return false,
         Err(e) => {
             error!("failed to record alert_event for alert {alert_id}: {e}");
-            return;
+            return false;
         }
     };
     let event = alert_event_to_api(model);
@@ -99,6 +96,7 @@ pub async fn record_fire(
         "queued alert fire for the notification-inbox bus"
     );
     let _ = notifications.send(EventType::added(notification));
+    true
 }
 
 #[cfg(test)]
@@ -118,6 +116,8 @@ mod tests {
             matched_listing_id: Some(99),
             matched_price: Some(1234),
             delivered: true,
+            accepted_at: None,
+            pending_destinations: 0,
             delivery_error: None,
             read_at: None,
             title: Some("Title".to_string()),

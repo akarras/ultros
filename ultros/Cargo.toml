@@ -10,9 +10,12 @@ license = "MIT or Apache-2.0"
 universalis = { path = "../universalis", features = ["websocket"] }
 ultros-db = { path = "../ultros-db", features = ["rkyv"] }
 ultros-list-doc = { path = "../ultros-list-doc" }
+ultros-calc = { path = "../ultros-frontend/ultros-calc" }
+uuid = { version = "1", features = ["v4"] }
 ultros-clickhouse = { path = "../ultros-clickhouse" }
 clickhouse = { workspace = true }
 sea-orm = { workspace = true }
+ipnet = "2.12"
 anyhow = { workspace = true }
 axum.workspace = true
 axum-extra.workspace = true
@@ -111,6 +114,7 @@ rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] 
 libc = "0.2"
 
 [dev-dependencies]
+migration = { path = "../migration" }
 tempfile = "3.6.0"
 # `sentry::test::with_captured_events` is the only way to assert what actually
 # lands on an event (the transaction name that GlitchTip groups by). Dev-only,
@@ -133,4 +137,5 @@ jemalloc = ["dep:tikv-jemallocator"]
 # Exposes /test/login for E2E tests. Compile-time gated so prod binaries
 # physically cannot contain this route. Build with: --features test-auth
 test-auth = ["ultros-ingest/test-auth", "ultros-server-core/test-auth", "ultros-discord/test-auth"]
+plugin-localhost = []
 default = []

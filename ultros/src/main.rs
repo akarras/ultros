@@ -806,12 +806,34 @@ async fn main() -> Result<()> {
         }
     }
 
+    crate::alerts::outbox::start(db.clone(), senders.notifications.clone(), token.clone());
+    tokio::spawn(crate::alerts::alert_manager::AlertManager::start_manager(
+        db.clone(),
+        (
+            receivers.retainers.resubscribe(),
+            receivers.listings.resubscribe(),
+        ),
+        (
+            receivers.alerts.resubscribe(),
+            receivers.retainer_undercut.resubscribe(),
+        ),
+        (
+            receivers.lists.resubscribe(),
+            receivers.history.resubscribe(),
+        ),
+        crate::alerts::alert_manager::AlertManagerServices {
+            token: token.clone(),
+            world_cache: world_cache.clone(),
+            world_helper: world_helper.clone(),
+            notifications: senders.notifications.clone(),
+            ch_client: ch_client.clone(),
+        },
+    ));
     tokio::spawn(start_discord(
         DiscordServices {
             db: db.clone(),
             list_sync: list_sync.clone(),
             event_senders: senders.clone(),
-            event_receivers: receivers.clone(),
             analyzer_service: analyzer_service.clone(),
             world_cache: world_cache.clone(),
             world_helper: world_helper.clone(),

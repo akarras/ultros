@@ -461,24 +461,57 @@ pub async fn post_floor_history(
 
 /// Returns a list of the logged in user's retainers
 pub async fn get_retainers() -> AppResult<UserRetainers> {
-    fetch_api("/api/v1/user/retainer").await
+    fetch_api("/api/v2/user/retainer").await
+}
+
+/// Explicitly saved in-game rosters for the signed-in website account. Game IDs
+/// have their own namespace and are never interpreted as Lodestone IDs.
+pub async fn get_registered_game_characters()
+-> AppResult<Vec<ultros_api_types::plugin::UnverifiedCharacter>> {
+    fetch_api("/api/v1/user/retainer/in-game").await
 }
 
 pub async fn get_retainer_listings(retainer_id: i32) -> AppResult<RetainerListings> {
     fetch_api(&format!("/api/v1/retainer/listings/{retainer_id}")).await
 }
 
+/// Owners see their private observations on the same per-retainer page. Public
+/// visitors still use the public endpoint, which contains Universalis rows only.
+pub async fn get_retainer_listing_view(
+    retainer_id: i32,
+) -> AppResult<(Retainer, Vec<ultros_api_types::user::RetainerListing>)> {
+    if get_login().await.is_ok() {
+        let owned = get_user_retainer_listings().await?;
+        if let Some(retainer) = owned
+            .retainers
+            .into_iter()
+            .flat_map(|(_, retainers)| retainers)
+            .find(|(retainer, _)| retainer.id == retainer_id)
+        {
+            return Ok(retainer);
+        }
+    }
+    let public = get_retainer_listings(retainer_id).await?;
+    Ok((
+        public.retainer,
+        public.listings.into_iter().map(Into::into).collect(),
+    ))
+}
+
 pub async fn get_user_retainer_listings() -> AppResult<UserRetainerListings> {
-    fetch_api("/api/v1/user/retainer/listings").await
+    fetch_api("/api/v2/user/retainer/listings").await
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct UndercutData {
-    pub current: ActiveListing,
+    pub current: ultros_api_types::user::RetainerListing,
     pub cheapest: i32,
 }
 
-pub type Undercuts = Vec<(Option<FfxivCharacter>, Vec<(Retainer, Vec<UndercutData>)>)>;
+pub type Undercuts = Vec<(
+    Option<ultros_api_types::user::RetainerCharacter>,
+    Vec<(Retainer, Vec<UndercutData>)>,
+)>;
 
 /// What the undercuts page needs: the undercut rows to show, plus every
 /// `(world_id, item_id)` the user's retainers list at all — including the
@@ -1158,6 +1191,7 @@ where
         async move {
             let inner_impl = async move || -> AppResult<String> {
                 let response = gloo_net::http::Request::get(&path)
+                    .header("X-Ultros-Capabilities", "in-game-endpoints-v1")
                     // .abort_signal(abort_signal.as_ref())
                     .send()
                     .await
@@ -1196,9 +1230,13 @@ async fn request_api<T: DeserializeOwned>(
     use leptos::prelude::use_context;
 
     let api = use_context::<crate::ssr_api::SsrApi>().ok_or(AppError::ParamMissing)?;
-    let headers = use_context::<Parts>()
+    let mut headers = use_context::<Parts>()
         .ok_or(AppError::ParamMissing)?
         .headers;
+    headers.insert(
+        "x-ultros-capabilities",
+        "in-game-endpoints-v1".parse().expect("static header"),
+    );
     let (status, body) = api
         .request(method, path, headers, json)
         .await

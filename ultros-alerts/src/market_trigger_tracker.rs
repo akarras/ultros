@@ -24,7 +24,6 @@ use std::{
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use poise::serenity_prelude;
 use tokio::sync::Mutex;
 use tracing::{error, info, instrument, warn};
 use ultros_api_types::{
@@ -42,7 +41,7 @@ use ultros_db::{
     entity::{alert, alert_back_in_stock, alert_below_median},
 };
 
-use crate::alerts::delivery::{AlertKind, PushOptions, dispatch_alert};
+use crate::alerts::delivery::{AlertKind, PushOptions};
 use crate::alerts::inbox::{AlertFire, record_fire};
 use crate::alerts::median_cache::{BASELINE_REFRESH_SECS, BaselineKey, MedianCache};
 use crate::alerts::price_alert_tracker::{item_click_url, resolve_item_name};
@@ -318,7 +317,6 @@ pub fn format_back_in_stock_message(
 
 /// Shared handles the listener needs beyond the event buses.
 pub struct MarketTriggerServices {
-    pub ctx: serenity_prelude::Context,
     pub world_helper: Arc<WorldHelper>,
     pub notifications: EventProducer<NotificationEvent>,
     pub medians: Arc<MedianCache>,
@@ -524,7 +522,6 @@ async fn handle_added(ctx: &Ctx, added: &ListingEventData) {
                     .filter(|l| below_median_matches(&r.rule, l, &baselines, worlds, now))
                     .min_by_key(|l| l.price_per_unit);
                 if let Some(listing) = best {
-                    r.rule.last_fired_at = Some(now);
                     median_fires.push(MedianFire {
                         alert_id: r.alert_id,
                         owner: r.owner,
@@ -548,17 +545,16 @@ async fn handle_added(ctx: &Ctx, added: &ListingEventData) {
                 let Some(listing) = cheapest else {
                     continue;
                 };
-                if rule
-                    .state
-                    .on_listing_added(now, rule.last_fired_at, rule.cooldown_seconds)
-                {
-                    rule.last_fired_at = Some(now);
+                let mut observed = rule.state.clone();
+                if observed.on_listing_added(now, rule.last_fired_at, rule.cooldown_seconds) {
                     stock_fires.push(StockFire {
                         alert_id: rule.alert_id,
                         owner: rule.owner,
                         item_id: rule.item_id,
                         listing: listing.clone(),
                     });
+                } else {
+                    rule.state = observed;
                 }
             }
         }
@@ -652,9 +648,7 @@ async fn deliver(ctx: &Ctx, out: Outgoing<'_>) {
         click_url,
     } = out;
     let push = PushOptions::for_alert(AlertKind::Price, alert_id, click_url);
-    let result = dispatch_alert(alert_id, title, body, &push, &ctx.db, &ctx.services.ctx).await;
-    let delivered = result.is_ok();
-    record_fire(
+    let accepted = record_fire(
         &ctx.db,
         &ctx.services.notifications,
         AlertFire {
@@ -666,13 +660,29 @@ async fn deliver(ctx: &Ctx, out: Outgoing<'_>) {
             title,
             body,
             click_url,
-            delivered,
-            delivery_error: result.err().map(|e| e.to_string()),
+            push: &push,
         },
     )
     .await;
-    if delivered && let Err(e) = ctx.db.update_alert_last_fired(alert_id).await {
-        error!("failed to update last_fired_at for market-trigger alert {alert_id}: {e}");
+    if accepted {
+        let now = Utc::now();
+        let mut state = ctx.state.lock().await;
+        for rules in state.median_by_item.values_mut() {
+            for r in rules {
+                if r.alert_id == alert_id {
+                    r.rule.last_fired_at = Some(now);
+                }
+            }
+        }
+        for rules in state.stock_by_item.values_mut() {
+            for r in rules {
+                if r.alert_id == alert_id {
+                    r.last_fired_at = Some(now);
+                    r.state.empty_since = None;
+                    r.state.last_listing_seen = Some(now);
+                }
+            }
+        }
     }
 }
 

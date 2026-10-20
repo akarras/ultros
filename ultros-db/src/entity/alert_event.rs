@@ -14,6 +14,8 @@ pub struct Model {
     pub matched_listing_id: Option<i64>,
     pub matched_price: Option<i32>,
     pub delivered: bool,
+    pub accepted_at: Option<DateTimeWithTimeZone>,
+    pub pending_destinations: i32,
     pub delivery_error: Option<String>,
     pub read_at: Option<DateTimeWithTimeZone>,
     pub title: Option<String>,

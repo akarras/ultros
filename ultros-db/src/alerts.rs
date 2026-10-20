@@ -326,6 +326,8 @@ impl UltrosDb {
             matched_listing_id: Set(new.matched_listing_id),
             matched_price: Set(new.matched_price),
             delivered: Set(new.delivered),
+            accepted_at: Set(None),
+            pending_destinations: Set(0),
             delivery_error: Set(new.delivery_error),
             read_at: Set(None),
             title: Set(Some(new.title)),

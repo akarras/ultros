@@ -19,6 +19,7 @@ pub enum Origin {
     Socket(u64),
     Rest,
     Bot,
+    Plugin,
 }
 
 #[derive(Clone, Debug)]
@@ -47,6 +48,27 @@ pub struct ListSync {
 }
 
 impl ListSync {
+    pub async fn apply_plugin_update(
+        &self,
+        list_id: i32,
+        principal: &ultros_db::plugin::PluginPrincipal,
+        update: &[u8],
+    ) -> Result<Applied, ListDocError> {
+        let outcome = self
+            .db
+            .apply_plugin_list_update(principal, list_id, update)
+            .await?;
+        let actor = Actor {
+            user_id: principal
+                .session
+                .account_id
+                .parse()
+                .map_err(|_| ultros_db::plugin::PluginError::Unauthorized)?,
+            username: principal.session.account_name.clone(),
+            origin: Origin::Plugin,
+        };
+        Ok(self.publish(list_id, &actor, outcome).await)
+    }
     pub fn new(db: UltrosDb, senders: EventSenders) -> Self {
         Self { db, senders }
     }
@@ -165,7 +187,7 @@ impl ListSync {
 
         let origin_socket = match actor.origin {
             Origin::Socket(id) => Some(id),
-            Origin::Rest | Origin::Bot => None,
+            Origin::Rest | Origin::Bot | Origin::Plugin => None,
         };
         if let Err(e) = self
             .senders

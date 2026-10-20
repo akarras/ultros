@@ -1927,6 +1927,46 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 }
 
 /* New application shell — grid that owns sidebar + content + ad rail. */
+.plugin-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    border-bottom: 1px solid var(--color-outline);
+    padding-bottom: 0.75rem;
+}
+.plugin-tabs a {
+    padding: 0.625rem 0.875rem;
+    border-radius: 0.5rem;
+    color: var(--color-text-muted);
+}
+.plugin-tabs a[aria-current="page"] {
+    background: color-mix(in srgb, var(--brand-ring) 18%, transparent);
+    color: var(--color-text);
+    font-weight: 600;
+}
+.plugin-tabs a:hover { background: color-mix(in srgb, var(--brand-ring) 12%, transparent); }
+.plugin-page p, .plugin-page li, .plugin-page dd { line-height: 1.65; }
+.plugin-page code { overflow-wrap: anywhere; }
+.plugin-page summary { cursor: pointer; font-weight: 600; padding: 0.5rem 0; }
+.plugin-page details p { padding: 0.5rem 0 0.75rem; color: var(--color-text-muted); }
+.plugin-notice, .plugin-device {
+    border: 1px solid var(--color-outline);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    background: color-mix(in srgb, var(--brand-ring) 5%, transparent);
+    overflow-wrap: anywhere;
+}
+.plugin-permission { display: flex; align-items: flex-start; gap: 0.75rem; }
+.plugin-permission input { margin-top: 0.35rem; flex-shrink: 0; }
+.plugin-feature-list { display: grid; gap: 0.5rem 1.5rem; }
+.plugin-feature-list dt { font-weight: 600; }
+.plugin-feature-list dd { margin-bottom: 0.75rem; color: var(--color-text-muted); }
+@media (min-width: 640px) {
+    .plugin-feature-list { grid-template-columns: 10rem minmax(0, 1fr); }
+}
+@media (max-width: 639.98px) {
+    .plugin-page > div > header, .plugin-page .plugin-tabs { padding-left: 1rem; padding-right: 1rem; }
+}
 .app-shell {
     display: grid;
     grid-template-columns: 240px minmax(0, 1fr);
@@ -2061,6 +2101,13 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     }
     .app-shell > .app-shell-content {
         padding: 1.5rem;
+    }
+    .app-shell.app-shell-plugin {
+        grid-template-columns: 240px minmax(0, 1fr);
+        grid-template-areas: "side main";
+    }
+    .app-shell.app-shell-plugin.app-shell-collapsed {
+        grid-template-columns: 56px minmax(0, 1fr);
     }
 }
 

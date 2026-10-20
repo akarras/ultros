@@ -51,6 +51,9 @@ pub(crate) fn method_to_db(m: &EndpointMethod) -> (&'static str, JsonValue) {
         // this arm still needs to exist for `update_endpoint`'s rename path and
         // for `db_to_method` round-tripping in tests.
         EndpointMethod::InApp {} => ("InApp", serde_json::json!({})),
+        EndpointMethod::InGame { device_id } => {
+            ("InGame", serde_json::json!({"device_id":device_id}))
+        }
     }
 }
 
@@ -92,6 +95,13 @@ pub(crate) fn db_to_method(method: &str, config: &JsonValue) -> anyhow::Result<E
                 .ok_or_else(|| anyhow::anyhow!("WebPush missing subscription_id"))?,
         }),
         "InApp" => Ok(EndpointMethod::InApp {}),
+        "InGame" => Ok(EndpointMethod::InGame {
+            device_id: config
+                .get("device_id")
+                .and_then(JsonValue::as_str)
+                .ok_or_else(|| anyhow::anyhow!("missing device identity"))?
+                .into(),
+        }),
         other => Err(anyhow::anyhow!("unknown method {other}")),
     }
 }
@@ -99,6 +109,9 @@ pub(crate) fn db_to_method(method: &str, config: &JsonValue) -> anyhow::Result<E
 #[allow(clippy::result_large_err)]
 pub(crate) fn validate_endpoint_method(m: &EndpointMethod, owner_id: i64) -> Result<(), ApiError> {
     match m {
+        EndpointMethod::InGame { .. } => Err(ApiError::BadRequest(
+            "connect the game client to create its endpoint",
+        )),
         EndpointMethod::Webhook { url } => validate_discord_webhook_url(url),
         EndpointMethod::DiscordChannel { channel_id, .. } => {
             validate_discord_channel_id(*channel_id)
@@ -135,6 +148,7 @@ pub(crate) fn validate_endpoint_method(m: &EndpointMethod, owner_id: i64) -> Res
 pub(crate) async fn list_endpoints(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<Vec<Endpoint>>, ApiError> {
     // Every user has an inbox, even one that has never touched /api/v1/endpoints
     // before — create it lazily on first list rather than at signup so there is
@@ -148,6 +162,15 @@ pub(crate) async fn list_endpoints(
         .map_err(ApiError::from)?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
+        // Existing cached clients cannot deserialize the new enum variant.
+        if r.method == "InGame"
+            && !headers
+                .get("x-ultros-capabilities")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.split(',').any(|v| v.trim() == "in-game-endpoints-v1"))
+        {
+            continue;
+        }
         let method = db_to_method(&r.method, &r.config).map_err(ApiError::from)?;
         // Only surface the reason while the endpoint is actually disabled.
         // Recovery clears both columns together, so this is belt-and-braces: a
@@ -258,7 +281,7 @@ fn reject_inapp_method_change(
     existing_method: &str,
     requested_method: &Option<EndpointMethod>,
 ) -> Result<(), ApiError> {
-    if existing_method == "InApp" && requested_method.is_some() {
+    if matches!(existing_method, "InApp" | "InGame") && requested_method.is_some() {
         return Err(ApiError::BadRequest(
             "the in-app inbox endpoint cannot change delivery method",
         ));
@@ -315,7 +338,7 @@ pub(crate) async fn delete_endpoint(
     // every fetch — deleting it would just resurrect an identical row on the
     // caller's next GET, so reject the delete outright instead of silently
     // no-op-ing.
-    if endpoint.method == "InApp" {
+    if matches!(endpoint.method.as_str(), "InApp" | "InGame") {
         return Err(ApiError::BadRequest(
             "the in-app inbox endpoint cannot be deleted",
         ));
@@ -361,6 +384,25 @@ pub(crate) async fn test_endpoint(
         .await
         .map_err(ApiError::from)?;
 
+    if endpoint.method == "InGame" {
+        db.enqueue_browser_game_delivery(
+            user.id as i64,
+            id,
+            None,
+            &format!("browser-test/{}", uuid::Uuid::new_v4()),
+            "Ultros test notification",
+            "This is your connected game endpoint.",
+        )
+        .await
+        .map_err(|_| ApiError::BadRequest("the game client is disconnected or unavailable"))?;
+        crate::web::plugin::wake_notifications(user.id as i64);
+        return Ok(Json(ResendResult {
+            delivered: false,
+            queued: true,
+            error: None,
+        }));
+    }
+
     // Only Discord-routed endpoints need the bot context. Webhook + WebPush use
     // their own HTTP clients and were previously failing this branch even though
     // serenity isn't on their delivery path. Resolving the ctx is a function of
@@ -371,6 +413,7 @@ pub(crate) async fn test_endpoint(
             Some(ctx) => Some(ctx),
             None => {
                 return Ok(Json(ResendResult {
+                    queued: false,
                     delivered: false,
                     error: Some(
                         "Discord bot isn't connected on this deployment, so DM/channel \
@@ -422,11 +465,13 @@ pub(crate) async fn test_endpoint(
                 tracing::error!("failed to clear delivery failure for endpoint {id}: {e}");
             }
             Ok(Json(ResendResult {
+                queued: false,
                 delivered: true,
                 error: None,
             }))
         }
         Err(e) => Ok(Json(ResendResult {
+            queued: false,
             delivered: false,
             error: Some(format!("{e}")),
         })),

@@ -26,6 +26,10 @@ ultros-list-doc = { path = "../ultros-list-doc" }
 metrics = "0.24.5"
 dotenvy = "0.15.7"
 getrandom = "0.4.2"
+sha2 = "0.11.0"
+ring = "0.17.14"
+subtle = "2.6.1"
+base64 = "0.22.1"
 rkyv = { version = "0.7.42", features = ["validation", "size_32", "hashbrown"], default-features = false, optional = true }
 
 [features]

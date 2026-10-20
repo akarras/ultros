@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use poise::serenity_prelude::{self, Color, UserId};
 use serde::Serialize;
 use tokio::time::Instant;
 use tracing::{debug, error, instrument, warn};
@@ -15,10 +14,7 @@ use ultros_db::UltrosDb;
 
 use crate::{
     alerts::{
-        delivery::{
-            AlertKind, DispatchOutcome, PushOptions, dispatch_alert_detailed,
-            permanent_failure_reason,
-        },
+        delivery::{AlertKind, PushOptions},
         inbox::{AlertFire, record_fire},
     },
     event::{EventBus, EventProducer, EventType, NotificationEvent},
@@ -114,64 +110,6 @@ async fn get_user_unique_retainer_ids_and_listing_ids_by_price(
     Ok((user_retainer_ids, user_lowest_listings))
 }
 
-/// Result of the legacy `alert_discord_destination` fallback.
-enum LegacyOutcome {
-    /// At least one legacy channel accepted the message.
-    Delivered,
-    /// This alert has no legacy destinations at all. Distinct from success:
-    /// sending to nothing used to report `Ok(())`, which marked the alert
-    /// event as delivered even though nobody was notified.
-    NoDestinations,
-    /// Every legacy destination failed.
-    Failed(anyhow::Error),
-}
-
-#[instrument(skip(ultros_db, ctx))]
-async fn send_discord_alerts(
-    alert_id: i32,
-    discord_user_id: u64,
-    ultros_db: &UltrosDb,
-    ctx: &serenity_prelude::Context,
-    undercut_msg: &str,
-) -> Result<LegacyOutcome> {
-    let destinations = ultros_db.get_alert_discord_destinations(alert_id).await?;
-    if destinations.is_empty() {
-        return Ok(LegacyOutcome::NoDestinations);
-    }
-    let mut last_err = None;
-    let mut any_ok = false;
-    for destination in &destinations {
-        let channel_id = serenity_prelude::ChannelId::new(destination.channel_id as u64);
-        // Keep going after a failure. One deleted channel used to abort the
-        // whole loop, so every destination after it silently went unnotified.
-        match channel_id
-            .send_message(
-                ctx,
-                serenity_prelude::CreateMessage::new()
-                    .embed(
-                        serenity_prelude::CreateEmbed::new()
-                            .color(Color::from_rgb(255, 0, 0))
-                            .title("🔔😔 Undercut Alert")
-                            .description(undercut_msg),
-                    )
-                    .allowed_mentions(
-                        serenity_prelude::CreateAllowedMentions::new()
-                            .users([UserId::new(discord_user_id)]),
-                    )
-                    .content(format!("<@{discord_user_id}>")),
-            )
-            .await
-        {
-            Ok(_) => any_ok = true,
-            Err(e) => last_err = Some(e),
-        }
-    }
-    Ok(match last_err {
-        Some(e) if !any_ok => LegacyOutcome::Failed(e.into()),
-        _ => LegacyOutcome::Delivered,
-    })
-}
-
 pub enum RetainerAlertTx {
     Stop,
     UpdateMargin(i32),
@@ -183,7 +121,6 @@ pub enum RetainerAlertTx {
 /// notification inbox didn't push the function's argument count past
 /// clippy's `too_many_arguments` threshold.
 pub struct RetainerAlertServices {
-    pub ctx: serenity_prelude::Context,
     pub notifications: EventProducer<NotificationEvent>,
 }
 
@@ -626,7 +563,6 @@ struct UndercutDeliverer {
     alert_id: i32,
     discord_user: u64,
     db: UltrosDb,
-    ctx: serenity_prelude::Context,
     notifications: EventProducer<NotificationEvent>,
 }
 
@@ -646,96 +582,23 @@ impl UndercutDeliverer {
     }
 
     async fn deliver(&self, message: &UndercutMessage) -> bool {
-        let UndercutMessage {
-            item_id,
-            body,
-            click_url,
-        } = message;
-        let alert_id = self.alert_id;
-        let title = UNDERCUT_ALERT_TITLE;
-        let mut delivered = false;
-        let mut delivery_error = None;
-        // Tracks whether every destination failed for a reason a retry can't
-        // change (the channel is gone, the bot was removed). Those are
-        // recorded on the event but not re-reported as a new error every fire.
-        let mut permanent = false;
-        let push = PushOptions::for_alert(AlertKind::Undercut, alert_id, click_url);
-        let endpoint_failure = match dispatch_alert_detailed(
-            alert_id, title, body, &push, &self.db, &self.ctx,
-        )
-        .await
-        {
-            DispatchOutcome::Delivered => {
-                delivered = true;
-                None
-            }
-            DispatchOutcome::PermanentFailure(reason) => {
-                permanent = true;
-                Some(reason)
-            }
-            DispatchOutcome::TransientFailure(e) => Some(format!("{e}")),
-        };
-        // Always give the legacy destinations a turn — they're a separate set
-        // of channels, and some pre-endpoint alerts still have nothing else.
-        if let Some(endpoint_failure) = endpoint_failure {
-            match send_discord_alerts(alert_id, self.discord_user, &self.db, &self.ctx, body).await
-            {
-                Ok(LegacyOutcome::Delivered) => {
-                    delivered = true;
-                    permanent = false;
-                }
-                Ok(LegacyOutcome::NoDestinations) => {
-                    // Nothing else to try, so the endpoint verdict stands.
-                    delivery_error = Some(endpoint_failure);
-                }
-                Ok(LegacyOutcome::Failed(legacy_error)) => {
-                    // Only stays "permanent" if the fallback is dead too.
-                    permanent = permanent && permanent_failure_reason(&legacy_error).is_some();
-                    delivery_error = Some(format!(
-                        "{endpoint_failure}; legacy Discord destinations failed: {legacy_error}"
-                    ));
-                }
-                Err(lookup_error) => {
-                    // Couldn't even read the destinations — transient.
-                    permanent = false;
-                    delivery_error = Some(format!(
-                        "{endpoint_failure}; legacy Discord destinations failed: {lookup_error}"
-                    ));
-                }
-            }
-        }
+        let push = PushOptions::for_alert(AlertKind::Undercut, self.alert_id, &message.click_url);
         record_fire(
             &self.db,
             &self.notifications,
             AlertFire {
-                alert_id,
+                alert_id: self.alert_id,
                 owner: self.discord_user as i64,
-                item_id: *item_id,
+                item_id: message.item_id,
                 matched_listing_id: None,
                 matched_price: None,
-                title,
-                body,
-                click_url,
-                delivered,
-                delivery_error: delivery_error.clone(),
+                title: UNDERCUT_ALERT_TITLE,
+                body: &message.body,
+                click_url: &message.click_url,
+                push: &push,
             },
         )
-        .await;
-        if delivered {
-            if let Err(e) = self.db.update_alert_last_fired(alert_id).await {
-                error!("failed to update undercut alert last_fired_at: {e}");
-            }
-        } else if let Some(error) = delivery_error {
-            if permanent {
-                // Steady state we've already acted on (endpoint disabled).
-                // Keep it out of the error reporter — it fired ~150 times a
-                // day for six alerts.
-                warn!("undercut alert {alert_id} has no working destinations: {error}");
-            } else {
-                error!("Error sending undercut alerts {error}");
-            }
-        }
-        delivered
+        .await
     }
 }
 
@@ -750,7 +613,7 @@ impl RetainerAlertListener {
         mut active_retainers: EventBus<OwnedRetainer>,
         services: RetainerAlertServices,
     ) -> Result<Self> {
-        let RetainerAlertServices { ctx, notifications } = services;
+        let RetainerAlertServices { notifications } = services;
         let alert = ultros_db
             .get_alert(alert_id)
             .await?
@@ -767,7 +630,6 @@ impl RetainerAlertListener {
             alert_id,
             discord_user,
             db: ultros_db,
-            ctx,
             notifications,
         };
         tokio::spawn(async move {

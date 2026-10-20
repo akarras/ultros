@@ -9,8 +9,7 @@ use std::{
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use poise::serenity_prelude;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use ultros_api_types::{
     user::OwnedRetainer,
     websocket::{ListingEventData, SaleEventData},
@@ -19,7 +18,7 @@ use ultros_db::{UltrosDb, entity::alert};
 
 use crate::{
     alerts::{
-        delivery::{AlertKind, PushOptions, dispatch_alert},
+        delivery::{AlertKind, PushOptions},
         inbox::{AlertFire, record_fire},
         price_alert_tracker::{is_off_cooldown_at, resolve_item_name},
         sold_matcher::{
@@ -212,7 +211,6 @@ impl RetainerSaleListener {
         mut history: EventBus<SaleEventData>,
         mut retainers: EventBus<OwnedRetainer>,
         mut alert_events: EventBus<alert::Model>,
-        ctx: serenity_prelude::Context,
         notifications: EventProducer<NotificationEvent>,
     ) -> Result<Self> {
         let mut rules = load_rules(&db).await?;
@@ -235,7 +233,7 @@ impl RetainerSaleListener {
                         queue_sales(&rules, &mut pending, matcher.settle(now));
                         for (alert_id, sales) in take_ready(&rules, &mut pending, now) {
                             if let Some(alert) = rules.alerts.get_mut(&alert_id)
-                                && fire(&db, &ctx, alert_id, alert.owner, &sales, &notifications).await
+                                && fire(&db, alert_id, alert.owner, &sales, &notifications).await
                             {
                                 alert.last_fired_at = Some(now);
                             }
@@ -342,7 +340,6 @@ fn apply_sale_event(matcher: &mut SoldMatcher, event: &EventType<Arc<SaleEventDa
 /// Send one alert's sales as a single message; true when it was delivered.
 async fn fire(
     db: &UltrosDb,
-    ctx: &serenity_prelude::Context,
     alert_id: i32,
     owner: i64,
     sales: &[SoldEvent],
@@ -364,12 +361,6 @@ async fn fire(
         }
     };
     let push = PushOptions::for_alert(AlertKind::Sold, alert_id, &click_url);
-    let result = dispatch_alert(alert_id, &title, &body, &push, db, ctx).await;
-    let delivered = result.is_ok();
-    let delivery_error = result.err().map(|e| e.to_string());
-    if let Some(error) = &delivery_error {
-        warn!(alert_id, "retainer sale alert not delivered: {error}");
-    }
     record_fire(
         db,
         notifications,
@@ -382,15 +373,10 @@ async fn fire(
             title: &title,
             body: &body,
             click_url: &click_url,
-            delivered,
-            delivery_error,
+            push: &push,
         },
     )
-    .await;
-    if delivered && let Err(e) = db.update_alert_last_fired(alert_id).await {
-        error!("failed to update last_fired_at for sale alert {alert_id}: {e}");
-    }
-    delivered
+    .await
 }
 
 #[cfg(test)]
