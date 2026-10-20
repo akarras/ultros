@@ -25,43 +25,6 @@ pub fn resilient_title(title: TextProp) -> TextProp {
     TextProp::from(move || text.try_get().unwrap_or_default())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use leptos::reactive::owner::Owner;
-
-    fn page_title(owner: &Owner, guarded: bool) -> TextProp {
-        owner.with(|| {
-            let name = RwSignal::new("Supplies".to_string());
-            let title = TextProp::from(move || name.get());
-            if guarded {
-                resilient_title(title)
-            } else {
-                title
-            }
-        })
-    }
-
-    #[test]
-    fn resilient_title_reads_empty_after_its_page_is_disposed() {
-        let owner = Owner::new();
-        let title = page_title(&owner, true);
-        assert_eq!(title.get().to_string(), "Supplies");
-        owner.cleanup();
-        assert_eq!(title.get().to_string(), "");
-    }
-
-    /// The guard exists because a bare page title panics on the same read.
-    #[test]
-    #[should_panic(expected = "already been disposed")]
-    fn bare_title_panics_after_its_page_is_disposed() {
-        let owner = Owner::new();
-        let title = page_title(&owner, false);
-        owner.cleanup();
-        let _ = title.get();
-    }
-}
-
 /// Creates appropriate meta tags to indicate an image is present on the page
 #[component]
 pub fn MetaImage(#[prop(into)] url: TextProp, #[prop(into)] alt: TextProp) -> impl IntoView {
@@ -106,4 +69,41 @@ pub fn MetaRobotsNoIndex() -> impl IntoView {
 #[component]
 pub fn MetaCanonical(#[prop(into)] href: TextProp) -> impl IntoView {
     view! { {move || view! { <Link rel="canonical" href=href.get() /> }} }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use leptos::reactive::owner::Owner;
+
+    fn page_title(owner: &Owner, guarded: bool) -> TextProp {
+        owner.with(|| {
+            let name = RwSignal::new("Supplies".to_string());
+            let title = TextProp::from(move || name.get());
+            if guarded {
+                resilient_title(title)
+            } else {
+                title
+            }
+        })
+    }
+
+    #[test]
+    fn resilient_title_reads_empty_after_its_page_is_disposed() {
+        let owner = Owner::new();
+        let title = page_title(&owner, true);
+        assert_eq!(title.get().to_string(), "Supplies");
+        owner.cleanup();
+        assert_eq!(title.get().to_string(), "");
+    }
+
+    /// The guard exists because a bare page title panics on the same read.
+    #[test]
+    #[should_panic(expected = "already been disposed")]
+    fn bare_title_panics_after_its_page_is_disposed() {
+        let owner = Owner::new();
+        let title = page_title(&owner, false);
+        owner.cleanup();
+        let _ = title.get();
+    }
 }

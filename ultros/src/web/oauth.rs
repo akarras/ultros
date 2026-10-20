@@ -629,6 +629,83 @@ impl DiscordAuthConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Test-only login bypass.
+//
+// Compile-time gated so the route can't accidentally ship to production:
+// prod Docker builds don't pass `--features test-auth`, so this code isn't
+// even in the binary. Local E2E + CI E2E builds opt in explicitly.
+//
+// Flow: caller hits `GET /test/login?user_id=...&username=...`, we
+//   1. upsert the `discord_user` row,
+//   2. seed an `AuthDiscordUser` into the in-memory `AuthUserCache` keyed by
+//      a sentinel token like `test-token-<user_id>`,
+//   3. set the `discord_auth` cookie to that token,
+// so subsequent requests resolve via the cache and never touch Discord.
+#[cfg(feature = "test-auth")]
+pub mod test_auth {
+    use super::{AuthDiscordUser, AuthUserCache};
+    use axum::{
+        extract::{Query, State},
+        response::Redirect,
+    };
+    use axum_extra::extract::PrivateCookieJar;
+    use serde::Deserialize;
+    use ultros_db::UltrosDb;
+
+    use crate::web::error::WebError;
+
+    #[derive(Deserialize)]
+    pub struct TestLoginParams {
+        pub user_id: u64,
+        #[serde(default = "default_username")]
+        pub username: String,
+        #[serde(default = "default_redirect")]
+        pub redirect: String,
+    }
+
+    fn default_username() -> String {
+        "TestUser".to_string()
+    }
+
+    fn default_redirect() -> String {
+        "/".to_string()
+    }
+
+    pub async fn test_login(
+        cookies: PrivateCookieJar,
+        State(db): State<UltrosDb>,
+        State(cache): State<AuthUserCache>,
+        Query(params): Query<TestLoginParams>,
+    ) -> Result<(PrivateCookieJar, Redirect), WebError> {
+        db.get_or_create_discord_user(params.user_id, params.username.clone())
+            .await?;
+
+        let token = format!("test-token-{}", params.user_id);
+        let user = AuthDiscordUser {
+            id: params.user_id,
+            name: params.username,
+            avatar_url: format!(
+                "https://cdn.discordapp.com/embed/avatars/{}.png",
+                params.user_id % 5
+            ),
+        };
+        cache.store_user(&token, user).await;
+
+        // Same builder as `oauth::redirect`. It drops `Secure` under this
+        // feature so local E2E works over plain http — see
+        // `DISCORD_AUTH_SECURE` — and the removal follows it there.
+        let cookie = super::discord_auth_cookie(token);
+
+        let redirect = if params.redirect.starts_with('/') {
+            params.redirect.as_str()
+        } else {
+            "/"
+        };
+        Ok((cookies.add(cookie), Redirect::to(redirect)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -868,82 +945,5 @@ mod tests {
         );
         assert_eq!(safe_login_next(Some("/\t/evil.example")), None);
         assert_eq!(safe_login_next(Some("/ /evil.example")), None);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Test-only login bypass.
-//
-// Compile-time gated so the route can't accidentally ship to production:
-// prod Docker builds don't pass `--features test-auth`, so this code isn't
-// even in the binary. Local E2E + CI E2E builds opt in explicitly.
-//
-// Flow: caller hits `GET /test/login?user_id=...&username=...`, we
-//   1. upsert the `discord_user` row,
-//   2. seed an `AuthDiscordUser` into the in-memory `AuthUserCache` keyed by
-//      a sentinel token like `test-token-<user_id>`,
-//   3. set the `discord_auth` cookie to that token,
-// so subsequent requests resolve via the cache and never touch Discord.
-#[cfg(feature = "test-auth")]
-pub mod test_auth {
-    use super::{AuthDiscordUser, AuthUserCache};
-    use axum::{
-        extract::{Query, State},
-        response::Redirect,
-    };
-    use axum_extra::extract::PrivateCookieJar;
-    use serde::Deserialize;
-    use ultros_db::UltrosDb;
-
-    use crate::web::error::WebError;
-
-    #[derive(Deserialize)]
-    pub struct TestLoginParams {
-        pub user_id: u64,
-        #[serde(default = "default_username")]
-        pub username: String,
-        #[serde(default = "default_redirect")]
-        pub redirect: String,
-    }
-
-    fn default_username() -> String {
-        "TestUser".to_string()
-    }
-
-    fn default_redirect() -> String {
-        "/".to_string()
-    }
-
-    pub async fn test_login(
-        cookies: PrivateCookieJar,
-        State(db): State<UltrosDb>,
-        State(cache): State<AuthUserCache>,
-        Query(params): Query<TestLoginParams>,
-    ) -> Result<(PrivateCookieJar, Redirect), WebError> {
-        db.get_or_create_discord_user(params.user_id, params.username.clone())
-            .await?;
-
-        let token = format!("test-token-{}", params.user_id);
-        let user = AuthDiscordUser {
-            id: params.user_id,
-            name: params.username,
-            avatar_url: format!(
-                "https://cdn.discordapp.com/embed/avatars/{}.png",
-                params.user_id % 5
-            ),
-        };
-        cache.store_user(&token, user).await;
-
-        // Same builder as `oauth::redirect`. It drops `Secure` under this
-        // feature so local E2E works over plain http — see
-        // `DISCORD_AUTH_SECURE` — and the removal follows it there.
-        let cookie = super::discord_auth_cookie(token);
-
-        let redirect = if params.redirect.starts_with('/') {
-            params.redirect.as_str()
-        } else {
-            "/"
-        };
-        Ok((cookies.add(cookie), Redirect::to(redirect)))
     }
 }

@@ -262,187 +262,6 @@ fn bucket_at_cell_pointer(event: &PointerEvent, xs: &[f32], cell_width: f32) -> 
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ultros_api_types::price_series::{PriceBucket, PriceSeriesEntry};
-
-    fn bucket_at(ts: i64, units: i64) -> PriceBucket {
-        PriceBucket {
-            ts: chrono::DateTime::from_timestamp(ts, 0).unwrap().naive_utc(),
-            open: 1000,
-            high: 1000,
-            low: 1000,
-            close: 1000,
-            gil: 1000 * units,
-            units,
-            sales: 1,
-            p25: 1000,
-            p50: 1000,
-            p75: 1000,
-        }
-    }
-
-    fn single_bucket_entry(id: i32, ts: i64, units: i64) -> PriceSeriesEntry {
-        PriceSeriesEntry {
-            id,
-            buckets: vec![bucket_at(ts, units)],
-        }
-    }
-
-    fn series_with(entries: Vec<PriceSeriesEntry>) -> PriceSeries {
-        let epoch = chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc();
-        PriceSeries {
-            bucket_seconds: 100,
-            group: SeriesGroup::World,
-            from: epoch,
-            to: epoch,
-            series: entries,
-            raw: None,
-        }
-    }
-
-    #[test]
-    fn normalize_time_range_orders_and_clamps() {
-        assert_eq!(normalize_time_range(250, 50, (100, 200)), (100, 200));
-    }
-
-    // One day of buckets — the width the server picks for a quarter-ish
-    // window, and the slack `range_is_stale` is allowed.
-    const DAY: i64 = 86_400;
-
-    #[test]
-    fn range_is_stale_tolerates_a_floored_first_bucket() {
-        // The regression from #1068: the user drags the slicer to an
-        // arbitrary instant, the server answers with the bucket *containing*
-        // that instant, and its start sits before the request. That is a
-        // faithful answer, not a stale one.
-        let requested = (1_700_000_000, 1_702_000_000);
-        let answered = (requested.0 - DAY + 1, requested.1);
-        assert!(!range_is_stale(answered, requested, DAY));
-    }
-
-    #[test]
-    fn range_is_stale_tolerates_exactly_one_bucket_of_floor() {
-        let requested = (1_700_000_000, 1_702_000_000);
-        assert!(!range_is_stale(
-            (requested.0 - DAY, requested.1),
-            requested,
-            DAY
-        ));
-    }
-
-    #[test]
-    fn range_is_stale_flags_a_domain_beyond_the_slack() {
-        // A different item's history: more than a bucket earlier than
-        // anything we asked for, so the selection no longer means anything.
-        let requested = (1_700_000_000, 1_702_000_000);
-        assert!(range_is_stale(
-            (requested.0 - DAY - 1, requested.1),
-            requested,
-            DAY
-        ));
-    }
-
-    #[test]
-    fn range_is_stale_flags_a_domain_running_past_the_selection() {
-        let requested = (1_700_000_000, 1_702_000_000);
-        assert!(range_is_stale(
-            (requested.0, requested.1 + DAY + 1),
-            requested,
-            DAY
-        ));
-    }
-
-    #[test]
-    fn range_is_stale_accepts_a_domain_nested_in_the_selection() {
-        // The documented "echo of our own zoom" case: the server reports a
-        // narrower actual-data span than we requested.
-        let requested = (1_700_000_000, 1_702_000_000);
-        assert!(!range_is_stale(
-            (requested.0 + DAY, requested.1 - DAY),
-            requested,
-            DAY
-        ));
-    }
-
-    #[test]
-    fn range_is_stale_without_a_bucket_width_compares_exactly() {
-        // `bucket_seconds` is 0 on the empty-payload fallback; the guard must
-        // degrade to the old exact comparison rather than misbehave.
-        let requested = (1_700_000_000, 1_702_000_000);
-        assert!(range_is_stale((requested.0 - 1, requested.1), requested, 0));
-        assert!(!range_is_stale(requested, requested, 0));
-    }
-
-    #[test]
-    fn test_percent_for_ts() {
-        // Normal cases within domain
-        assert_eq!(percent_for_ts(150, (100, 200)), 50.0);
-        assert_eq!(percent_for_ts(125, (100, 200)), 25.0);
-        assert_eq!(percent_for_ts(200, (100, 200)), 100.0);
-        assert_eq!(percent_for_ts(100, (100, 200)), 0.0);
-
-        // Clamping out of domain
-        assert_eq!(percent_for_ts(50, (100, 200)), 0.0);
-        assert_eq!(percent_for_ts(250, (100, 200)), 100.0);
-
-        // Zero span
-        assert_eq!(percent_for_ts(100, (100, 100)), 0.0);
-
-        // Negative span
-        assert_eq!(percent_for_ts(100, (200, 100)), 0.0);
-    }
-
-    #[test]
-    fn test_format_timeline_ts() {
-        const DAY: i64 = 86_400;
-        // Under 30 days: full precision, including the year. A 7-day drag
-        // into a past year is exactly where the old fixed "%m-%d %H:%M"
-        // misled most.
-        // 1609459200 is 2021-01-01 00:00:00 UTC.
-        assert_eq!(
-            format_timeline_ts(1609459200, 0, 7 * DAY),
-            "2021-01-01 00:00"
-        );
-        assert_eq!(
-            format_timeline_ts(1609459200, 60, 7 * DAY),
-            "2021-01-01 01:00"
-        );
-        assert_eq!(
-            format_timeline_ts(1609459200, -120, 7 * DAY),
-            "2020-12-31 22:00"
-        );
-
-        // 30 days and over: the clock stops carrying information.
-        assert_eq!(format_timeline_ts(1609459200, 0, 60 * DAY), "2021-01-01");
-
-        // Two years and over: the day stops carrying information too. This
-        // is the reported case — a 2023..2026 domain used to render as
-        // "02-21 18:00", which reads as the current year.
-        assert_eq!(format_timeline_ts(1609459200, 0, 1200 * DAY), "2021-01");
-    }
-
-    #[test]
-    fn timeline_format_tiers_switch_at_their_boundaries() {
-        const DAY: i64 = 86_400;
-        assert_eq!(timeline_format(30 * DAY - 1), "%Y-%m-%d %H:%M");
-        assert_eq!(timeline_format(30 * DAY), "%Y-%m-%d");
-        assert_eq!(timeline_format(2 * 365 * DAY - 1), "%Y-%m-%d");
-        assert_eq!(timeline_format(2 * 365 * DAY), "%Y-%m");
-    }
-
-    #[test]
-    fn timeline_quantity_buckets_sums_units_across_series() {
-        let series = series_with(vec![
-            single_bucket_entry(1, 0, 3),
-            single_bucket_entry(2, 100, 7),
-        ]);
-        let buckets = timeline_quantity_buckets(&series, (0, 100), 2);
-        assert_eq!(buckets, vec![3.0, 7.0]);
-    }
-}
-
 #[component]
 fn TimelineSlicer(
     #[prop(into)] series: Signal<PriceSeries>,
@@ -2279,4 +2098,185 @@ pub fn PriceHistoryChart(
             }}
         </div>
     }.into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ultros_api_types::price_series::{PriceBucket, PriceSeriesEntry};
+
+    fn bucket_at(ts: i64, units: i64) -> PriceBucket {
+        PriceBucket {
+            ts: chrono::DateTime::from_timestamp(ts, 0).unwrap().naive_utc(),
+            open: 1000,
+            high: 1000,
+            low: 1000,
+            close: 1000,
+            gil: 1000 * units,
+            units,
+            sales: 1,
+            p25: 1000,
+            p50: 1000,
+            p75: 1000,
+        }
+    }
+
+    fn single_bucket_entry(id: i32, ts: i64, units: i64) -> PriceSeriesEntry {
+        PriceSeriesEntry {
+            id,
+            buckets: vec![bucket_at(ts, units)],
+        }
+    }
+
+    fn series_with(entries: Vec<PriceSeriesEntry>) -> PriceSeries {
+        let epoch = chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc();
+        PriceSeries {
+            bucket_seconds: 100,
+            group: SeriesGroup::World,
+            from: epoch,
+            to: epoch,
+            series: entries,
+            raw: None,
+        }
+    }
+
+    #[test]
+    fn normalize_time_range_orders_and_clamps() {
+        assert_eq!(normalize_time_range(250, 50, (100, 200)), (100, 200));
+    }
+
+    // One day of buckets — the width the server picks for a quarter-ish
+    // window, and the slack `range_is_stale` is allowed.
+    const DAY: i64 = 86_400;
+
+    #[test]
+    fn range_is_stale_tolerates_a_floored_first_bucket() {
+        // The regression from #1068: the user drags the slicer to an
+        // arbitrary instant, the server answers with the bucket *containing*
+        // that instant, and its start sits before the request. That is a
+        // faithful answer, not a stale one.
+        let requested = (1_700_000_000, 1_702_000_000);
+        let answered = (requested.0 - DAY + 1, requested.1);
+        assert!(!range_is_stale(answered, requested, DAY));
+    }
+
+    #[test]
+    fn range_is_stale_tolerates_exactly_one_bucket_of_floor() {
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(!range_is_stale(
+            (requested.0 - DAY, requested.1),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_flags_a_domain_beyond_the_slack() {
+        // A different item's history: more than a bucket earlier than
+        // anything we asked for, so the selection no longer means anything.
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(range_is_stale(
+            (requested.0 - DAY - 1, requested.1),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_flags_a_domain_running_past_the_selection() {
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(range_is_stale(
+            (requested.0, requested.1 + DAY + 1),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_accepts_a_domain_nested_in_the_selection() {
+        // The documented "echo of our own zoom" case: the server reports a
+        // narrower actual-data span than we requested.
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(!range_is_stale(
+            (requested.0 + DAY, requested.1 - DAY),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_without_a_bucket_width_compares_exactly() {
+        // `bucket_seconds` is 0 on the empty-payload fallback; the guard must
+        // degrade to the old exact comparison rather than misbehave.
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(range_is_stale((requested.0 - 1, requested.1), requested, 0));
+        assert!(!range_is_stale(requested, requested, 0));
+    }
+
+    #[test]
+    fn test_percent_for_ts() {
+        // Normal cases within domain
+        assert_eq!(percent_for_ts(150, (100, 200)), 50.0);
+        assert_eq!(percent_for_ts(125, (100, 200)), 25.0);
+        assert_eq!(percent_for_ts(200, (100, 200)), 100.0);
+        assert_eq!(percent_for_ts(100, (100, 200)), 0.0);
+
+        // Clamping out of domain
+        assert_eq!(percent_for_ts(50, (100, 200)), 0.0);
+        assert_eq!(percent_for_ts(250, (100, 200)), 100.0);
+
+        // Zero span
+        assert_eq!(percent_for_ts(100, (100, 100)), 0.0);
+
+        // Negative span
+        assert_eq!(percent_for_ts(100, (200, 100)), 0.0);
+    }
+
+    #[test]
+    fn test_format_timeline_ts() {
+        const DAY: i64 = 86_400;
+        // Under 30 days: full precision, including the year. A 7-day drag
+        // into a past year is exactly where the old fixed "%m-%d %H:%M"
+        // misled most.
+        // 1609459200 is 2021-01-01 00:00:00 UTC.
+        assert_eq!(
+            format_timeline_ts(1609459200, 0, 7 * DAY),
+            "2021-01-01 00:00"
+        );
+        assert_eq!(
+            format_timeline_ts(1609459200, 60, 7 * DAY),
+            "2021-01-01 01:00"
+        );
+        assert_eq!(
+            format_timeline_ts(1609459200, -120, 7 * DAY),
+            "2020-12-31 22:00"
+        );
+
+        // 30 days and over: the clock stops carrying information.
+        assert_eq!(format_timeline_ts(1609459200, 0, 60 * DAY), "2021-01-01");
+
+        // Two years and over: the day stops carrying information too. This
+        // is the reported case — a 2023..2026 domain used to render as
+        // "02-21 18:00", which reads as the current year.
+        assert_eq!(format_timeline_ts(1609459200, 0, 1200 * DAY), "2021-01");
+    }
+
+    #[test]
+    fn timeline_format_tiers_switch_at_their_boundaries() {
+        const DAY: i64 = 86_400;
+        assert_eq!(timeline_format(30 * DAY - 1), "%Y-%m-%d %H:%M");
+        assert_eq!(timeline_format(30 * DAY), "%Y-%m-%d");
+        assert_eq!(timeline_format(2 * 365 * DAY - 1), "%Y-%m-%d");
+        assert_eq!(timeline_format(2 * 365 * DAY), "%Y-%m");
+    }
+
+    #[test]
+    fn timeline_quantity_buckets_sums_units_across_series() {
+        let series = series_with(vec![
+            single_bucket_entry(1, 0, 3),
+            single_bucket_entry(2, 100, 7),
+        ]);
+        let buckets = timeline_quantity_buckets(&series, (0, 100), 2);
+        assert_eq!(buckets, vec![3.0, 7.0]);
+    }
 }

@@ -854,6 +854,59 @@ fn ReloadWhenStale() -> impl IntoView {
     }
 }
 
+pub mod script_escape;
+
+#[cfg(all(test, feature = "ssr"))]
+mod boot_progress_tests {
+    /// The pre-wasm boot script embeds every locale's strings, so a locale
+    /// missing from the map would silently fall back to English.
+    #[test]
+    fn boot_script_carries_every_locale() {
+        let script = super::boot_progress_script();
+        for locale in ["en", "ja", "de", "fr", "cn", "ko", "tc"] {
+            assert!(script.contains(&format!("\"{locale}\":{{")), "{locale}");
+        }
+        assert!(script.contains("Loading is taking longer than expected"));
+        assert!(script.contains("読み込み中…"));
+        // Nothing in the payload may close the inline <script> element.
+        assert!(!script.contains("</"));
+        // Translations reach the DOM only as text, never as markup.
+        assert!(!script.contains("innerHTML"));
+    }
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod translation_boundary_tests {
+    use crate::i18n::*;
+    use leptos::prelude::*;
+
+    #[test]
+    fn shared_context_translates_and_renders_across_the_crate_boundary() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let context = leptos_i18n::context::init_i18n_context::<ultros_i18n::i18n::Locale>();
+            provide_context(context);
+            let i18n = crate::i18n_fallback::use_i18n_or_default();
+
+            i18n.set_locale(Locale::fr);
+            assert_eq!(context.get_locale_untracked(), Locale::fr);
+            assert_eq!(
+                t_string!(i18n, market_ingredient_label, item = "Bronze").to_string(),
+                "Ingrédient : Bronze"
+            );
+            let html = view! { <span>{t!(i18n, npc_location_unknown)}</span> }.to_html();
+            assert!(html.contains("Emplacement indisponible"));
+
+            context.set_locale(Locale::en);
+            assert_eq!(
+                t_string!(i18n, npc_location_unknown).to_string(),
+                "Location unavailable"
+            );
+        });
+    }
+}
+
 #[cfg(test)]
 mod error_filter_wiring {
     /// The beforeSend noise filter is maintained in error_filter.js and
@@ -950,7 +1003,6 @@ mod error_filter_wiring {
         assert!(SYMBOLICATE_JS.contains("\".symbols\""));
     }
 }
-pub mod script_escape;
 
 #[cfg(test)]
 mod region_locale_guess_tests {
@@ -1003,56 +1055,5 @@ mod region_locale_guess_tests {
             region_locale_guess(Some("中国"), None, false, Locale::ja),
             None
         );
-    }
-}
-
-#[cfg(all(test, feature = "ssr"))]
-mod boot_progress_tests {
-    /// The pre-wasm boot script embeds every locale's strings, so a locale
-    /// missing from the map would silently fall back to English.
-    #[test]
-    fn boot_script_carries_every_locale() {
-        let script = super::boot_progress_script();
-        for locale in ["en", "ja", "de", "fr", "cn", "ko", "tc"] {
-            assert!(script.contains(&format!("\"{locale}\":{{")), "{locale}");
-        }
-        assert!(script.contains("Loading is taking longer than expected"));
-        assert!(script.contains("読み込み中…"));
-        // Nothing in the payload may close the inline <script> element.
-        assert!(!script.contains("</"));
-        // Translations reach the DOM only as text, never as markup.
-        assert!(!script.contains("innerHTML"));
-    }
-}
-
-#[cfg(all(test, feature = "ssr"))]
-mod translation_boundary_tests {
-    use crate::i18n::*;
-    use leptos::prelude::*;
-
-    #[test]
-    fn shared_context_translates_and_renders_across_the_crate_boundary() {
-        let _ = any_spawner::Executor::init_futures_executor();
-        let owner = Owner::new();
-        owner.with(|| {
-            let context = leptos_i18n::context::init_i18n_context::<ultros_i18n::i18n::Locale>();
-            provide_context(context);
-            let i18n = crate::i18n_fallback::use_i18n_or_default();
-
-            i18n.set_locale(Locale::fr);
-            assert_eq!(context.get_locale_untracked(), Locale::fr);
-            assert_eq!(
-                t_string!(i18n, market_ingredient_label, item = "Bronze").to_string(),
-                "Ingrédient : Bronze"
-            );
-            let html = view! { <span>{t!(i18n, npc_location_unknown)}</span> }.to_html();
-            assert!(html.contains("Emplacement indisponible"));
-
-            context.set_locale(Locale::en);
-            assert_eq!(
-                t_string!(i18n, npc_location_unknown).to_string(),
-                "Location unavailable"
-            );
-        });
     }
 }
