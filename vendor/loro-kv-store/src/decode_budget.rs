@@ -6,6 +6,12 @@ use std::cell::Cell;
 thread_local! { static REMAINING: Cell<Option<usize>> = const { Cell::new(None) }; }
 thread_local! { static REDECODING: Cell<bool> = const { Cell::new(false) }; }
 
+/// Remaining decompressed bytes in the current thread's active decode scope.
+/// This is observational only; callers cannot increase or replenish a budget.
+pub fn remaining() -> Option<usize> {
+    REMAINING.get()
+}
+
 pub(crate) fn active() -> bool {
     REMAINING.get().is_some()
 }
@@ -58,4 +64,24 @@ pub(crate) fn consume(bytes: usize) -> LoroResult<()> {
         REMAINING.set(Some(next));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reporter_observes_nested_consumption_without_replenishing_it() {
+        assert_eq!(remaining(), None);
+        with_decode_budget(10, || {
+            consume(2).unwrap();
+            assert_eq!(remaining(), Some(8));
+            with_decode_budget(100, || {
+                assert_eq!(remaining(), Some(8));
+                consume(3).unwrap();
+            });
+            assert_eq!(remaining(), Some(5));
+        });
+        assert_eq!(remaining(), None);
+    }
 }
