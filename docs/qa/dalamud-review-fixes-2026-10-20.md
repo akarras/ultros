@@ -133,3 +133,45 @@ this combined base. Current hosted CI, fresh combined-stack browser
 validation, and clean current-source package production are tracked
 separately. In-game acceptance and public plugin package publication
 remain pending. No prior result establishes those steps as completed.
+
+### Fresh current-base browser evidence
+
+The composed stack at `82b2a6875f732b54a6690d8dbc9170d8fdc04d07`
+(tree `fbd84fca2ebdacc26cba0ba0a585f215a6033bcc`) was rebuilt with
+nightly-2026-10-13 using `cargo leptos build`, locked dependencies and the
+local-only `test-auth,plugin-localhost` server features. The owned loopback
+server and hydration client were identified by source and SHA-256 before
+testing. The fresh SSR executable hash is
+`F2FDFAF95708680FB11152B93D4D05B5BA3F126070E92558CFBB76C043867E76`;
+the fresh WASM hash is
+`53A0CBB68F43D871A7EA02CB18F67D803EFDED3A5A20584AE8AF92583495840B`.
+
+The broad driver passed all 54 route/viewport visits, the two previously
+failing analyzer probes, and its first account-adoption execution. It
+returned 1: the continuous-broadcast probe was not foregrounded; a later
+required-acceptance adoption execution stalled on hydration; and the
+accessibility probe raced picker setup and modal focus restoration. The
+initial required-acceptance report passed 10 of 12 suites. Original logs
+and failures remain in `new-main-e2e.log`, `new-main-e2e-exit.json` and
+`new-main-required-acceptance-results.json`; no clean broad aggregate is
+claimed.
+
+The test-only follow-up brings the timing-sensitive editor to the
+foreground and waits for both three probes and twelve broadcasts within
+the existing deadline. Timing and permission assertions are unchanged.
+That complete sync suite passed: the first probe took 1,002ms and the
+Write-to-Read UI update took 733ms. Accessibility setup now observes the
+picker's animation-frame selection and actual filtered option, waits for
+the old search dialog to restore focus, and checks the new menu's modal
+focus before traversing all 30 Tab steps. A focused run passed all original
+assertions. These changes do not modify application code. A fresh required
+12-suite aggregate is tracked separately, including its original failed
+adoption run; a passing retry must not erase that failure.
+
+All five opt-in plugin browser suites passed against the same fresh build:
+bootstrap, protocol/release availability, desktop/mobile guide, consent
+links, and private retainer capture/account isolation. The release fixture
+was deliberately empty, so this does not validate a newly packaged ZIP.
+This build does not validate a current-toolchain native plugin DLL or
+physical FFXIV acceptance. Package production and in-game acceptance remain
+separate release work.

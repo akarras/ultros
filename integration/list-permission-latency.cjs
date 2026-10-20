@@ -49,6 +49,10 @@ module.exports = async function permissionLatency({ ownerPage, editorPage, baseU
     await waitForDocKey(editorPage, editorId, id, true, timeout);
     const rows = await api(ownerPage, "GET", `/api/v1/list/${id}/listings`);
     const row = rows.body[1][0][0];
+    // This budget covers a foreground editor. Navigation does not activate a
+    // tab, and the preceding scenario leaves a fresh-session page in front.
+    await editorPage.bringToFront();
+    await editorPage.waitForFunction(() => document.visibilityState === "visible");
     await editorPage.evaluate(id => {
       const original = window.fetch;
       const probe = window.__permissionLatency = {
@@ -100,7 +104,10 @@ module.exports = async function permissionLatency({ ownerPage, editorPage, baseU
       }
     })().catch(error => { broadcastError = error; stop = true; });
     await editorPage.waitForFunction(() => window.__permissionLatency.events.length >= 1);
-    await editorPage.waitForFunction(() => window.__permissionLatency.requests.length >= 3,
+    // Each write includes its API round trip before the 100ms pause. Three
+    // probes alone do not imply that twelve broadcasts have arrived yet.
+    await editorPage.waitForFunction(() => window.__permissionLatency.requests.length >= 3
+      && window.__permissionLatency.events.length >= 12,
       { timeout: 5000 });
     const timing = await editorPage.evaluate(() => ({
       events: window.__permissionLatency.events,

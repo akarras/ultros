@@ -83,8 +83,19 @@ const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080';
     assert(await page.$('dialog[open]'), 'closing a popup does not close its dialog');
     await page.click(buy);
     await page.keyboard.down('Control'); await page.keyboard.press('A'); await page.keyboard.up('Control');
+    // Opening the picker selects its current value on the next animation frame.
+    // Let that setup finish before entering a new query.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await page.type(buy, 'Beta');
+    await page.waitForFunction(selector => {
+      const input = document.querySelector(selector);
+      const list = document.getElementById(input?.getAttribute('aria-controls'));
+      return input?.value === 'Beta' && list?.querySelectorAll('[role=option]').length === 1
+        && list.textContent.includes('Beta');
+    }, {}, buy);
     await page.keyboard.press('Enter');
+    await page.waitForFunction(selector => document.querySelector(selector)?.value === 'Beta'
+      && document.querySelector(selector)?.getAttribute('aria-expanded') === 'false', {}, buy);
     assert.equal(await page.$eval(buy, el => el.value), 'Beta', 'selection is the actual input value');
     assert(await page.$eval(buy, el => el === document.activeElement), 'selection retains input focus');
     await page.click(buy);
@@ -122,10 +133,21 @@ const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080';
     await page.keyboard.down('Shift'); await page.keyboard.press('Tab'); await page.keyboard.up('Shift');
     assert(await page.evaluate(() => !!document.activeElement.closest('dialog[open]')), 'reverse Tab stays in search');
     await page.click('.search-overlay-close');
+    await page.waitForFunction(() => !document.querySelector('dialog.search-overlay[open]')
+      && document.activeElement?.getAttribute('aria-label') === 'Search');
     await page.click('.mobile-bar button[aria-label="Menu"]');
     await page.waitForSelector('dialog.nav-dialog[open]');
+    const menuHasFocus = () => {
+      const dialog = document.querySelector('dialog.nav-dialog[open]');
+      return dialog?.matches(':modal') && dialog.contains(document.activeElement)
+        && document.activeElement.isConnected && dialog.getBoundingClientRect().width > 0;
+    };
+    await page.waitForFunction(menuHasFocus);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert(await page.evaluate(menuHasFocus), 'menu is modal and focused before keyboard traversal');
     for (let i = 0; i < 30; i++) {
       await page.keyboard.press('Tab');
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
       assert(await page.evaluate(() => !!document.activeElement.closest('dialog.nav-dialog')), 'Tab stays in mobile menu');
     }
     await page.keyboard.press('Escape');
