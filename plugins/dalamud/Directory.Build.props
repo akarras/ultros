@@ -1,0 +1,12 @@
+<Project>
+  <PropertyGroup>
+    <!-- One checked-in version for every managed assembly and release package. -->
+    <UltrosPluginVersion>1.0.0.0</UltrosPluginVersion>
+    <Version>$(UltrosPluginVersion)</Version>
+    <AssemblyVersion>$(UltrosPluginVersion)</AssemblyVersion>
+    <FileVersion>$(UltrosPluginVersion)</FileVersion>
+    <InformationalVersion>$(UltrosPluginVersion)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

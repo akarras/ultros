@@ -1,4 +1,5 @@
 "use strict";
+const {clientFetch:fetch}=require("./dalamud-client.cjs");
 // Invoked by the managed HTTP smoke. Pairing data arrives on stdin, never argv.
 const puppeteer=require("puppeteer");
 const assert=require("node:assert/strict");

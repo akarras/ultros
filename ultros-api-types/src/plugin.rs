@@ -104,6 +104,12 @@ pub struct PluginWebsiteInfo {
     pub localhost: bool,
     pub origin: String,
     pub download_url: Option<String>,
+    #[serde(default)]
+    pub repository_url: Option<String>,
+    #[serde(default)]
+    pub latest_version: Option<String>,
+    #[serde(default)]
+    pub minimum_version: Option<String>,
 }
 
 // Browser consent data stays in the browser's memory, never in SSR resources,

@@ -1,4 +1,5 @@
 "use strict";
+const {clientFetch:fetch}=require("./dalamud-client.cjs");
 const assert=require("node:assert/strict");
 const {createHash}=require("node:crypto");
 const fs=require("node:fs/promises");

@@ -1,5 +1,6 @@
 "use strict";
 const assert=require("node:assert/strict");
+const {headers:clientHeaders,clientFetch:fetch}=require("./dalamud-client.cjs");
 const {randomBytes}=require("node:crypto");
 const source="127."+[...randomBytes(3)].map(byte=>1+byte%254).join(".");
 
@@ -9,10 +10,10 @@ const source="127."+[...randomBytes(3)].map(byte=>1+byte%254).join(".");
 module.exports=async function pairingRequest(url,body){
   url=new URL(url);
   assert(["localhost","127.0.0.1","[::1]"].includes(url.hostname)&&url.pathname==="/api/v1/plugin/pairings"&&!url.search);
-  if(url.hostname==="[::1]")return fetch(url,{method:"POST",redirect:"manual",headers:{"Content-Type":"application/json"},body});
+  if(url.hostname==="[::1]")return fetch(url,{method:"POST",redirect:"manual",headers:{...clientHeaders,"Content-Type":"application/json"},body});
   const payload=Buffer.from(body);
   return new Promise((resolve,reject)=>{
-    const request=require(url.protocol==="https:"?"node:https":"node:http").request(url,{method:"POST",family:4,localAddress:source,headers:{"Content-Type":"application/json","Content-Length":payload.length}},response=>{
+    const request=require(url.protocol==="https:"?"node:https":"node:http").request(url,{method:"POST",family:4,localAddress:source,headers:{...clientHeaders,"Content-Type":"application/json","Content-Length":payload.length}},response=>{
       const chunks=[];let size=0;
       response.on("data",chunk=>{size+=chunk.length;if(size>65536)response.destroy(new Error("Oversized pairing response"));else chunks.push(chunk);});
       response.on("error",reject);

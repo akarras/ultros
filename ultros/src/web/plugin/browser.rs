@@ -1,8 +1,6 @@
 //! Cookie-authenticated browser endpoints for the website's Leptos plugin area.
 use super::*;
 use axum::body::Body;
-use tower::ServiceExt;
-use tower_http::services::ServeFile;
 
 const LINK_COOKIE: &str = "ultros_game_link";
 
@@ -40,47 +38,16 @@ pub(super) async fn capture_link(
 pub(super) async fn info(
     Extension(config): Extension<Arc<PluginConfig>>,
 ) -> Json<PluginWebsiteInfo> {
+    let release = releases::website_release(&config).await;
     Json(PluginWebsiteInfo {
         enabled: true,
         localhost: config.local,
         origin: config.origin.clone(),
-        download_url: package(&config)
-            .await
-            .map(|_| "/api/v1/plugin/download".into()),
+        download_url: release.as_ref().map(|(_, path)| path.clone()),
+        latest_version: release.map(|(version, _)| version),
+        minimum_version: Some(config.minimum_version.to_string()),
+        repository_url: Some(format!("{}/api/v1/plugin/repository.json", config.origin)),
     })
-}
-
-async fn package(config: &PluginConfig) -> Option<std::path::PathBuf> {
-    let path = match std::env::var_os("ULTROS_PLUGIN_PACKAGE_PATH") {
-        Some(path) => path.into(),
-        None if config.local => std::path::PathBuf::from("artifacts/dalamud/dev.zip"),
-        None => return None,
-    };
-    let metadata = tokio::fs::metadata(&path).await.ok()?;
-    (metadata.is_file() && metadata.len() > 0 && metadata.len() <= 128 * 1024 * 1024)
-        .then_some(path)
-}
-
-pub(super) async fn download(
-    Extension(config): Extension<Arc<PluginConfig>>,
-    request: axum::http::Request<Body>,
-) -> Response {
-    let Some(path) = package(&config).await else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let mut response = ServeFile::new(path)
-        .oneshot(request)
-        .await
-        .unwrap()
-        .into_response();
-    response.headers_mut().insert(
-        header::CONTENT_DISPOSITION,
-        "attachment; filename=UltrosPrototype.zip".parse().unwrap(),
-    );
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, "application/zip".parse().unwrap());
-    response
 }
 
 pub(super) async fn approval(
