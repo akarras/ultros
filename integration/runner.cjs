@@ -123,7 +123,7 @@ const ROUTE_ASSERTS = {
   "/flip-finder/Gilgamesh": { titleIncludes: "Gilgamesh" },
   "/list": { titleIncludes: "Ultros" },
   "/retainers": { titleIncludes: "Ultros" },
-  "/plugin": { titleIncludes: "Game plugin setup", bodyIncludesAny: ["Ultros game connections"] },
+  "/plugin": { titleIncludes: "Game plugin setup", bodyIncludesAny: ["Install Ultros in Dalamud"] },
   "/plugin/verify": { titleIncludes: "Connect your game", bodyIncludesAny: ["Sign in with Discord", "Code from your game", "Game connections are not available"] },
   "/plugin/devices": { titleIncludes: "Connected game clients", bodyIncludesAny: ["Sign in with Discord", "Connections for", "Game connections are not available"] },
   "/currency-exchange": { titleIncludes: "Ultros" },
