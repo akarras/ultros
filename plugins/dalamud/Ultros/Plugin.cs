@@ -24,8 +24,10 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IGameGui GameGui { get; private set; } = null!;
     [PluginService] internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
     [PluginService] internal static ICondition Condition { get; private set; } = null!;
+    [PluginService] internal static IGameInventory Inventory { get; private set; } = null!;
     private readonly ClientWorker worker;
     private readonly RetainerCapture capture;
+    private readonly InventoryAcquisition inventoryProgress;
     private readonly MainWindow window;
     private readonly GameNotifications gameNotifications;
     private readonly ItemShortcuts itemShortcuts;
@@ -42,7 +44,8 @@ public sealed class Plugin : IDalamudPlugin
         var endpoint=new UltrosEndpoint(config.Localhost,config.LocalOrigin);
         worker=new ClientWorker(Path.Combine(Interface.GetPluginConfigDirectory(),"connected"),endpoint,config.Profile);
         capture=new RetainerCapture(worker,config);
-        window=new MainWindow(worker,capture,config);
+        inventoryProgress=new InventoryAcquisition(worker,capture,config);
+        window=new MainWindow(worker,capture,inventoryProgress,config);
         gameNotifications=new GameNotifications(worker,config,capture);
         itemShortcuts=new ItemShortcuts(worker,window,endpoint);
         testNotifications=gameNotifications.Test;
@@ -78,7 +81,7 @@ public sealed class Plugin : IDalamudPlugin
         Interface.UiBuilder.OpenMainUi -= Toggle;
         Interface.UiBuilder.OpenConfigUi -= Toggle;
         Commands.RemoveHandler("/ultros");if(UltrosEndpoint.LocalhostAvailable)Commands.RemoveHandler("/ultroslab");
-        itemShortcuts.Dispose();gameNotifications.Dispose();capture.Dispose();worker.Dispose();openLab=null;testNotifications=null;
+        itemShortcuts.Dispose();gameNotifications.Dispose();inventoryProgress.Dispose();capture.Dispose();worker.Dispose();openLab=null;testNotifications=null;
         windows.RemoveAllWindows();
         lab?.Dispose();
     }

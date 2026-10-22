@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Let incoming items fill your shopping list",
+  "blurb": "Optionally mark matching items acquired in your active Ultros list as they enter your inventory. Existing items and moves between your bags or equipment do not count.",
+  "link": "/plugin"
+}

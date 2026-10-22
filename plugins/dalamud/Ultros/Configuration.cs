@@ -9,6 +9,8 @@ internal sealed class Configuration : IPluginConfiguration
     public string LocalOrigin { get; set; } = "http://localhost:8080";
     public bool CaptureEnabled { get; set; }
     public string? CaptureGameBuild { get; set; }
+    public bool InventoryProgressEnabled { get; set; }
+    public string? InventoryProgressGameBuild { get; set; }
     public int NotificationChatType { get; set; } = (int)Dalamud.Game.Text.XivChatType.Echo;
     public bool NotificationPopup { get; set; }
     public bool NotificationSound { get; set; }

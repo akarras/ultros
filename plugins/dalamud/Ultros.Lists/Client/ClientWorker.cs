@@ -47,6 +47,13 @@ public sealed class ClientWorker : IDisposable
     private int queuedCaptures;
     private int captureGeneration;
     public void CancelQueuedCaptures()=>Interlocked.Increment(ref captureGeneration);
+    private int inventoryGeneration;
+    private int inventoryBatchReserved;
+    private PendingInventory? pendingInventory;
+    private DateTimeOffset nextInventory;
+    private sealed record PendingInventory(ListEditTarget Target, int Generation, InventoryBatch Batch);
+    public int InventoryGeneration=>Volatile.Read(ref inventoryGeneration);
+    public void CancelQueuedInventory()=>Interlocked.Increment(ref inventoryGeneration);
     private ClientView view;
     public ClientView View => Volatile.Read(ref view);
     private sealed record SavedInbox(GameDelivery[] Entries, string[] Shown);
@@ -57,26 +64,30 @@ public sealed class ClientWorker : IDisposable
         running=Task.Run(Run);
     }
     private bool Offer(Func<Task> action) => commands.Writer.TryWrite(action);
-    public bool Pair(string label, bool editLists, bool register, bool upload) => Offer(async () =>
+    public bool Pair(string label, bool editLists, bool register, bool upload)
     {
+        CancelQueuedInventory();
+        return Offer(async () => {
         var scopes=new List<string>(Protocol.DefaultScopes);
         if(editLists)scopes.Add("lists:write");
         if(register||upload)scopes.Add("retainers:read");
         if(register)scopes.Add("retainers:register");
         if(upload)scopes.Add("retainers:upload");
         await connection!.BeginPairing(label,scopes.ToArray(),stop.Token);
-    });
+        });
+    }
     public bool CancelPairing()=>Offer(()=>{connection!.CancelPairing();return Task.CompletedTask;});
-    public bool Disconnect()=>Offer(async()=>{
+    public bool Disconnect(){CancelQueuedInventory();return Offer(async()=>{
         await StopFeed();
         await connection!.Disconnect();cart?.Dispose();cart=null;lists=[];characters=[];inbox.Clear();shown.Clear();loadedDevice=null;estimate=null;rosterStatus="";
         while(toasts.TryDequeue(out _)){}queuedToasts.Clear();CancelQueuedCaptures();
         status="Disconnected. Saved cart work remains bound to its original account and server.";
-    });
+    });}
     public bool Refresh()=>Offer(async()=>{await connection!.Restore(stop.Token,true);await RefreshAccount();nextNotifications=DateTimeOffset.MinValue;nextCart=DateTimeOffset.MinValue;});
-    public bool SelectList(int id)=>Offer(()=>OpenList(id));
+    public bool SelectList(int id){CancelQueuedInventory();return Offer(()=>OpenList(id));}
     private async Task OpenList(int id)
     {
+        CancelQueuedInventory();
         if(!lists.Any(l=>l.List.Id==id))throw new InvalidOperationException("Refresh the available lists first.");
         if(cart?.Document.View.AwaitingPersist==true)cart.Save();
         cart?.Dispose();cart=null;estimate=null;
@@ -113,12 +124,63 @@ public sealed class ClientWorker : IDisposable
             return Task.CompletedTask;
         });
     }
+    public bool ApplyInventoryGains(ListEditTarget target,int generation,InventoryGain[] gains)
+    {
+        if(generation!=InventoryGeneration||!target.Matches(View)||gains.Length>4096
+            ||Interlocked.CompareExchange(ref inventoryBatchReserved,1,0)!=0)return false;
+        var gainsCopy=gains.ToArray();
+        var accepted=Offer(()=>{
+            if(generation!=InventoryGeneration||!MatchesDestination(target)||!CanTrackInventory()) {
+                Interlocked.Exchange(ref inventoryBatchReserved,0);return Task.CompletedTask;
+            }
+            pendingInventory=new(target,generation,new InventoryBatch(InventoryProgress.Allocate(cart!.Document.View.Rows,gainsCopy)));
+            ResumeInventory();
+            return Task.CompletedTask;
+        });
+        if(!accepted)Interlocked.Exchange(ref inventoryBatchReserved,0);
+        return accepted;
+    }
+    private void ResumeInventory()
+    {
+        if(pendingInventory is not { } pending)return;
+        if(pending.Generation!=InventoryGeneration||!MatchesDestination(pending.Target)) {
+            pendingInventory=null;Interlocked.Exchange(ref inventoryBatchReserved,0);return;
+        }
+        var activeCart=cart!;
+        if(activeCart.Document.View.RecoveryReview)return;
+        nextInventory=DateTimeOffset.UtcNow.AddSeconds(15);
+        try {
+            // A previously queued manual edit may also have failed to save.
+            if(activeCart.Document.View.AwaitingPersist)activeCart.Save();
+            // Persist an already-mutated delta before attempting any later delta.
+            pending.Batch.Resume(
+                delta=>activeCart.Document.Edit(new{kind="add_acquired",item_id=delta.ItemId,quality=delta.Quality,delta=delta.Quantity}),
+                ()=>activeCart.Save(),
+                ()=>pending.Generation==InventoryGeneration&&MatchesDestination(pending.Target)&&CanEdit(),
+                delta=>InventoryProgress.ClampToRemaining(activeCart.Document.View.Rows,delta));
+            estimate=null;nextCart=DateTimeOffset.MinValue;
+            status=$"Marked {pending.Batch.Applied:N0} units acquired from inventory. Saved locally; synchronizing...";
+            if(pending.Batch.Complete){pendingInventory=null;Interlocked.Exchange(ref inventoryBatchReserved,0);}
+        }
+        catch(Exception) when(pending.Batch.AwaitingPersist||activeCart.Document.View.AwaitingPersist) {
+            estimate=null;
+            status=$"Inventory progress paused after {pending.Batch.Applied:N0} units; retry saving to finish the retained batch.";
+        }
+        catch(Exception) {
+            // Native admission can require a sync/ack before the next edit fits.
+            // Keep the unmutated cursor and let the rest of the worker loop run.
+            status="Inventory progress is waiting for cart synchronization. Remaining gains are retained.";
+            nextCart=DateTimeOffset.MinValue;
+        }
+    }
     public bool RetrySave(CartCommandTarget? target)=>target is not null&&Offer(()=>{
         if(connection?.Connected!=true||target?.Matches(connection?.Session,cart)!=true){RejectChangedDestination();return Task.CompletedTask;}
-        cart!.Save();nextCart=DateTimeOffset.MinValue;return Task.CompletedTask;
+        cart!.Save();ResumeInventory();nextCart=DateTimeOffset.MinValue;return Task.CompletedTask;
     });
     private bool Recover(RecoveryChoiceTarget? target,bool useServer)=>target is not null&&Offer(()=>{
         if(connection?.Connected==true&&target.Matches(connection.Session,cart)&&(!useServer||cart!.Document.View.HasServerCopy)) {
+            // A server-copy choice supersedes pending inventory for the discarded document.
+            if(useServer)CancelQueuedInventory();
             CartCommands.Recover(target,connection?.Session,cart,useServer);
             nextCart=DateTimeOffset.MinValue;
         }
@@ -201,6 +263,9 @@ public sealed class ClientWorker : IDisposable
     });
 
     private static string PositiveId(string id)=>long.TryParse(id,out var value)&&value>0&&value.ToString()==id?id:throw new ArgumentException("Invalid identifier.");
+    private bool CanTrackInventory()=>connection?.Connected==true&&connection.HasScope("lists:write")&&cart is not null
+        &&!cart.AccessDenied&&lists.Any(list=>list.List.Id==cart.Id&&list.CanWrite)
+        &&cart.Document.View.Ready&&!cart.Document.View.RecoveryReview;
     private bool CanEdit()=>connection?.Connected==true&&connection.HasScope("lists:write")&&cart is not null
         &&!cart.AccessDenied
         &&lists.Any(l=>l.List.Id==cart.Id&&l.CanWrite)&&cart.Document.View.Ready&&!cart.Document.View.RecoveryReview&&!cart.Document.View.AwaitingPersist;
@@ -293,7 +358,10 @@ public sealed class ClientWorker : IDisposable
     private void Publish()
     {
         var connected=connection?.Connected==true;
-        Volatile.Write(ref view,new ClientView(connected,status,connection?.StorageMode??"",connection?.HumanCode,connection?.VerificationUrl??endpoint.At("/plugin/verify").AbsoluteUri,
+        var visibleStatus=pendingInventory is { } pending&&cart?.Document.View.AwaitingPersist==true
+            ? $"Inventory progress paused after {pending.Batch.Applied:N0} units; retry saving to finish the retained batch."
+            : status;
+        Volatile.Write(ref view,new ClientView(connected,visibleStatus,connection?.StorageMode??"",connection?.HumanCode,connection?.VerificationUrl??endpoint.At("/plugin/verify").AbsoluteUri,
             connection?.Session,connected?lists:[],cart?.Id,cart?.Document.View,CanEdit(),connected?characters:[],connected?inbox.ToArray():[],market,sales,estimate,connection?.Session?.Scopes??[],priceRegion,Volatile.Read(ref feedReady)!=0?"Live notifications (SSE)":"Polling fallback",connected?rosterStatus:"",registering,connection?.ApprovalUrl,cart?.InstanceId,cart?.RecoveryRevision??0));
     }
     private async Task<Connection> AcquireConnection()
@@ -325,11 +393,12 @@ public sealed class ClientWorker : IDisposable
                 }
                 try
                 {
+                    if(pendingInventory is not null&&(pendingInventory.Generation!=InventoryGeneration||DateTimeOffset.UtcNow>=nextInventory))ResumeInventory();
                     if(await connection.PollPairing(stop.Token)){status=connection.Status;nextLists=nextNotifications=nextCart=DateTimeOffset.MinValue;}
                     if(await connection.Restore(stop.Token)){status=connection.Status;nextLists=nextNotifications=nextCart=DateTimeOffset.MinValue;}
                     if(connection.Connected)
                     {
-                        if(loadedDevice!=connection.Session!.Id){await StopFeed();cart?.Dispose();cart=null;estimate=null;rosterStatus="";LoadInbox();nextLists=nextNotifications=DateTimeOffset.MinValue;}
+                        if(loadedDevice!=connection.Session!.Id){CancelQueuedInventory();await StopFeed();cart?.Dispose();cart=null;estimate=null;rosterStatus="";LoadInbox();nextLists=nextNotifications=DateTimeOffset.MinValue;}
                         if(DateTimeOffset.UtcNow>=nextLists)await RefreshAccount();
                         if(connection.HasScope("notifications:read"))await UpdateFeed();
                         if(DateTimeOffset.UtcNow>=nextNotifications&&connection.HasScope("notifications:read"))await PollNotifications();
@@ -364,7 +433,7 @@ public sealed class ClientWorker : IDisposable
     };
     public void Dispose()
     {
-        commands.Writer.TryComplete();stop.Cancel();
+        CancelQueuedInventory();commands.Writer.TryComplete();stop.Cancel();
         try{running.Wait(TimeSpan.FromSeconds(5));}catch(AggregateException){}
         // The worker retains ownership until its finally block completes.
     }

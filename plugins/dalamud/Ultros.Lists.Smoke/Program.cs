@@ -13,6 +13,7 @@ try { using var unavailable = Document.Open(); throw new Exception("Document ope
 catch (InvalidOperationException) { }
 Native.Configure(args[0]);
 Ultros.Lists.Smoke.CartCommandChecks.Run();
+Ultros.Lists.Smoke.InventoryProgressChecks.NativeDeltas();
 static void Require(bool condition, string message)
 {
     if (!condition) throw new Exception(message);
