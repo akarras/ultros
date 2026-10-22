@@ -271,6 +271,7 @@ async fn plugin_connected_flows_postgres() {
     let db = UltrosDb::from_connection(connection);
     let keys = PluginKeys::new(&[11; 32], &[29; 32], "http://localhost:8080").unwrap();
     let owner = 900_000_000_000_000_101_i64;
+    // The app seeds these after migrations; this fixture starts from a bare DB.
     db.insert_default_retainer_cities().await.unwrap();
     let other = owner + 1;
     // Only these fixture accounts are reset. The URL assertion excludes configured app databases.
@@ -464,6 +465,270 @@ async fn plugin_connected_flows_postgres() {
         "another account cannot see private listings"
     );
     let listing = &capture.listings[0];
+    // Price assistance reads private captures without promoting them to public
+    // listings, and excludes all this account's retainers (not just this one).
+    assert!(matches!(
+        db.plugin_retainer_prices(&read_only, retainer).await,
+        Err(PluginError::Forbidden)
+    ));
+    let other_prices = pair(
+        &db,
+        &keys,
+        other,
+        vec!["retainers:read".into()],
+        &format!("fixture/{suffix}/prices"),
+    )
+    .await;
+    let other_prices = db
+        .authenticate_plugin(&other_prices.access_token)
+        .await
+        .unwrap();
+    assert!(matches!(
+        db.plugin_retainer_prices(&other_prices, retainer).await,
+        Err(PluginError::Conflict("retainer_registration_required"))
+    ));
+    let own_comparison = one(
+        &db.db,
+        "INSERT INTO retainer(name,world_id,retainer_city_id) VALUES($1,30000,1) RETURNING id",
+        vec![format!("OwnComparison{suffix}").into()],
+    )
+    .await
+    .unwrap()
+    .try_get::<i32>("", "id")
+    .unwrap();
+    let competitor = one(
+        &db.db,
+        "INSERT INTO retainer(name,world_id,retainer_city_id) VALUES($1,30000,1) RETURNING id",
+        vec![format!("OtherComparison{suffix}").into()],
+    )
+    .await
+    .unwrap()
+    .try_get::<i32>("", "id")
+    .unwrap();
+    exec(
+        &db.db,
+        "INSERT INTO owned_retainers(discord_id,retainer_id) VALUES($1,$2)",
+        vec![owner.into(), own_comparison.into()],
+    )
+    .await
+    .unwrap();
+    exec(&db.db,
+        "INSERT INTO active_listing(world_id,retainer_id,item_id,hq,quantity,price_per_unit,timestamp)
+         VALUES(30000,$1,1,false,1,100,now()),(30000,$2,1,false,1,1,now()),
+               (30000,$3,1,false,1,250,now()),(30000,$3,1,true,1,5,now())",
+        vec![public_retainer.into(),own_comparison.into(),competitor.into()]).await.unwrap();
+    exec(
+        &db.db,
+        "INSERT INTO listing_last_updated(world_id,item_id,date_time) VALUES(30000,1,now())
+         ON CONFLICT(world_id,item_id) DO UPDATE SET date_time=excluded.date_time",
+        vec![],
+    )
+    .await
+    .unwrap();
+    exec(
+        &db.db,
+        "DELETE FROM listing_board_review WHERE world_id=30000 AND item_id=1",
+        vec![],
+    )
+    .await
+    .unwrap();
+    db.update_sales(vec![], universalis::ItemId(1), universalis::WorldId(30000))
+        .await
+        .unwrap();
+    let unknown = db
+        .plugin_retainer_prices(&principal, retainer)
+        .await
+        .unwrap();
+    assert_eq!(unknown.listings[0].status, "unknown_age");
+    assert_eq!(unknown.listings[0].suggested_price, None);
+    let board = vec![
+        market_listing("FixtureRetainer", 1, 100, false),
+        market_listing(&format!("OwnComparison{suffix}"), 1, 1, false),
+        market_listing(&format!("OtherComparison{suffix}"), 1, 250, false),
+        market_listing(&format!("OtherComparison{suffix}"), 1, 5, true),
+    ];
+    db.add_listings(
+        vec![board[0].clone()],
+        universalis::ItemId(1),
+        universalis::WorldId(30000),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db.plugin_retainer_prices(&principal, retainer)
+            .await
+            .unwrap()
+            .listings[0]
+            .status,
+        "unknown_age"
+    );
+    db.update_listings(
+        board.clone(),
+        universalis::ItemId(1),
+        universalis::WorldId(30000),
+    )
+    .await
+    .unwrap();
+    let prices = db
+        .plugin_retainer_prices(&principal, retainer)
+        .await
+        .unwrap();
+    assert_eq!(prices.source, "in_game");
+    assert_eq!(prices.world_name, "PluginTestWorld");
+    assert_eq!(
+        prices.observed_at.unwrap().timestamp_micros(),
+        capture.observed_at.timestamp_micros()
+    );
+    assert_eq!(prices.listings.len(), 1);
+    assert_eq!(prices.listings[0].current_price, 100);
+    assert_eq!(prices.listings[0].competitor_price, Some(250));
+    assert_eq!(prices.listings[0].suggested_price, Some(249));
+    assert_eq!(prices.listings[0].status, "fresh");
+    exec(&db.db,"UPDATE listing_board_review SET date_time=now()-interval '31 minutes' WHERE world_id=30000 AND item_id=1",vec![]).await.unwrap();
+    // Neither sales-only ingestion nor a delta proves untouched competitors
+    // were reviewed, even though both advance the catch-up ingest marker.
+    db.update_sales(
+        vec![universalis::SaleView {
+            hq: false,
+            price_per_unit: 250,
+            quantity: 1,
+            timestamp: chrono::Local::now(),
+            on_mannequin: false,
+            world_name: None,
+            world_id: None,
+            buyer_name: format!("PriceFixtureBuyer{suffix}"),
+            total: 250,
+        }],
+        universalis::ItemId(1),
+        universalis::WorldId(30000),
+    )
+    .await
+    .unwrap();
+    db.remove_listings(
+        vec![board[0].clone()],
+        universalis::ItemId(1),
+        universalis::WorldId(30000),
+    )
+    .await
+    .unwrap();
+    db.add_listings(
+        vec![board[0].clone()],
+        universalis::ItemId(1),
+        universalis::WorldId(30000),
+    )
+    .await
+    .unwrap();
+    let stale_prices = db
+        .plugin_retainer_prices(&principal, retainer)
+        .await
+        .unwrap();
+    assert_eq!(stale_prices.listings[0].competitor_price, Some(250));
+    assert_eq!(stale_prices.listings[0].suggested_price, None);
+    assert_eq!(stale_prices.listings[0].status, "stale");
+    assert_eq!(one(&db.db,"SELECT count(*)::bigint AS n FROM active_listing WHERE world_id=30000 AND retainer_id IN ($1,$2,$3)",
+        vec![public_retainer.into(),own_comparison.into(),competitor.into()]).await.unwrap().try_get::<i64>("","n").unwrap(),4,
+        "lookup must not create or alter public listing rows");
+    let ingest_before = one(
+        &db.db,
+        "SELECT date_time FROM listing_last_updated WHERE world_id=30000 AND item_id=1",
+        vec![],
+    )
+    .await
+    .unwrap()
+    .try_get::<chrono::NaiveDateTime>("", "date_time")
+    .unwrap();
+    // A transient failure in the new review write must leave catch-up eligible.
+    db.db.execute_unprepared("CREATE OR REPLACE FUNCTION ultros_plugin_review_fail() RETURNS trigger
+        LANGUAGE plpgsql AS $fixture$ BEGIN RAISE EXCEPTION 'review fixture failure'; END; $fixture$;
+        DROP TRIGGER IF EXISTS ultros_plugin_review_fail ON listing_board_review;
+        CREATE TRIGGER ultros_plugin_review_fail BEFORE INSERT OR UPDATE ON listing_board_review
+        FOR EACH ROW WHEN (NEW.world_id=30000 AND NEW.item_id=1) EXECUTE FUNCTION ultros_plugin_review_fail()")
+        .await.unwrap();
+    let failed_review = db
+        .update_listings(
+            board.clone(),
+            universalis::ItemId(1),
+            universalis::WorldId(30000),
+        )
+        .await;
+    db.db
+        .execute_unprepared(
+            "DROP TRIGGER ultros_plugin_review_fail ON listing_board_review;
+        DROP FUNCTION ultros_plugin_review_fail()",
+        )
+        .await
+        .unwrap();
+    assert!(failed_review.is_err());
+    assert_eq!(
+        one(
+            &db.db,
+            "SELECT date_time FROM listing_last_updated WHERE world_id=30000 AND item_id=1",
+            vec![]
+        )
+        .await
+        .unwrap()
+        .try_get::<chrono::NaiveDateTime>("", "date_time")
+        .unwrap(),
+        ingest_before
+    );
+    assert_eq!(
+        db.plugin_retainer_prices(&principal, retainer)
+            .await
+            .unwrap()
+            .listings[0]
+            .status,
+        "stale"
+    );
+    db.update_listings(board, universalis::ItemId(1), universalis::WorldId(30000))
+        .await
+        .unwrap();
+    assert_eq!(
+        db.plugin_retainer_prices(&principal, retainer)
+            .await
+            .unwrap()
+            .listings[0]
+            .suggested_price,
+        Some(249)
+    );
+    exec(
+        &db.db,
+        "DELETE FROM listing_board_review WHERE world_id=30000 AND item_id=1",
+        vec![],
+    )
+    .await
+    .unwrap();
+    exec(
+        &db.db,
+        "DELETE FROM active_listing WHERE world_id=30000 AND retainer_id IN ($1,$2,$3)",
+        vec![
+            public_retainer.into(),
+            own_comparison.into(),
+            competitor.into(),
+        ],
+    )
+    .await
+    .unwrap();
+    exec(
+        &db.db,
+        "DELETE FROM owned_retainers WHERE discord_id=$1 AND retainer_id=$2",
+        vec![owner.into(), own_comparison.into()],
+    )
+    .await
+    .unwrap();
+    exec(
+        &db.db,
+        "DELETE FROM retainer WHERE id IN ($1,$2)",
+        vec![own_comparison.into(), competitor.into()],
+    )
+    .await
+    .unwrap();
+    exec(
+        &db.db,
+        "DELETE FROM listing_last_updated WHERE world_id=30000 AND item_id=1",
+        vec![],
+    )
+    .await
+    .unwrap();
     let canonical = one(&db.db,
         "INSERT INTO active_listing(world_id,retainer_id,item_id,hq,quantity,price_per_unit,timestamp) VALUES(30000,$1,$2,$3,$4,$5,$6) RETURNING id",
         vec![public_retainer.into(),listing.item_id.into(),listing.hq.into(),listing.quantity.into(),(listing.unit_price as i32).into(),capture.observed_at.naive_utc().into()]).await.unwrap().try_get::<i64>("","id").unwrap();
@@ -558,6 +823,24 @@ async fn plugin_connected_flows_postgres() {
             .unwrap()
             .is_empty()
     );
+    let fallback_row = one(&db.db,
+        "INSERT INTO active_listing(world_id,retainer_id,item_id,hq,quantity,price_per_unit,timestamp) VALUES(30000,$1,1,false,5,100,now()) RETURNING id",
+        vec![public_retainer.into()]).await.unwrap().try_get::<i64>("","id").unwrap();
+    let fallback = db
+        .plugin_retainer_prices(&principal, retainer)
+        .await
+        .unwrap();
+    assert_eq!(fallback.source, "universalis");
+    assert_eq!(fallback.listings.len(), 1);
+    assert_eq!(fallback.listings[0].competitor_price, None);
+    assert_eq!(fallback.listings[0].suggested_price, None);
+    exec(
+        &db.db,
+        "DELETE FROM active_listing WHERE id=$1",
+        vec![fallback_row.into()],
+    )
+    .await
+    .unwrap();
     assert!(
         db.upload_plugin_listings(&principal, retainer, &capture)
             .await

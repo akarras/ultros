@@ -54,6 +54,25 @@ internal static class HttpChecks
                 Require(estimate.Version==cart.Document.View.Version,"Shared Rust market estimate has a different document version.");
             }
             using(var restored=new ConnectedCart(connection,id){CanWrite=true}){Require(restored.Document.View.Rows.Single().Acquired==5,"Managed checkpoint did not survive reopening.");await restored.Sync(connection,cancellation.Token);}
+            var observed=new ObservedCharacter("900000000000000001","Managed price fixture",63,
+                [new ObservedRetainer("900000000000000002","ManagedPriceFixture",1)]);
+            var roster=await connection.Send<UnverifiedCharacter[]>(HttpMethod.Post,"/api/v1/plugin/retainers/register",
+                new{operation_id=Guid.NewGuid().ToString("N"),character=observed},cancellation.Token);
+            var registered=roster.Where(c=>c.Name==observed.Name&&c.HomeWorld==63).MaxBy(c=>c.ObservedAt)!;
+            roster=await connection.Send<UnverifiedCharacter[]>(HttpMethod.Post,$"/api/v1/plugin/characters/{registered.Id}/uploads",
+                new{enabled=true},cancellation.Token);
+            registered=roster.Single(c=>c.Id==registered.Id);
+            var retainer=registered.Retainers.Single(r=>r.Name=="ManagedPriceFixture");
+            var capture=new ListingCapture(Guid.NewGuid().ToString("N"),retainer.Revision,registered.CaptureEpoch,
+                DateTimeOffset.UtcNow,true,[new PrivateListing(0,8,false,5,100)]);
+            _=await connection.Send<CaptureReceipt>(HttpMethod.Post,$"/api/v1/plugin/retainers/{retainer.Id}/listings",capture,cancellation.Token);
+            var prices=await connection.Send<RetainerPriceLookup>(HttpMethod.Get,$"/api/v1/plugin/retainers/{retainer.Id}/prices",null,cancellation.Token);
+            Require(prices.RetainerId==retainer.Id&&prices.WorldId==63&&prices.Source=="in_game"
+                &&prices.Listings.Single().CurrentPrice==100,"Managed price lookup lost its private capture.");
+            _=await connection.Send<UnverifiedCharacter[]>(HttpMethod.Post,$"/api/v1/plugin/characters/{registered.Id}/uploads",
+                new{enabled=false,delete_snapshots=true},cancellation.Token);
+            prices=await connection.Send<RetainerPriceLookup>(HttpMethod.Get,$"/api/v1/plugin/retainers/{retainer.Id}/prices",null,cancellation.Token);
+            Require(prices.Source=="universalis"&&prices.Listings.Length==0,"Managed price lookup retained a deleted capture.");
             var operation=Guid.NewGuid().ToString("N");
             using var notifications=new SemaphoreSlim(0);
             using var feed=await connection.SubscribeNotifications(()=>notifications.Release(),cancellation.Token)

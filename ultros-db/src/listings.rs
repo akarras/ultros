@@ -4,8 +4,8 @@ use itertools::Itertools;
 use metrics::{counter, histogram};
 use migration::DbErr;
 use sea_orm::{
-    ColumnTrait, Condition, DbBackend, DeleteMany, EntityTrait, ExprTrait, FromQueryResult,
-    QueryFilter, QuerySelect, Statement,
+    ColumnTrait, Condition, ConnectionTrait, DbBackend, DeleteMany, EntityTrait, ExprTrait,
+    FromQueryResult, QueryFilter, QuerySelect, Statement,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -992,6 +992,23 @@ impl UltrosDb {
             .into_iter()
             .flat_map(|(m, r)| r.map(|r| (m.into(), r.into())))
             .collect();
+        // Only a successful full-board reconciliation reviews every competitor.
+        // Sales and incremental add/remove events retain their existing catch-up
+        // marker semantics but must not renew this evidence for untouched rows.
+        self.db
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO listing_board_review(world_id,item_id,date_time) VALUES($1,$2,$3)
+             ON CONFLICT(world_id,item_id) DO UPDATE SET date_time=excluded.date_time",
+                [
+                    world_id.0.into(),
+                    item_id.0.into(),
+                    chrono::Utc::now().naive_utc().into(),
+                ],
+            ))
+            .await?;
+        // Keep failed review writes eligible for catch-up. A later catch-up
+        // marker failure can leave a truthful completed-board review in place.
         self.set_last_updated(world_id, item_id).await?;
         counter!("ultros_db_inserted_items", "world_id" => world_id.0.to_string())
             .increment(added.len() as u64);
