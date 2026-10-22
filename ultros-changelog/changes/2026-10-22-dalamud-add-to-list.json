@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Add items to your list from the game",
+  "blurb": "Right-click an item or recipe to add its item straight to your active Ultros list. You can also add an item while checking its prices in the plugin.",
+  "link": "/plugin"
+}

@@ -1,19 +1,21 @@
 param(
     [string]$PackageDirectory = (Join-Path $PSScriptRoot '../../artifacts/dalamud/.staging-plugin'),
     [string]$ReleaseDirectory = (Join-Path $PSScriptRoot '../../artifacts/dalamud/releases'),
-    [string]$Changelog = 'Ultros lists, market prices, retainer listings and game notifications.'
+    [string]$Changelog
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'release-source.ps1')
-if ([string]::IsNullOrWhiteSpace($Changelog) -or [Text.Encoding]::UTF8.GetByteCount($Changelog) -gt 4096) {
-    throw 'Release notes must contain between 1 and 4096 UTF-8 bytes.'
-}
 
 $package = (Resolve-Path -LiteralPath $PackageDirectory).Path
 $build = Get-Content -Raw -LiteralPath (Join-Path $package 'build-info.json') | ConvertFrom-Json
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $package 'Ultros.json') | ConvertFrom-Json
-$version = ([xml](Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Directory.Build.props'))).Project.PropertyGroup.UltrosPluginVersion
+$properties = ([xml](Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Directory.Build.props'))).Project.PropertyGroup
+$version = $properties.UltrosPluginVersion
+if ([string]::IsNullOrWhiteSpace($Changelog)) { $Changelog = [string]$properties.UltrosPluginReleaseNotes }
+if ([string]::IsNullOrWhiteSpace($Changelog) -or [Text.Encoding]::UTF8.GetByteCount($Changelog) -gt 4096) {
+    throw 'Release notes must contain between 1 and 4096 UTF-8 bytes.'
+}
 if ($version -notmatch '^(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})$' -or
     @($version.Split('.') | Where-Object { [int]$_ -gt 65534 }).Count -ne 0) { throw 'Use a four-part release version, with components no greater than 65534.' }
 if ($build.LocalhostEnabled -or $build.Configuration -ne 'Release' -or $build.ReusedInstalledNative) { throw 'Development, localhost-enabled and reused-native packages cannot be published.' }
