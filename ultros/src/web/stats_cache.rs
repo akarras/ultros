@@ -11,6 +11,7 @@ use std::{
     collections::HashMap,
     future::Future,
     marker::PhantomData,
+    panic::AssertUnwindSafe,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -19,6 +20,7 @@ use std::{
 };
 
 use axum::{body::Bytes, response::IntoResponse};
+use futures::FutureExt;
 use tokio::sync::{Mutex as AsyncMutex, Notify, Semaphore};
 use ultros_db::world_data::world_cache::AnySelector;
 
@@ -320,10 +322,13 @@ impl<K: CacheKind> StatsCache<K> {
 
             state.refreshing = true;
             drop(state);
+            // The shared load belongs to the cache. Dropping an HTTP/SSR
+            // request detaches this handle instead of cancelling the loader
+            // before it can clear `refreshing` and wake the other callers.
             let result = self
-                .run_loader(loader.take().expect("loader used once"))
-                .await;
-            self.finish_refresh(&slot, result.as_ref().ok()).await;
+                .spawn_refresh(slot.clone(), loader.take().expect("loader used once"))
+                .await
+                .map_err(|error| anyhow::anyhow!("{} refresh task failed: {error}", K::LABEL))?;
             return result.map(|body| CacheValue {
                 body,
                 disposition: CacheDisposition::Loaded,
@@ -331,23 +336,32 @@ impl<K: CacheKind> StatsCache<K> {
         }
     }
 
-    fn spawn_refresh<F, Fut>(&self, slot: Arc<Slot>, loader: F)
+    fn spawn_refresh<F, Fut>(
+        &self,
+        slot: Arc<Slot>,
+        loader: F,
+    ) -> tokio::task::JoinHandle<Result<Bytes, WebError>>
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = Result<Bytes, WebError>> + Send + 'static,
     {
         let cache = self.clone();
         tokio::spawn(async move {
-            let result = cache.run_loader(loader).await;
+            // A panicking loader must also release the slot. Catch the
+            // entire future, including invoking the loader closure itself.
+            let result = AssertUnwindSafe(cache.run_loader(loader))
+                .catch_unwind()
+                .await
+                .unwrap_or_else(|_| {
+                    tracing::error!(cache = K::LABEL, "stats loader panicked");
+                    Err(WebError::TemporarilyUnavailable)
+                });
             if let Err(error) = &result {
-                tracing::warn!(
-                    ?error,
-                    cache = K::LABEL,
-                    "stats background refresh failed; serving stale"
-                );
+                tracing::warn!(?error, cache = K::LABEL, "stats refresh failed");
             }
             cache.finish_refresh(&slot, result.as_ref().ok()).await;
-        });
+            result
+        })
     }
 
     async fn run_loader<F, Fut>(&self, loader: F) -> Result<Bytes, WebError>
@@ -481,6 +495,60 @@ mod tests {
         assert_eq!(a, "body");
         assert_eq!(b, "body");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn cancelling_the_cold_request_does_not_cancel_its_shared_load() {
+        let cache = SaleStatsCache::new(4, 1);
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+        let leader_cache = cache.clone();
+        let leader = tokio::spawn(async move {
+            leader_cache
+                .get_or_load(key(1), || async move {
+                    started_tx.send(()).unwrap();
+                    finish_rx.await.unwrap();
+                    Ok(Bytes::from_static(b"shared body"))
+                })
+                .await
+        });
+        started_rx.await.unwrap();
+        leader.abort();
+        assert!(matches!(leader.await, Err(error) if error.is_cancelled()));
+        // No request owns the load now. A later follower must still receive
+        // its result instead of waiting forever on `refreshing`.
+        let _ = finish_tx.send(());
+        let value = tokio::time::timeout(
+            Duration::from_secs(1),
+            cache.get_or_load(key(1), || async { panic!("duplicate load") }),
+        )
+        .await
+        .expect("a cancelled caller must not strand its followers")
+        .unwrap();
+        assert_eq!(value.body, "shared body");
+        assert_eq!(value.disposition, CacheDisposition::Fresh);
+    }
+
+    #[tokio::test]
+    async fn a_panicking_loader_releases_the_slot_for_retry() {
+        let cache = SaleStatsCache::new(4, 1);
+        let result = cache
+            .get_or_load(key(1), || async { panic!("loader failed") })
+            .await;
+        assert!(matches!(result, Err(WebError::TemporarilyUnavailable)));
+        let slot = cache.slot(key(1));
+        {
+            let mut state = slot.state.lock().await;
+            assert!(!state.refreshing);
+            // Expire the backoff without delaying the test.
+            state.failed_until = Some(Instant::now());
+        }
+        let value = cache
+            .get_or_load(key(1), || async { Ok(Bytes::from_static(b"retry")) })
+            .await
+            .unwrap();
+        assert_eq!(value.body, "retry");
+        assert_eq!(value.disposition, CacheDisposition::Loaded);
     }
 
     #[tokio::test]

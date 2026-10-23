@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "More reliable market statistics",
+  "blurb": "Fixed market statistics getting stuck loading after a slow request was interrupted."
+}
