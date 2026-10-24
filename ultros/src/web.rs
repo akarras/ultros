@@ -1531,6 +1531,11 @@ async fn refresh_world_item_listings(
         .ok_or_else(|| anyhow::Error::msg("Unable to get worlds"))?;
     let world_clone = world.clone();
     let future = tokio::spawn(async move {
+        let boards: Vec<_> = all_worlds
+            .iter()
+            .map(|world| (WorldId(*world), ItemId(item_id)))
+            .collect();
+        let versions = db.capture_listing_boards(&boards).await?;
         let current_data = universalis
             .marketboard_current_data(&world_clone, &[item_id])
             .await?;
@@ -1567,12 +1572,18 @@ async fn refresh_world_item_listings(
             });
         debug!("manually refreshed worlds: {listings_by_world:?}");
         for (world_id, listings) in listings_by_world {
+            let version = versions
+                .get(&(WorldId(world_id as i32), ItemId(item_id)))
+                .copied()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("snapshot returned a world outside the requested scope")
+                })?;
             let ultros_db::listings::ListingWrite {
                 added,
                 removed,
                 changes,
             } = db
-                .update_listings(listings, ItemId(item_id), WorldId(world_id as i32))
+                .update_listings(listings, ItemId(item_id), WorldId(world_id as i32), version)
                 .await?;
             crate::record_listing_changes(
                 &listing_events,
