@@ -1,8 +1,8 @@
 //! One-shot backfill from Postgres `sale_history` to ClickHouse `sales`.
 //!
 //! Chunks by `(world_id, year-month)` for resumability — re-running this
-//! after a partial completion is cheap because completed chunks are tracked
-//! in the `_backfill_state` table and skipped.
+//! after a partial completion skips sealed past months. The active month is
+//! always replayed; explicit replay can repair any previously completed chunk.
 //!
 //! Idempotent: the `sales` table is a `ReplacingMergeTree` keyed on
 //! `(item_id, hq, world_id, sold_date, pg_id)`, so re-streaming the same rows
@@ -14,63 +14,102 @@
 
 use std::time::Instant;
 
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{Datelike, NaiveDate, NaiveDateTime};
 use futures::TryStreamExt;
-use tracing::{info, warn};
+use tracing::info;
 use ultros_db::UltrosDb;
 
 use crate::{ClickHouseClient, ClickHouseError, rows::SaleRow};
 
-/// Run a chunked backfill from `start_year` onward, finishing at the current
-/// month. Resumable: completed chunks are skipped on re-runs.
+/// A bounded month range, including both endpoints. Resume skips sealed past
+/// months; replay ignores their markers to repair dropped or late-arriving sales.
+#[derive(Debug, Clone)]
+pub struct BackfillOptions {
+    pub from: NaiveDate,
+    pub through: NaiveDate,
+    /// Empty selects every known world. Unknown explicit IDs are rejected.
+    pub worlds: Vec<i32>,
+    pub replay: bool,
+}
+
+impl BackfillOptions {
+    pub fn since(start_year: i32) -> Result<Self, ClickHouseError> {
+        Ok(Self {
+            from: NaiveDate::from_ymd_opt(start_year, 1, 1)
+                .ok_or_else(|| ClickHouseError::Backfill("invalid start year".into()))?,
+            through: chrono::Utc::now().date_naive().with_day(1).unwrap(),
+            worlds: vec![],
+            replay: false,
+        })
+    }
+
+    fn validate(&self, current_month: NaiveDate) -> Result<(), ClickHouseError> {
+        if self.from.day() != 1
+            || self.through.day() != 1
+            || self.from > self.through
+            || self.from.year() < 1970
+            || self.through > current_month
+        {
+            return Err(ClickHouseError::Backfill(
+                "expected an ordered month range from 1970 through the current month".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Resume historical backfill, always revisiting the active month. Existing
+/// markers for that month (written by older versions) are deliberately ignored.
 pub async fn backfill_sales(
     pg: &UltrosDb,
     ch: &ClickHouseClient,
     start_year: i32,
 ) -> Result<BackfillStats, ClickHouseError> {
-    ensure_state_table(ch).await?;
+    backfill_sales_with_options(pg, ch, &BackfillOptions::since(start_year)?).await
+}
 
+pub async fn backfill_sales_with_options(
+    pg: &UltrosDb,
+    ch: &ClickHouseClient,
+    options: &BackfillOptions,
+) -> Result<BackfillStats, ClickHouseError> {
+    let current_month = chrono::Utc::now().date_naive().with_day(1).unwrap();
+    options.validate(current_month)?;
     let worlds = pg
         .list_worlds()
         .await
         .map_err(|e| ClickHouseError::Backfill(e.to_string()))?;
-    let now = chrono::Utc::now().naive_utc();
+    for id in &options.worlds {
+        if !worlds.iter().any(|world| world.id == *id) {
+            return Err(ClickHouseError::Backfill(format!("unknown world {id}")));
+        }
+    }
+    ensure_state_table(ch).await?;
     let mut stats = BackfillStats::default();
-
-    info!(
-        worlds = worlds.len(),
-        start_year, "starting ClickHouse backfill"
-    );
-
-    for world in &worlds {
-        let mut y = start_year;
-        let mut m: u32 = 1;
-        loop {
-            let chunk_start =
-                match NaiveDate::from_ymd_opt(y, m, 1).and_then(|d| d.and_hms_opt(0, 0, 0)) {
-                    Some(t) => t,
-                    None => {
-                        warn!(year = y, month = m, "skipping invalid date");
-                        break;
-                    }
-                };
-            if chunk_start > now {
-                break;
-            }
-            let ym = (y as u32) * 100 + m;
-            if chunk_already_done(ch, world.id, ym).await? {
+    info!(?options, "starting ClickHouse backfill");
+    for world in worlds
+        .iter()
+        .filter(|world| options.worlds.is_empty() || options.worlds.contains(&world.id))
+    {
+        let mut month = options.from;
+        while month <= options.through {
+            let ym = month.year() as u32 * 100 + month.month();
+            let sealed = month < current_month;
+            if !options.replay && sealed && chunk_already_done(ch, world.id, ym).await? {
                 stats.chunks_skipped += 1;
             } else {
-                let n = stream_chunk(pg, ch, world.id, y, m).await?;
-                mark_chunk_done(ch, world.id, ym, n).await?;
+                let n = stream_chunk(pg, ch, world.id, month.year(), month.month()).await?;
+                // An active month can receive more rows immediately after this
+                // stream ends. Never claim it is complete.
+                if sealed {
+                    mark_chunk_done(ch, world.id, ym, n).await?;
+                }
                 stats.chunks_streamed += 1;
                 stats.rows_streamed += n;
             }
-            m += 1;
-            if m > 12 {
-                m = 1;
-                y += 1;
-            }
+            month = month
+                .checked_add_months(chrono::Months::new(1))
+                .ok_or_else(|| ClickHouseError::Backfill("month range overflow".into()))?;
         }
     }
     info!(?stats, "ClickHouse backfill complete");
@@ -201,4 +240,157 @@ pub struct BackfillStats {
     pub chunks_streamed: u64,
     pub chunks_skipped: u64,
     pub rows_streamed: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_invalid_or_future_ranges() {
+        let current = NaiveDate::from_ymd_opt(2026, 10, 1).unwrap();
+        let mut options = BackfillOptions::since(2026).unwrap();
+        options.through = current;
+        assert!(options.validate(current).is_ok());
+        for (from, through) in [
+            (current, current.pred_opt().unwrap()),
+            (current.with_day(2).unwrap(), current),
+            (current, current.succ_opt().unwrap()),
+            (current, NaiveDate::from_ymd_opt(2026, 11, 1).unwrap()),
+        ] {
+            options.from = from;
+            options.through = through;
+            assert!(options.validate(current).is_err());
+        }
+    }
+
+    /// Isolated schema in an explicitly opted-in disposable Postgres database,
+    /// plus an explicitly named ClickHouse audit database. Never loads .env.
+    #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL and ClickHouse; see ingest-observability.md"]
+    async fn replay_repairs_sealed_months_and_resume_revisits_active_months() {
+        use sea_orm::{ConnectOptions, ConnectionTrait, Database};
+        let url = std::env::var("ULTROS_PLUGIN_TEST_DATABASE_URL").unwrap();
+        let suffix = url
+            .strip_prefix("postgres://ultros_plugin@127.0.0.1:")
+            .unwrap();
+        let (port, database) = suffix.split_once('/').unwrap();
+        assert!(port.parse::<u16>().is_ok_and(|p| p > 0));
+        let name = database.strip_prefix("ultros_plugin_").unwrap();
+        assert!(!name.is_empty() && name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_'));
+        assert!(
+            std::env::var("CLICKHOUSE_URL")
+                .unwrap()
+                .starts_with("http://127.0.0.1:")
+        );
+        assert_eq!(
+            std::env::var("CLICKHOUSE_DATABASE").unwrap(),
+            "ultros_audit"
+        );
+        let mut connection_options = ConnectOptions::new(url);
+        connection_options
+            .max_connections(2)
+            .min_connections(1)
+            .set_schema_search_path("audit_ch_backfill")
+            .sqlx_logging(false);
+        let connection = Database::connect(connection_options).await.unwrap();
+        connection.execute_unprepared(
+            "DROP SCHEMA IF EXISTS audit_ch_backfill CASCADE;
+             CREATE SCHEMA audit_ch_backfill;
+             CREATE TABLE audit_ch_backfill.world(id integer PRIMARY KEY, name text NOT NULL, datacenter_id integer NOT NULL);
+             INSERT INTO audit_ch_backfill.world VALUES(30002,'RepairWorld',1),(30003,'OtherWorld',1);
+             CREATE TABLE audit_ch_backfill.sale_history(id integer PRIMARY KEY,quantity integer NOT NULL,price_per_item integer NOT NULL,buying_character_id integer NOT NULL,hq boolean NOT NULL,sold_item_id integer NOT NULL,sold_date timestamp NOT NULL,world_id integer NOT NULL);
+             INSERT INTO audit_ch_backfill.sale_history VALUES(-8001,2,100,1,false,9004,'2020-01-02',30002),(-8002,9,100,1,false,9004,'2020-01-02',30003);"
+        ).await.unwrap();
+        let pg = UltrosDb::from_connection(connection);
+        let ch = ClickHouseClient::from_env();
+        ch.migrate().await.unwrap();
+        ch.client().query("ALTER TABLE sales DELETE WHERE item_id = 9004 AND world_id IN (30002,30003) SETTINGS mutations_sync = 1").execute().await.unwrap();
+        ensure_state_table(&ch).await.unwrap();
+        ch.client().query("ALTER TABLE _backfill_state DELETE WHERE world_id IN (30002,30003) SETTINGS mutations_sync = 1").execute().await.unwrap();
+        let january = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let mut options = BackfillOptions {
+            from: january,
+            through: january,
+            worlds: vec![30002],
+            replay: false,
+        };
+        let first = backfill_sales_with_options(&pg, &ch, &options)
+            .await
+            .unwrap();
+        assert_eq!((first.chunks_streamed, first.rows_streamed), (1, 1));
+        pg.get_connection()
+            .execute_unprepared(
+                "INSERT INTO sale_history VALUES(-8003,3,100,1,false,9004,'2020-01-03',30002)",
+            )
+            .await
+            .unwrap();
+        let skipped = backfill_sales_with_options(&pg, &ch, &options)
+            .await
+            .unwrap();
+        assert_eq!(skipped.chunks_skipped, 1);
+        options.replay = true;
+        for _ in 0..2 {
+            let repaired = backfill_sales_with_options(&pg, &ch, &options)
+                .await
+                .unwrap();
+            assert_eq!(repaired.rows_streamed, 2);
+        }
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct Totals {
+            n: u64,
+            qty: u64,
+        }
+        let totals: Totals = ch.client().query("SELECT count() AS n, sum(quantity) AS qty FROM sales FINAL WHERE item_id=9004 AND world_id IN (30002,30003)").fetch_one().await.unwrap();
+        assert_eq!(
+            (totals.n, totals.qty),
+            (2, 5),
+            "replay must deduplicate and respect world scope"
+        );
+
+        let current = chrono::Utc::now().date_naive().with_day(1).unwrap();
+        options.from = current;
+        options.through = current;
+        options.replay = false;
+        // Simulate the legacy bug: an active month was marked complete.
+        mark_chunk_done(&ch, 30002, current.year() as u32 * 100 + current.month(), 0)
+            .await
+            .unwrap();
+        pg.get_connection()
+            .execute_unprepared(&format!(
+                "INSERT INTO sale_history VALUES(-8004,1,100,1,false,9004,'{current}',30002)"
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            backfill_sales_with_options(&pg, &ch, &options)
+                .await
+                .unwrap()
+                .rows_streamed,
+            1
+        );
+        pg.get_connection()
+            .execute_unprepared(&format!(
+                "INSERT INTO sale_history VALUES(-8005,1,100,1,false,9004,'{current}',30002)"
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            backfill_sales_with_options(&pg, &ch, &options)
+                .await
+                .unwrap()
+                .rows_streamed,
+            2
+        );
+        options.worlds.push(123456789);
+        assert!(
+            backfill_sales_with_options(&pg, &ch, &options)
+                .await
+                .is_err()
+        );
+        pg.get_connection()
+            .execute_unprepared("DROP SCHEMA audit_ch_backfill CASCADE")
+            .await
+            .unwrap();
+    }
 }
