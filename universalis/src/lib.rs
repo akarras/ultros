@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::{TimestampMilliSeconds, TimestampSeconds, formats::Flexible, serde_as};
 use std::collections::{BTreeMap, HashMap};
+use std::time::Duration;
 use thiserror::Error;
 use tracing::info;
 
@@ -484,8 +485,15 @@ impl UniversalisClient {
     const UNIVERSALIS_BASE_URL: &'static str = "https://universalis.app/api/v2";
 
     pub fn new(user_agent: impl ToString) -> Self {
+        Self::with_request_timeout(user_agent, Duration::from_secs(30))
+    }
+
+    fn with_request_timeout(user_agent: impl ToString, timeout: Duration) -> Self {
         let client = Client::builder()
             .user_agent(user_agent.to_string())
+            .connect_timeout(timeout.min(Duration::from_secs(5)))
+            .read_timeout(timeout.min(Duration::from_secs(15)))
+            .timeout(timeout)
             .build()
             .unwrap();
 
@@ -807,6 +815,53 @@ mod status_test {
 #[cfg(test)]
 mod test {
     use crate::{CurrentlyShownMultiView, MarketView, UniversalisClient};
+
+    async fn assert_stalled_rest_request_times_out(send_headers: bool) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            assert!(socket.read(&mut request).await.unwrap() > 0);
+            if send_headers {
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n[")
+                    .await
+                    .unwrap();
+            }
+            std::future::pending::<()>().await;
+        });
+        let client = UniversalisClient::with_request_timeout(
+            "ultros-test",
+            std::time::Duration::from_millis(500),
+        );
+        let request = async {
+            let response = client.send("test", &url).await?;
+            crate::checked_json::<serde_json::Value>(&url, response).await
+        };
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), request).await;
+        server.abort();
+        let error = result
+            .expect("a stalled upstream must be bounded")
+            .unwrap_err();
+        assert!(matches!(&error, crate::Error::HttpError(error) if error.is_timeout()));
+        assert!(
+            error.is_transient(),
+            "timeouts remain eligible for catch-up retries"
+        );
+    }
+
+    #[tokio::test]
+    async fn stalled_response_headers_are_bounded() {
+        assert_stalled_rest_request_times_out(false).await;
+    }
+
+    #[tokio::test]
+    async fn stalled_response_bodies_are_bounded() {
+        assert_stalled_rest_request_times_out(true).await;
+    }
 
     #[tokio::test]
     async fn test_get_worlds() {
