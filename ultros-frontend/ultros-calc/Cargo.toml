@@ -7,3 +7,11 @@ license = "MIT"
 [dependencies]
 chrono.workspace = true
 ultros-api-types = { path = "../../ultros-api-types" }
+
+serde = { workspace = true, optional = true }
+
+[features]
+worker = ["dep:serde"]
+
+[dev-dependencies]
+serde_json = { workspace = true }

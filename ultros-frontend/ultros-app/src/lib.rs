@@ -14,6 +14,7 @@ pub use ultros_ui_query::last_view;
 pub(crate) mod price_basis;
 pub(crate) mod query_defaults;
 pub(crate) use ultros_calc::recipe_planner;
+pub mod recipe_work;
 pub use ultros_game_sources as game_sources;
 pub(crate) mod routes;
 pub use ultros_ui_market::sales_cadence;

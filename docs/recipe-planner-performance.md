@@ -50,7 +50,7 @@ their price/quantity snapshots; other purchases may re-plan; ticked worlds
 are free to revisit. An absent `route` still follows Best value, while an
 explicit route is evaluated as a pinned candidate when necessary. Pinning the
 entire purchase plan on the first tick would be a separate behavior change.
-The fix does not make route search asynchronous or remove that remaining cost.
+That change preserved synchronous route search; the worker update below moves it off the browser thread.
 
 ## Validation and profiling
 
@@ -121,3 +121,45 @@ market prices, quantities, vendor prices, HQ choices and unavailable reports.
 If search remains a long task, a worker would keep it off the browser thread;
 it needs stale-result cancellation and snapshot consistency, not just a delay
 around the existing synchronous calculation.
+
+## Browser worker (October 23, 2026)
+
+The recipe page now submits one owned `ultros-calc::recipe_work::Request` for
+route comparison, pinned shared routes, finished-item buying, and the alternative
+craft-material comparison. It carries the already quality-filtered offers,
+quantities, owned materials, vendor prices, home/datacenter map, travel weights,
+committed purchases, and unavailable item/world pairs. The same pure engine
+produces cards, badges, selection, and both comparisons. Integer listing IDs stay
+inside JSON strings across the JavaScript boundary, preserving values above
+JavaScript's safe integer range.
+
+Planning remains client-only like the market fetch, preserving the SSR and
+initial hydration skeleton. A module worker imports the page's versioned JS and
+WASM without calling `hydrate` or loading game packs. The page shares its already
+compiled `WebAssembly.Module` with the worker, avoiding a second download and
+compilation. Browsers unable to clone it fetch the versioned module instead.
+One worker serves a mounted
+planner; cleanup terminates it. Its queue keeps one running job and only the
+latest pending edit. Superseded promises cannot publish old results. Worker
+errors, message failures, and a 30-second active-job deadline reject the request
+and allow a fresh worker on retry. Its bounded single-entry frontier cache reuses
+route comparison when only the selected card changes; selection itself updates
+immediately through the shared pure selection helper. A pending indicator keeps the old plan visible
+while the latest edit is calculated.
+
+Run the deterministic scheduler tests with `node --test
+integration/recipe-worker.test.cjs`. After `cargo leptos build --frontend-only`,
+`npm --prefix integration run test:recipe-worker` serves its own loopback fixture
+and compares real worker output with direct WASM execution while checking frame
+progress. It needs a Puppeteer-compatible Node version and Chrome; set
+`PUPPETEER_EXECUTABLE_PATH` when using an installed browser. An optional `BASE_URL`
+uses an already running app instead. `test:recipe-planner` still exercises the
+actual route, market fixtures, controls, shared URLs, and purchased-row stability.
+Its listing fixtures use targeted CDP interception so dedicated-worker module
+imports can load normally. This route regression passed against the local app,
+as did all 206 JavaScript unit tests and the complete native CI gate.
+
+A local dev-WASM probe of the synthetic 32-world, 24-ingredient, 100-unit market
+with 20 listings per world completed worker search in 2.83 seconds while painting
+172 frames (largest frame gap 16.8 ms). Worker and direct outputs matched. This
+isolates computation and is not a production recipe or page-load measurement.

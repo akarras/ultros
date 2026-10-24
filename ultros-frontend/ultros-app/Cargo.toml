@@ -18,7 +18,7 @@ ultros-ui-query = { path = "../ultros-ui-query", default-features = false }
 ultros-ui-grid = { path = "../ultros-ui-grid", default-features = false }
 ultros-frontend-core = { path = "../ultros-frontend-core", default-features = false }
 ultros-crafting = { path = "../ultros-crafting" }
-ultros-calc = { path = "../ultros-calc" }
+ultros-calc = { path = "../ultros-calc", features = ["worker"] }
 ultros-ui = { path = "../ultros-ui", default-features = false }
 ultros-i18n = { path = "../ultros-i18n", default-features = false }
 ultros-changelog = { path = "../../ultros-changelog", default-features = false }

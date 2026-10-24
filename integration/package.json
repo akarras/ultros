@@ -93,7 +93,8 @@
     "test:recipe-root-source": "node ./recipe-root-source.cjs",
     "test:lists-default": "node ./lists-default.cjs",
     "test:lists-readonly": "node ./lists-readonly.cjs",
-    "test:lists-help": "node ./lists-help.cjs"
+    "test:lists-help": "node ./lists-help.cjs",
+    "test:recipe-worker": "node ./recipe-worker.cjs"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",

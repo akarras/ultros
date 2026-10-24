@@ -438,3 +438,10 @@ pub fn hydrate() {
         }
     });
 }
+
+/// Pure planning entry point used by the recipe worker. Importing this module
+/// never hydrates an app or fetches game data; only `hydrate` does that.
+#[wasm_bindgen]
+pub fn recipe_plan(request: &str) -> Result<String, JsValue> {
+    ultros_app::recipe_work::compute_encoded(request).map_err(|e| JsValue::from_str(&e))
+}
