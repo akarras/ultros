@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeSet, HashMap},
     time::Instant,
 };
 
@@ -11,7 +11,7 @@ use crate::{
 use anyhow::Result;
 use chrono::{Duration, NaiveDateTime, Utc};
 
-use futures::{Stream, future::try_join_all};
+use futures::Stream;
 use itertools::Itertools;
 use metrics::histogram;
 use migration::{
@@ -19,8 +19,8 @@ use migration::{
     sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set},
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, Condition, DatabaseTransaction, DbBackend, FromQueryResult,
-    QueryOrder, QuerySelect, Statement,
+    ActiveValue, Condition, DatabaseTransaction, DbBackend, FromQueryResult, QueryOrder,
+    QuerySelect, Statement,
 };
 use tracing::{instrument, warn};
 use ultros_api_types::{SaleHistory, UnknownCharacter};
@@ -109,6 +109,7 @@ impl UltrosDb {
         let instant = Instant::now();
         // Resolve names before claiming a transaction connection. This avoids
         // waiting for a second pooled connection while holding the board lock.
+        let _budget = self.ingest_budget.acquire().await?;
         let buyers = self.lookup_buyer_names(&sales).await?;
         let transaction = self.lock_listing_board(world_id, item_id, None).await?;
         let recorded_sales = self
@@ -273,38 +274,41 @@ impl UltrosDb {
         &self,
         sales: &[SaleView],
     ) -> Result<HashMap<String, unknown_final_fantasy_character::Model>, anyhow::Error> {
-        // get all the unique buyer names
-        let buyers: HashSet<_> = sales.iter().map(|b| &b.buyer_name).collect();
-        Ok(try_join_all(buyers.into_iter().map(|name| async move {
-            let buyer = unknown_final_fantasy_character::Entity::find()
-                .filter(unknown_final_fantasy_character::Column::Name.eq(name))
-                .one(&self.db)
-                .await?;
-            let buyer = match buyer {
-                Some(buyer) => buyer,
-                None => {
-                    let result = unknown_final_fantasy_character::ActiveModel {
-                        name: ActiveValue::Set(name.to_string()),
-                        ..Default::default()
-                    }
-                    .insert(&self.db)
-                    .await;
-                    match result {
-                        Ok(m) => m,
-                        // the most common error here is a duplicate key, in this case we can just look them up now.
-                        Err(e) => unknown_final_fantasy_character::Entity::find()
-                            .filter(unknown_final_fantasy_character::Column::Name.eq(name))
-                            .one(&self.db)
-                            .await?
-                            .ok_or(e)?,
-                    }
-                }
-            };
-            Ok::<_, anyhow::Error>((buyer.name.clone(), buyer))
-        }))
-        .await?
-        .into_iter()
-        .collect())
+        use unknown_final_fantasy_character::{ActiveModel, Column, Entity};
+        let names: std::collections::BTreeSet<_> =
+            sales.iter().map(|s| s.buyer_name.clone()).collect();
+        let names: Vec<_> = names.into_iter().collect();
+        let mut buyers = HashMap::new();
+        for chunk in names.chunks(500) {
+            buyers.extend(
+                Entity::find()
+                    .filter(Column::Name.is_in(chunk.iter().cloned()))
+                    .all(&self.db)
+                    .await?
+                    .into_iter()
+                    .map(|b| (b.name.clone(), b)),
+            );
+            let missing: Vec<_> = chunk
+                .iter()
+                .filter(|name| !buyers.contains_key(*name))
+                .map(|name| ActiveModel {
+                    name: ActiveValue::Set(name.clone()),
+                    ..Default::default()
+                })
+                .collect();
+            if !missing.is_empty() {
+                let inserted = Entity::insert_many(missing)
+                    .on_conflict(
+                        sea_orm::sea_query::OnConflict::column(Column::Name)
+                            .update_column(Column::Name)
+                            .to_owned(),
+                    )
+                    .exec_with_returning(&self.db)
+                    .await?;
+                buyers.extend(inserted.into_iter().map(|b| (b.name.clone(), b)));
+            }
+        }
+        Ok(buyers)
     }
 
     pub async fn get_sale_history_for_item(
@@ -594,6 +598,41 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an explicitly opted-in disposable PostgreSQL database"]
+    async fn batched_buyers_handle_concurrent_first_creation() {
+        let db = crate::common::test_db::connect().await;
+        crate::common::test_db::seed_market(&db).await;
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let sales: Vec<_> = (0..600)
+            .map(|i| incoming_sale(&format!("AuditBatch{nonce}_{i}"), 100 + i, 1_700_000_000))
+            .collect();
+        let world = WorldId(30001);
+        let a = db.update_sales(sales.clone(), ItemId(9012), world);
+        let b = db.update_sales(sales.clone(), ItemId(9013), world);
+        let (a, b) = tokio::join!(a, b);
+        let a = a.unwrap();
+        let b = b.unwrap();
+        assert_eq!(a.len(), 600);
+        assert_eq!(b.len(), 600);
+        let ids: HashMap<_, _> = a
+            .iter()
+            .map(|(sale, buyer)| (buyer.name.clone(), sale.buying_character_id))
+            .collect();
+        for (sale, buyer) in &b {
+            assert_eq!(ids[&buyer.name], sale.buying_character_id);
+        }
+        assert!(
+            db.update_sales(sales, ItemId(9012), world)
+                .await
+                .unwrap()
+                .is_empty()
         );
     }
 
