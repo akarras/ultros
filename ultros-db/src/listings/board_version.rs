@@ -88,7 +88,7 @@ impl UltrosDb {
         Ok(self.capture_listing_boards(&[(world, item)]).await?[&(world, item)])
     }
 
-    pub(super) async fn lock_listing_board(
+    pub(crate) async fn lock_listing_board(
         &self,
         world: WorldId,
         item: ItemId,
