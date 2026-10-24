@@ -95,13 +95,27 @@ impl UltrosDb {
         item: ItemId,
         expected: Option<BoardVersion>,
     ) -> Result<DatabaseTransaction> {
+        let transaction = self.db.begin().await?;
+        self.lock_listing_board_on(&transaction, world, item, expected)
+            .await?;
+        Ok(transaction)
+    }
+
+    /// Apply the same writer fence to an existing transaction. Maintenance sets
+    /// its PostgreSQL lock/statement deadlines before taking this lock.
+    pub(crate) async fn lock_listing_board_on(
+        &self,
+        transaction: &DatabaseTransaction,
+        world: WorldId,
+        item: ItemId,
+        expected: Option<BoardVersion>,
+    ) -> Result<()> {
         if let Some(expected) = expected {
             anyhow::ensure!(
                 expected.world == world && expected.item == item,
                 "snapshot token belongs to another board"
             );
         }
-        let transaction = self.db.begin().await?;
         transaction.execute_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "INSERT INTO listing_board_revision(world_id,item_id,revision) VALUES($1,$2,0) ON CONFLICT DO NOTHING",
@@ -111,11 +125,11 @@ impl UltrosDb {
             DbBackend::Postgres,
             "SELECT world_id,item_id,revision FROM listing_board_revision WHERE world_id=$1 AND item_id=$2 FOR UPDATE",
             [world.0.into(), item.0.into()],
-        )).one(&transaction).await?.expect("the board row was inserted in this transaction");
+        )).one(transaction).await?.expect("the board row was inserted in this transaction");
         if expected.is_some_and(|expected| expected.revision != current.revision) {
             return Err(StaleBoardSnapshot.into());
         }
-        Ok(transaction)
+        Ok(())
     }
 
     pub(super) async fn commit_listing_board(
