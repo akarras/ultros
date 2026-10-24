@@ -583,8 +583,8 @@ impl WebError {
     }
 }
 
-impl IntoResponse for WebError {
-    fn into_response(self) -> Response {
+impl WebError {
+    fn response(&self) -> Response {
         let status = self.as_status_code();
         // Expected 503s are transient states, not server bugs. Keep them out
         // of `tracing::error!` so the `sentry_tracing` layer doesn't capture
@@ -606,7 +606,7 @@ impl IntoResponse for WebError {
         // grouping — which is why the per-occurrence detail (ClickHouse's live
         // memory figures, the failing item id) can safely ride along here while
         // the title stays stable.
-        let title = report_title(&self);
+        let title = report_title(self);
         if status.is_server_error() && !is_expected_transient {
             tracing::error!(error = %self, %status, "{title}");
         } else {
@@ -616,9 +616,50 @@ impl IntoResponse for WebError {
     }
 }
 
+impl IntoResponse for WebError {
+    fn into_response(self) -> Response {
+        self.response()
+    }
+}
+
+/// Coalesced requests share the original typed failure and response semantics.
+#[derive(Debug)]
+pub(crate) struct SharedWebError(pub Arc<WebError>);
+
+impl From<WebError> for SharedWebError {
+    fn from(error: WebError) -> Self {
+        Self(Arc::new(error))
+    }
+}
+
+impl IntoResponse for SharedWebError {
+    fn into_response(self) -> Response {
+        self.0.response()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_web_errors_keep_the_original_response_status() {
+        for (error, expected) in [
+            (WebError::BadRequest, StatusCode::BAD_REQUEST),
+            (WebError::NotFound, StatusCode::NOT_FOUND),
+            (
+                WebError::TemporarilyUnavailable,
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+        ] {
+            let shared = Arc::new(error);
+            assert_eq!(
+                SharedWebError(shared.clone()).into_response().status(),
+                expected
+            );
+            assert_eq!(SharedWebError(shared).into_response().status(), expected);
+        }
+    }
 
     #[test]
     fn bad_request_preserves_client_error_message() {
