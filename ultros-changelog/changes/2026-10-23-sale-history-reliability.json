@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "More accurate sale history",
+  "blurb": "Fixed repeated sales appearing in history and distinct purchases at different prices being missed."
+}
