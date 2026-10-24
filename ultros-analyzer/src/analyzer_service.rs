@@ -31,7 +31,7 @@ use tokio_util::sync::CancellationToken;
 use ultros_api_types::trends::{TrendItem, TrendsData};
 use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
-pub const SALE_HISTORY_SIZE: usize = 6;
+pub const SALE_HISTORY_SIZE: usize = ultros_db::recent_sales::RECENT_SALE_LIMIT;
 
 mod snapshot;
 
@@ -490,7 +490,8 @@ fn flip_profit_and_roi(est_sale_price: i32, cost: i32) -> Option<(i32, f32)> {
 /// Three hours keeps a fast restart cheap (the common case: a deploy, a crash
 /// loop, an OOM restart — all far under an hour) while capping how wrong the
 /// served data can be. The fallback costs a full `cheapest_listings` +
-/// `last_n_sales` stream, which is slow but correct.
+/// `last_n_sales` stream. Once its recent-sales projection is seeded, the latter
+/// reads only that compact table; until then it retains the legacy history scan.
 const MAX_SNAPSHOT_AGE: Duration = Duration::hours(3);
 
 /// Whether `file_name` is a finished snapshot, as opposed to the
