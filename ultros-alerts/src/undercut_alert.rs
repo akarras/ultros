@@ -139,6 +139,58 @@ struct ListingValue {
     has_alerted: bool,
 }
 
+/// Apply our own additions first, then compare competitors independently for
+/// every (item, world, quality) present in the event. A cheap NQ listing must
+/// never suppress an HQ undercut in the same full-board refresh.
+fn added_undercut_candidates(
+    retainer_ids: &HashSet<i32>,
+    our_listings: &mut HashMap<ListingKey, ListingValue>,
+    listings: &[(ultros_api_types::ActiveListing, ultros_api_types::Retainer)],
+    margin: i32,
+) -> Vec<(ListingKey, i32)> {
+    let mut competitors = BTreeMap::<ListingKey, i32>::new();
+    for (listing, _) in listings {
+        let key = ListingKey {
+            item_id: listing.item_id,
+            world_id: listing.world_id,
+            hq: listing.hq,
+        };
+        if retainer_ids.contains(&listing.retainer_id) {
+            let current = our_listings.entry(key).or_insert(ListingValue {
+                lowest_price: listing.price_per_unit,
+                has_alerted: false,
+            });
+            if listing.price_per_unit < current.lowest_price {
+                *current = ListingValue {
+                    lowest_price: listing.price_per_unit,
+                    has_alerted: false,
+                };
+            }
+        } else {
+            competitors
+                .entry(key)
+                .and_modify(|price| *price = (*price).min(listing.price_per_unit))
+                .or_insert(listing.price_per_unit);
+        }
+    }
+    competitors
+        .into_iter()
+        .filter(|(key, price)| {
+            our_listings.get(key).is_some_and(|ours| {
+                debug!(
+                    ?key,
+                    ?ours,
+                    competitor = price,
+                    margin,
+                    "comparing undercut prices"
+                );
+                !ours.has_alerted
+                    && is_undercut_by_more_than_margin(ours.lowest_price, *price, margin)
+            })
+        })
+        .collect()
+}
+
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Serialize)]
 pub struct UndercutRetainer {
     pub id: i32,
@@ -213,7 +265,7 @@ impl UndercutTracker {
     pub async fn handle_listing_event(
         &mut self,
         listings: Result<EventType<Arc<ListingEventData>>, anyhow::Error>,
-    ) -> Result<Option<DetectedUndercut>, anyhow::Error> {
+    ) -> Result<Vec<DetectedUndercut>, anyhow::Error> {
         let listing = listings?;
         match listing {
             EventType::Remove(removed) => {
@@ -244,98 +296,64 @@ impl UndercutTracker {
                 }
             }
             EventType::Add(added) => {
-                // update our own data from the added list
-                if let Some((retainer_listing, _)) = added
-                    .listings
-                    .iter()
-                    .filter(|(added, _)| self.retainer_ids.contains(&added.retainer_id))
-                    .min_by_key(|(i, _)| i.price_per_unit)
-                {
-                    let entry = self
-                        .user_lowest_listings
-                        .entry(ListingKey {
-                            item_id: retainer_listing.item_id,
-                            world_id: retainer_listing.world_id,
-                            hq: retainer_listing.hq,
+                let candidates = added_undercut_candidates(
+                    &self.retainer_ids,
+                    &mut self.user_lowest_listings,
+                    &added.listings,
+                    self.margin,
+                );
+                if candidates.is_empty() {
+                    return Ok(Vec::new());
+                }
+                // One snapshot serves every quality in the event. A failed
+                // lookup must not mark an alert sent and suppress its retry.
+                let owned = self
+                    .db
+                    .get_retainer_listings_for_discord_user(self.discord_user_id)
+                    .await?;
+                let mut detected = Vec::new();
+                for (key, competitor_price) in candidates {
+                    let retainers: Vec<_> = owned
+                        .iter()
+                        .filter_map(|(_, retainer, listings)| {
+                            listings
+                                .iter()
+                                .find(|listing| {
+                                    listing.item_id == key.item_id
+                                        && listing.hq == key.hq
+                                        && listing.world_id == key.world_id
+                                        && is_undercut_by_more_than_margin(
+                                            listing.price_per_unit,
+                                            competitor_price,
+                                            self.margin,
+                                        )
+                                })
+                                .map(|listing| UndercutRetainer {
+                                    id: retainer.id,
+                                    name: retainer.name.clone(),
+                                    undercut_amount: listing.price_per_unit,
+                                })
                         })
-                        .or_insert(ListingValue {
-                            lowest_price: retainer_listing.price_per_unit,
-                            has_alerted: false,
-                        });
-                    if retainer_listing.price_per_unit < entry.lowest_price {
-                        *entry = ListingValue {
-                            lowest_price: retainer_listing.price_per_unit,
-                            has_alerted: false,
-                        };
+                        .collect();
+                    if retainers.is_empty() {
+                        continue;
                     }
-                }
-                // items in an added vec should all be the same type, so lets just find the cheapest item
-                if let Some((added, _)) =
-                    added.listings.iter().min_by_key(|(a, _)| a.price_per_unit)
-                    && let Some(our_price) = self.user_lowest_listings.get_mut(&ListingKey {
-                        item_id: added.item_id,
-                        world_id: added.world_id,
-                        hq: added.hq,
-                    })
-                {
-                    debug!(
-                        "comparing our_price {our_price:?} margin={} {added:?}",
-                        self.margin
-                    );
-                    if is_undercut_by_more_than_margin(
-                        our_price.lowest_price,
-                        added.price_per_unit,
-                        self.margin,
-                    ) && !our_price.has_alerted
-                    {
-                        our_price.has_alerted = true;
-                        // figure out what retainers have been undercut
-                        let retainers = self
-                            .db
-                            .get_retainer_listings_for_discord_user(self.discord_user_id)
-                            .await
-                            .map(|i| {
-                                i.into_iter()
-                                    .flat_map(|(_, r, listings)| {
-                                        listings
-                                            .iter()
-                                            .find(|i| {
-                                                i.item_id == added.item_id
-                                                    && i.hq == added.hq
-                                                    && i.world_id == added.world_id
-                                                    && is_undercut_by_more_than_margin(
-                                                        i.price_per_unit,
-                                                        added.price_per_unit,
-                                                        self.margin,
-                                                    )
-                                            })
-                                            .map(|l| (r, l.price_per_unit))
-                                    })
-                                    .map(|(retainer, price)| UndercutRetainer {
-                                        id: retainer.id,
-                                        name: retainer.name,
-                                        undercut_amount: price,
-                                    })
-                                    .collect::<Vec<_>>()
-                            })
-                            .unwrap_or_default();
-                        return Ok(Some(DetectedUndercut {
-                            listing: ListingKey {
-                                item_id: added.item_id,
-                                world_id: added.world_id,
-                                hq: added.hq,
-                            },
-                            undercut: Undercut {
-                                item_id: added.item_id,
-                                undercut_retainers: retainers,
-                            },
-                        }));
+                    if let Some(ours) = self.user_lowest_listings.get_mut(&key) {
+                        ours.has_alerted = true;
                     }
+                    detected.push(DetectedUndercut {
+                        listing: key,
+                        undercut: Undercut {
+                            item_id: key.item_id,
+                            undercut_retainers: retainers,
+                        },
+                    });
                 }
+                return Ok(detected);
             }
             EventType::Update(_) => {}
         }
-        Ok(None)
+        Ok(Vec::new())
     }
 }
 
@@ -665,8 +683,10 @@ impl RetainerAlertListener {
                             .await
                         {
                             Err(e) => error!("{e:?}"),
-                            Ok(None) => {}
-                            Ok(Some(detected)) => rollup.push(detected, Instant::now()),
+                            Ok(detections) => {
+                                let now = Instant::now();
+                                for detected in detections { rollup.push(detected, now); }
+                            }
                         }
                     }
                     _ = sleep_until_or_never(send_at(
@@ -692,6 +712,134 @@ impl RetainerAlertListener {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn event_listing(
+        item_id: i32,
+        world_id: i32,
+        hq: bool,
+        price: i32,
+        retainer_id: i32,
+    ) -> (ultros_api_types::ActiveListing, ultros_api_types::Retainer) {
+        (
+            ultros_api_types::ActiveListing {
+                id: 1,
+                item_id,
+                world_id,
+                hq,
+                price_per_unit: price,
+                retainer_id,
+                quantity: 1,
+                timestamp: Utc::now().naive_utc(),
+            },
+            ultros_api_types::Retainer {
+                id: retainer_id,
+                world_id,
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn cheaper_nq_does_not_hide_an_hq_undercut_in_the_same_event() {
+        let hq = ListingKey {
+            item_id: 1,
+            world_id: 1,
+            hq: true,
+        };
+        let mut ours = HashMap::from([(
+            hq,
+            ListingValue {
+                lowest_price: 1000,
+                has_alerted: false,
+            },
+        )]);
+        let event = [
+            event_listing(1, 1, false, 100, 2),
+            event_listing(1, 1, true, 500, 2),
+        ];
+        assert_eq!(
+            added_undercut_candidates(&HashSet::from([1]), &mut ours, &event, 0),
+            vec![(hq, 500)]
+        );
+    }
+
+    #[test]
+    fn both_qualities_update_owned_minima_and_detect_their_own_competitors() {
+        let nq = ListingKey {
+            item_id: 1,
+            world_id: 1,
+            hq: false,
+        };
+        let hq = ListingKey { hq: true, ..nq };
+        let mut ours = HashMap::from([
+            (
+                nq,
+                ListingValue {
+                    lowest_price: 200,
+                    has_alerted: true,
+                },
+            ),
+            (
+                hq,
+                ListingValue {
+                    lowest_price: 1000,
+                    has_alerted: true,
+                },
+            ),
+        ]);
+        let event = [
+            event_listing(1, 1, false, 150, 1),
+            event_listing(1, 1, true, 900, 1),
+            event_listing(1, 1, false, 100, 2),
+            event_listing(1, 1, true, 500, 2),
+        ];
+        assert_eq!(
+            added_undercut_candidates(&HashSet::from([1]), &mut ours, &event, 10),
+            vec![(nq, 100), (hq, 500)]
+        );
+        assert_eq!(
+            ours[&nq],
+            ListingValue {
+                lowest_price: 150,
+                has_alerted: false
+            }
+        );
+        assert_eq!(
+            ours[&hq],
+            ListingValue {
+                lowest_price: 900,
+                has_alerted: false
+            }
+        );
+    }
+
+    #[test]
+    fn unrelated_items_worlds_and_our_own_additions_do_not_mask_competitors() {
+        let hq = ListingKey {
+            item_id: 1,
+            world_id: 1,
+            hq: true,
+        };
+        let mut ours = HashMap::from([(
+            hq,
+            ListingValue {
+                lowest_price: 1000,
+                has_alerted: false,
+            },
+        )]);
+        let event = [
+            event_listing(2, 1, true, 1, 2),
+            event_listing(1, 2, true, 1, 2),
+            event_listing(1, 1, true, 500, 2),
+            event_listing(1, 1, true, 600, 1),
+        ];
+        assert_eq!(
+            added_undercut_candidates(&HashSet::from([1]), &mut ours, &event, 0),
+            vec![(hq, 500)]
+        );
+        ours.get_mut(&hq).unwrap().has_alerted = true;
+        assert!(added_undercut_candidates(&HashSet::from([1]), &mut ours, &event, 0).is_empty());
+    }
 
     #[test]
     fn ownership_refresh_keeps_existing_alerts_but_rearms_changed_prices() {
