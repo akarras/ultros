@@ -50,6 +50,7 @@ impl UltrosDb {
         if boards.is_empty() {
             return Ok(versions);
         }
+        let _budget = self.ingest_budget.acquire().await?;
         let mut bindings = Vec::with_capacity(boards.len() * 2);
         let tuples = boards
             .iter()
