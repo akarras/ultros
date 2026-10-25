@@ -32,7 +32,7 @@ pub fn AccessibilityFixture() -> impl IntoView {
                     as_label=|value: &String| value.clone() children=|_, label| view! { <span>{label}</span> }/>
                 <Select label="Sell world" items=choices choice=second.into() set_choice=second.write_only().into()
                     as_label=|value: &String| value.clone() children=|_, label| view! { <span>{label}</span> }/>
-                <button class="btn-secondary" on:click=move |_| open.set(false)>"Done"</button>
+                <button type="button" class="btn-secondary" on:click=move |_| open.set(false)>"Done"</button>
             </Modal>
         </Show>
     }

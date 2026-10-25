@@ -207,7 +207,7 @@ pub(crate) fn ListCard(
                                     />
                                 </div>
                                 <div class="flex gap-2 justify-end mt-2">
-                                    <button class="btn-secondary btn-sm" on:click=cancel_edit.clone()>
+                                    <button type="button" class="btn-secondary btn-sm" on:click=cancel_edit.clone()>
                                         <Icon icon=i::AiCloseOutlined /> {t!(i18n, cancel)}
                                     </button>
                                     <button
@@ -245,7 +245,7 @@ pub(crate) fn ListCard(
                             <div class="flex flex-col gap-3 w-full">
                                 <p class="text-sm text-gray-300">{t!(i18n, leave_list_confirm)}</p>
                                 <div class="flex gap-2 justify-end">
-                                    <button class="btn-secondary btn-sm" on:click=cancel_edit.clone()>
+                                    <button type="button" class="btn-secondary btn-sm" on:click=cancel_edit.clone()>
                                         <Icon icon=i::AiCloseOutlined /> {t!(i18n, cancel)}
                                     </button>
                                     <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, leave_list_tooltip).to_string())>
@@ -337,7 +337,7 @@ pub(crate) fn ListCard(
                             )}
                         </p>
                         <div class="flex justify-end gap-2">
-                            <button class="btn-secondary" on:click=move |_| set_confirm_delete(false)>
+                            <button type="button" class="btn-secondary" on:click=move |_| set_confirm_delete(false)>
                                 <Icon icon=i::AiCloseOutlined /> {t!(i18n, cancel)}
                             </button>
                             <button

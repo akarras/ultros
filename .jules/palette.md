@@ -42,3 +42,6 @@
 ## 2024-05-20 - Add ARIA label to Auto-mark Purchases input
 **Learning:** Found an input field relying solely on `placeholder` without an `aria-label` or explicit `<label>`, which can be problematic for some screen readers. Reusing the translation key for the placeholder makes an excellent label.
 **Action:** Added `aria-label=t_string!(i18n, list_auto_mark_character_name_placeholder)` to improve accessibility for screen readers.
+## 2026-09-17 - Adding type="button" to UI buttons in recipe view
+**Learning:** Found that multiple generic interactive buttons in the `recipe_view` lacked an explicit `type="button"`. Because HTML `<button>` elements act as `type="submit"` by default, omitting `type="button"` can cause unintentional form submissions if these buttons ever get rendered within a `<form>`.
+**Action:** Always add `type="button"` to buttons that trigger client-side JavaScript actions (via `on:click`) to prevent unintended side effects.

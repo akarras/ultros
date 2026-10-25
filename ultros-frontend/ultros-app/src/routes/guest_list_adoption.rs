@@ -138,7 +138,7 @@ mod browser {
                         Some(Ok(user)) => {
                             if let Some(receipt) = legacy.get() {
                                 return view! {
-                                    <button class="btn-secondary inline-flex items-center gap-2" data-testid="device-list-open-online" disabled=move || pending.get() on:click=move |_| {
+                                    <button type="button" class="btn-secondary inline-flex items-center gap-2" data-testid="device-list-open-online" disabled=move || pending.get() on:click=move |_| {
                                         let h = handle.get_value(); pending.set(true);
                                         leptos::task::spawn_local(async move {
                                             match h.continue_legacy(user.id, receipt.list_id).await {
@@ -154,7 +154,7 @@ mod browser {
                             }
                             view! {
                                 <Show when=move || scope.get().is_none()><WorldPicker current_world=scope.into() set_current_world=set_scope.into() /></Show>
-                                <button class="btn-secondary inline-flex items-center gap-2" data-testid="device-list-adopt" disabled=move || pending.get() || scope.get().is_none() on:click=move |_| connect.run(())>
+                                <button type="button" class="btn-secondary inline-flex items-center gap-2" data-testid="device-list-adopt" disabled=move || pending.get() || scope.get().is_none() on:click=move |_| connect.run(())>
                                     <Icon icon=i::BsCloudArrowUp aria_hidden=true />
                                     {move || if pending.get() { t_string!(i18n, online_connecting).to_string() } else { t_string!(i18n, online_make).to_string() }}
                                 </button>
@@ -201,7 +201,7 @@ mod browser {
                     <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, online_upload_separate_hint)}</p>
                     <div class="flex flex-wrap items-center gap-2">
                         <Show when=move || scope.get().is_none()><WorldPicker current_world=scope.into() set_current_world=set_scope.into() /></Show>
-                        <button class="btn-secondary inline-flex items-center gap-2" data-testid="device-list-upload-separate" disabled=move || pending.get() || scope.get().is_none() on:click=move |_| {
+                        <button type="button" class="btn-secondary inline-flex items-center gap-2" data-testid="device-list-upload-separate" disabled=move || pending.get() || scope.get().is_none() on:click=move |_| {
                             connect.run(());
                             if let Some(on_connect) = on_connect {
                                 on_connect.run(());

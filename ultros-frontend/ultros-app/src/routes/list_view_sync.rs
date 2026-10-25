@@ -240,7 +240,7 @@ pub fn InlineListAdd(
                     <Show when=move || results.get().is_empty()><p class="p-3 text-sm">{t!(i18n, lists_workspace_no_items)}</p></Show>
                     <For each=move || results.get() key=|item| item.0 children=move |(id, name, can_hq, _)| view! {
                         <div class="flex items-center gap-3 py-2"><ItemIcon item_id=id icon_size=IconSize::Small /><span class="flex-1 min-w-0">{name.clone()}</span>
-                            <button class="btn-primary" aria-label=t_string!(i18n, lists_workspace_add_named, name = name.clone()) disabled={move || pending.get() || invalid_quantity.get()} on:click=move |_| add.run((id, can_hq))>{t!(i18n, lists_workspace_add)}</button>
+                            <button type="button" class="btn-primary" aria-label=t_string!(i18n, lists_workspace_add_named, name = name.clone()) disabled={move || pending.get() || invalid_quantity.get()} on:click=move |_| add.run((id, can_hq))>{t!(i18n, lists_workspace_add)}</button>
                         </div>
                     } />
                 </div>
@@ -369,7 +369,7 @@ pub fn InlineRecipeAdd(list_id: Signal<i32>, on_add: Callback<Vec<ListItem>>) ->
                     }}</p>
                 </Show>
                 <p class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, lists_workspace_recipe_add_hint)}</p>
-                <button class="btn-primary" disabled=move || preview.get().is_none_or(|items| items.is_empty()) on:click=move |_| { if let Some(items) = preview.get_untracked() { on_add.run(items); } }>{t!(i18n, lists_workspace_add_preview)}</button>
+                <button type="button" class="btn-primary" disabled=move || preview.get().is_none_or(|items| items.is_empty()) on:click=move |_| { if let Some(items) = preview.get_untracked() { on_add.run(items); } }>{t!(i18n, lists_workspace_add_preview)}</button>
             </Show>
         </div>
     }
