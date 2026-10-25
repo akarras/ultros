@@ -98,3 +98,6 @@ try {
         (Split-Path $resolved -Leaf) -notmatch '^ultros-image-package-[0-9a-f]{32}$') { throw 'Refusing to clean an unexpected fixture path.' }
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }
+# Actions' pwsh wrapper exits with LASTEXITCODE. The expected git-diff failure
+# above must not turn a successful fixture into a failed workflow step.
+$global:LASTEXITCODE = 0
