@@ -1,3 +1,4 @@
+use crate::global_state::labs::use_dalamud_labs;
 use crate::i18n::*;
 use leptos::prelude::*;
 use leptos_meta::Title;
@@ -17,9 +18,22 @@ pub fn is_plugin_path(path: &str) -> bool {
     path == "/plugin" || path.starts_with("/plugin/")
 }
 
+fn setup_available(config: &PluginWebsiteInfo) -> bool {
+    config.enabled
+        && (config.localhost
+            || [
+                &config.latest_version,
+                &config.repository_url,
+                &config.download_url,
+            ]
+            .iter()
+            .all(|value| value.as_ref().is_some_and(|value| !value.is_empty())))
+}
+
 #[component]
 pub fn PluginLayout() -> impl IntoView {
     let i18n = use_i18n();
+    let (dalamud_labs, _) = use_dalamud_labs();
     let info = Resource::new_blocking(|| (), |_| async { browser::info().await.ok() });
     let account = Resource::new_blocking(
         || (),
@@ -41,19 +55,32 @@ pub fn PluginLayout() -> impl IntoView {
     view! {
         <div class="main-content plugin-page p-2 sm:p-6">
             <div class="mx-auto max-w-4xl space-y-6">
-                <header class="space-y-3">
-                    <p class="text-sm font-semibold text-[color:var(--color-text-muted)]">{t!(i18n, plugin_brand)}</p>
-                    <h1 class="text-3xl sm:text-4xl font-bold">{t!(i18n, plugin_heading)}</h1>
-                    <p class="text-[color:var(--color-text-muted)] max-w-prose">{t!(i18n, plugin_intro)}</p>
-                </header>
-                <nav class="plugin-tabs" aria-label=move || t_string!(i18n, plugin_nav)>
-                    <a href="/plugin" aria-current=move || matches!(location.pathname.get().as_str(), "/plugin" | "/plugin/").then_some("page")>{t!(i18n, plugin_nav_guide)}</a>
-                    <a href="/plugin/verify" aria-current=move || (location.pathname.get() == "/plugin/verify").then_some("page")>{t!(i18n, plugin_nav_connect)}</a>
-                    <a href="/plugin/devices" aria-current=move || (location.pathname.get() == "/plugin/devices").then_some("page")>{t!(i18n, plugin_nav_clients)}</a>
-                </nav>
+                <Suspense fallback=|| ()>
+                    {move || {
+                        if dalamud_labs.get() && info.get().flatten().as_ref().is_some_and(setup_available) {
+                            view! {
+                                <header class="space-y-3">
+                                    <p class="text-sm font-semibold text-[color:var(--color-text-muted)]">{t!(i18n, plugin_brand)}</p>
+                                    <h1 class="text-3xl sm:text-4xl font-bold">{t!(i18n, plugin_heading)}</h1>
+                                    <p class="text-[color:var(--color-text-muted)] max-w-prose">{t!(i18n, plugin_intro)}</p>
+                                </header>
+                                <nav class="plugin-tabs" aria-label=move || t_string!(i18n, plugin_nav)>
+                                    <a href="/plugin" aria-current=move || matches!(location.pathname.get().as_str(), "/plugin" | "/plugin/").then_some("page")>{t!(i18n, plugin_nav_guide)}</a>
+                                    <a href="/plugin/verify" aria-current=move || (location.pathname.get() == "/plugin/verify").then_some("page")>{t!(i18n, plugin_nav_connect)}</a>
+                                    <a href="/plugin/devices" aria-current=move || (location.pathname.get() == "/plugin/devices").then_some("page")>{t!(i18n, plugin_nav_clients)}</a>
+                                </nav>
+                            }.into_any()
+                        } else {
+                            view! { <h1 class="text-3xl sm:text-4xl font-bold">{t!(i18n, plugin_nav)}</h1> }.into_any()
+                        }
+                    }}
+                </Suspense>
+                <Show when=move || dalamud_labs.get()>
+                    <p class="plugin-notice" role="note">{t!(i18n, plugin_labs_warning)}</p>
+                </Show>
                 <Suspense fallback=move || view! { <p role="status">{t!(i18n, plugin_loading)}</p> }>
                     {move || match info.get().flatten() {
-                        Some(config) if config.localhost => Some(view! {
+                        Some(config) if config.localhost && dalamud_labs.get() => Some(view! {
                             <div class="plugin-notice" role="note">
                                 <strong>{t!(i18n, plugin_guide_development)}</strong>
                                 <p>{t!(i18n, plugin_local_body, origin=config.origin.clone())}</p>
@@ -71,6 +98,17 @@ pub fn PluginLayout() -> impl IntoView {
 }
 
 #[component]
+fn PluginLabsNotice() -> impl IntoView {
+    let i18n = use_i18n();
+    view! {
+        <div class="plugin-notice space-y-3" data-testid="plugin-labs-required">
+            <p>{t!(i18n, plugin_labs_required)}</p>
+            <a class="btn-secondary inline-flex" href="/settings#labs">{t!(i18n, plugin_labs_settings)}</a>
+        </div>
+    }
+}
+
+#[component]
 fn SignInNotice(#[prop(default = "/plugin/verify")] next: &'static str) -> impl IntoView {
     let i18n = use_i18n();
     view! {
@@ -83,9 +121,19 @@ fn SignInNotice(#[prop(default = "/plugin/verify")] next: &'static str) -> impl 
 
 #[component]
 pub fn PluginVerify() -> impl IntoView {
-    let PluginContext { info, account } = expect_context::<PluginContext>();
+    let (dalamud_labs, _) = use_dalamud_labs();
     view! {
         <Title text="Connect your game • Ultros" />
+        <Show when=move || dalamud_labs.get() fallback=|| view! { <PluginLabsNotice /> }>
+            <PluginVerifyFlow />
+        </Show>
+    }
+}
+
+#[component]
+fn PluginVerifyFlow() -> impl IntoView {
+    let PluginContext { info, account } = expect_context::<PluginContext>();
+    view! {
         <section class="panel p-5 sm:p-7 space-y-5">
             <h2 class="text-2xl font-bold">"Connect your game to Ultros"</h2>
             <Suspense fallback=|| view! { <p role="status">"Checking your account…"</p> }>

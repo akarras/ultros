@@ -17,6 +17,7 @@ internal sealed unsafe class RetainerCapture : IDisposable
     private readonly Configuration config;
     private readonly CaptureGate gate = new();
     private readonly CaptureFreshness freshness = new();
+    private CaptureUpload? upload;
     private DateTimeOffset nextRead;
     internal ObservedCharacter? Character { get; private set; }
     private string status = "Uploader is off.";
@@ -84,7 +85,7 @@ internal sealed unsafe class RetainerCapture : IDisposable
         if(active==null||active->RetainerId==0||active->RetainerId!=manager->LastSelectedRetainerId||manager->RetainerObjectId==0)return;
         freshness.Signal($"{Plugin.Player.ContentId}/{active->RetainerId}/{manager->RetainerObjectId}",DateTimeOffset.UtcNow);
     }
-    private void Reset(string status,bool awaitingWindow=false){gate.Reset();if(!awaitingWindow)freshness.Reset();worker.CancelQueuedCaptures();Status=status;}
+    private void Reset(string status,bool awaitingWindow=false){gate.Reset();upload=null;if(!awaitingWindow)freshness.Reset();worker.CancelQueuedCaptures();Status=status;}
     private void Update(IFramework framework)
     {
         if(DateTimeOffset.UtcNow<nextRead)return;
@@ -139,11 +140,23 @@ internal sealed unsafe class RetainerCapture : IDisposable
             if(Plugin.Player.ContentId!=player||manager->LastSelectedRetainerId!=selected||!container->IsLoaded){Reset("Retainer changed while capturing. Revisit its selling list.");return;}
             var visit=$"{player}/{selected}/{manager->RetainerObjectId}";
             var now=DateTimeOffset.UtcNow;
-            var complete=gate.Observe($"{visit}/{matches[0].CaptureEpoch}",freshness.Take(visit,now),true,active->MarketItemCount,rows.ToArray(),now);
+            var context=$"{visit}/{view.Session?.Id}/{privateRetainer.Id}/{matches[0].CaptureEpoch}";
+            if(upload is not null&&upload.Context!=context){upload=null;worker.CancelQueuedCaptures();}
+            if(upload is not null) {
+                var finished=upload.Advance(now,capture=>worker.Upload(privateRetainer.Id,capture));
+                Status=upload.Status;
+                if(finished) {
+                    if(upload.Result?.Saved==true)gate.Acknowledged(upload.Capture.Listings);
+                    else{gate.Reset();freshness.Reset();}
+                    upload=null;
+                }
+                return;
+            }
+            var complete=gate.Observe(context,freshness.Take(visit,now),true,active->MarketItemCount,rows.ToArray(),now);
             if(complete is null){Status=gate.Status;return;}
             var capture=new ListingCapture(Guid.NewGuid().ToString("N"),privateRetainer.Revision,matches[0].CaptureEpoch,DateTimeOffset.UtcNow,true,complete);
-            if(worker.Upload(privateRetainer.Id,capture)){gate.Submitted(complete);Status="Queued a complete private listing snapshot.";}
-            else Status="Uploader queue is full. Waiting before retry.";
+            upload=new(context,capture);
+            upload.Advance(now,candidate=>worker.Upload(privateRetainer.Id,candidate));Status=upload.Status;
         }
         catch {Character=null;Reset("Capture stopped because the game data was inconsistent. Revisit the retainer.");}
     }

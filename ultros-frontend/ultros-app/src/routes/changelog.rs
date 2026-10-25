@@ -14,6 +14,7 @@ use crate::components::icon::Icon;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::changelog::use_mark_changelog_seen;
+use crate::global_state::labs::use_dalamud_labs;
 use crate::i18n::*;
 use icondata as i;
 use leptos::either::Either;
@@ -23,9 +24,21 @@ use ultros_changelog::{ChangelogCategory, ChangelogEntry};
 
 /// Group the flat, server-sorted list into days, preserving the importance
 /// ordering the server already applied within each day and category.
-fn changelog_by_day(entries: &[ChangelogEntry]) -> Vec<(&str, Vec<&ChangelogEntry>)> {
+fn changelog_by_day(
+    entries: &[ChangelogEntry],
+    dalamud_labs: bool,
+) -> Vec<(&str, Vec<&ChangelogEntry>)> {
     let mut days: Vec<(&str, Vec<&ChangelogEntry>)> = Vec::new();
     for entry in entries {
+        if entry.labs
+            && entry
+                .link
+                .as_deref()
+                .is_some_and(super::plugin::is_plugin_path)
+            && !dalamud_labs
+        {
+            continue;
+        }
         match days.last_mut() {
             Some((date, entries)) if *date == entry.date => entries.push(entry),
             _ => days.push((&entry.date, vec![entry])),
@@ -37,6 +50,7 @@ fn changelog_by_day(entries: &[ChangelogEntry]) -> Vec<(&str, Vec<&ChangelogEntr
 #[component]
 pub fn Changelog() -> impl IntoView {
     let i18n = use_i18n();
+    let (dalamud_labs, _) = use_dalamud_labs();
     use_mark_changelog_seen();
     // Blocking: this *is* the page, so there is nothing useful to stream
     // around it, and the server answers from a static table in memory. See
@@ -65,7 +79,7 @@ pub fn Changelog() -> impl IntoView {
                                     Either::Left(
                                         view! {
                                             <ol class="flex flex-col gap-6">
-                                                {changelog_by_day(&entries).into_iter().map(|(date, entries)| view! {
+                                                {changelog_by_day(&entries, dalamud_labs.get()).into_iter().map(|(date, entries)| view! {
                                                     <li class="flex flex-col gap-3">
                                                         <h2 class="text-sm font-bold uppercase tracking-wide text-brand-300 tabular-nums">
                                                             <time datetime=date.to_string()>{date.to_string()}</time>
@@ -169,7 +183,7 @@ mod tests {
             entry("2026-09-04", Features, Low, "Same day, same section"),
             entry("2026-09-01", Improvements, High, "Older day"),
         ];
-        let days = changelog_by_day(&feed);
+        let days = changelog_by_day(&feed, false);
         assert_eq!(days.len(), 2);
         assert!(days.windows(2).all(|pair| pair[0].0 > pair[1].0));
         let flattened: Vec<_> = days
@@ -196,6 +210,25 @@ mod tests {
     /// An empty history renders an empty list rather than a phantom day.
     #[test]
     fn no_entries_means_no_days() {
-        assert!(changelog_by_day(&[]).is_empty());
+        assert!(changelog_by_day(&[], false).is_empty());
+    }
+
+    #[test]
+    fn plugin_announcements_follow_the_labs_opt_in_without_empty_days() {
+        use ChangelogCategory::*;
+        use ChangelogImportance::*;
+        let mut plugin = entry("2026-10-25", Features, High, "Game plugin");
+        plugin.labs = true;
+        plugin.link = Some(Cow::Borrowed("/plugin"));
+        let feed = vec![
+            plugin,
+            entry("2026-10-24", Improvements, Medium, "Other change"),
+        ];
+        let hidden = changelog_by_day(&feed, false);
+        assert_eq!(hidden.len(), 1);
+        assert_eq!(hidden[0].0, "2026-10-24");
+        let visible = changelog_by_day(&feed, true);
+        assert_eq!(visible.len(), 2);
+        assert_eq!(visible[0].1[0].title, "Game plugin");
     }
 }

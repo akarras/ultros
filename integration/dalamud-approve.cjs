@@ -1,5 +1,5 @@
 "use strict";
-const {clientFetch:fetch}=require("./dalamud-client.cjs");
+const {clientFetch:fetch,enableLabs}=require("./dalamud-client.cjs");
 // Invoked by the managed HTTP smoke. Pairing data arrives on stdin, never argv.
 const puppeteer=require("puppeteer");
 const assert=require("node:assert/strict");
@@ -12,6 +12,7 @@ process.stdin.on("end",async()=>{
     assert(["localhost","127.0.0.1","[::1]"].includes(origin.hostname));
     browser=await puppeteer.launch({headless:true,args:["--no-sandbox","--disable-setuid-sandbox"]});
     const page=await browser.newPage();
+    await enableLabs(page,origin);
     page.setDefaultTimeout(120000);page.setDefaultNavigationTimeout(120000);
     await page.goto(new URL("/test/login?user_id=900000000000000112&username=ManagedClientFixture&redirect=/plugin",origin).href,{waitUntil:"domcontentloaded"});
     if(request.approval_url) {
