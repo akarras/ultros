@@ -362,6 +362,7 @@ fn LanguageSettings() -> impl IntoView {
 fn LabsSettings() -> impl IntoView {
     let i18n = use_i18n();
     let (dalamud, set_dalamud) = use_dalamud_labs();
+    let plugin_available = ultros_frontend_core::plugin_browser::use_setup_available();
     view! {
         <section id="labs" class="panel p-6 rounded-xl space-y-4">
             <h2 class="text-2xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, labs_title)}</h2>
@@ -371,9 +372,11 @@ fn LabsSettings() -> impl IntoView {
                     checked_label=t_string!(i18n, labs_dalamud)
                     unchecked_label=t_string!(i18n, labs_dalamud) />
                 <p class="text-sm text-[color:var(--color-text-muted)] max-w-prose">{t!(i18n, labs_dalamud_description)}</p>
-                <Show when=move || dalamud.get()>
+                <Suspense fallback=|| ()>
+                <Show when=move || plugin_available.get()>
                     <a class="btn-secondary inline-flex" href="/plugin" rel="external">{t!(i18n, labs_dalamud_setup)}</a>
                 </Show>
+                </Suspense>
             </div>
         </section>
     }

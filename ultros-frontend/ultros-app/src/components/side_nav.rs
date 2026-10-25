@@ -6,7 +6,6 @@ use crate::components::notification_inbox::NotificationInbox;
 use crate::components::region_menu::RegionMenu;
 use crate::global_state::changelog::use_whats_new_indicator;
 use crate::global_state::home_world::use_home_world;
-use crate::global_state::labs::use_dalamud_labs;
 use crate::global_state::platform::use_platform_hotkeys;
 use crate::global_state::search_overlay::use_search_overlay_state;
 use crate::global_state::side_nav::use_side_nav_settings;
@@ -103,7 +102,7 @@ pub fn SideNav() -> impl IntoView {
     let apple_hotkeys = use_platform_hotkeys().apple;
     let (homeworld, _set_homeworld) = use_home_world();
     let whats_new = use_whats_new_indicator();
-    let (dalamud_labs, _) = use_dalamud_labs();
+    let plugin_available = ultros_frontend_core::plugin_browser::use_setup_available();
 
     // Build world-aware URLs from the current home world, falling back to
     // the world-less route when none is set.
@@ -265,12 +264,14 @@ pub fn SideNav() -> impl IntoView {
             // along with the footer (see `.app-shell-collapsed .side-nav-info`);
             // expand the sidebar to reach them.
             <nav class="side-nav-info" aria-label=t_string!(i18n, help_label)>
-                <Show when=move || dalamud_labs.get()>
+                <Suspense fallback=|| ()>
+                <Show when=move || plugin_available.get()>
                     <SideNavItem href="/plugin".to_string() section="plugin" icon=i::BsController>
                         {t!(i18n, plugin_nav)}
                         <span class="ml-2 text-xs text-[color:var(--color-text-muted)]">{t!(i18n, labs_title)}</span>
                     </SideNavItem>
                 </Show>
+                </Suspense>
                 <SideNavItem href="/bot".to_string() section="bot" icon=i::BsDiscord>
                     {t!(i18n, discord_bot)}
                 </SideNavItem>

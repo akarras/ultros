@@ -14,7 +14,6 @@ use crate::components::icon::Icon;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::changelog::use_mark_changelog_seen;
-use crate::global_state::labs::use_dalamud_labs;
 use crate::i18n::*;
 use icondata as i;
 use leptos::either::Either;
@@ -50,7 +49,7 @@ fn changelog_by_day(
 #[component]
 pub fn Changelog() -> impl IntoView {
     let i18n = use_i18n();
-    let (dalamud_labs, _) = use_dalamud_labs();
+    let plugin_available = ultros_frontend_core::plugin_browser::use_setup_available();
     use_mark_changelog_seen();
     // Blocking: this *is* the page, so there is nothing useful to stream
     // around it, and the server answers from a static table in memory. See
@@ -79,7 +78,7 @@ pub fn Changelog() -> impl IntoView {
                                     Either::Left(
                                         view! {
                                             <ol class="flex flex-col gap-6">
-                                                {changelog_by_day(&entries, dalamud_labs.get()).into_iter().map(|(date, entries)| view! {
+                                                {changelog_by_day(&entries, plugin_available.get()).into_iter().map(|(date, entries)| view! {
                                                     <li class="flex flex-col gap-3">
                                                         <h2 class="text-sm font-bold uppercase tracking-wide text-brand-300 tabular-nums">
                                                             <time datetime=date.to_string()>{date.to_string()}</time>

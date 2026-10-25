@@ -51,7 +51,7 @@ async function main(){
       // Assert the actual hydration event rather than the cosmetic indicator.
       await page.waitForFunction(()=>window.__guideHydrated);
       stage=name+" controls and layout";
-      assert(await page.$('.side-nav-info a[href="/plugin"]'),"The plugin link should appear after opting in");
+      assert.equal(Boolean(await page.$('.side-nav-info a[href="/plugin"]')),available,"Plugin navigation requires Labs opt-in and a usable backend/package");
       if(!available){
         assert.equal(await page.$('[data-testid="plugin-install-guide"]'),null);
         assert.equal(await page.$('.plugin-page a[href="/plugin/verify"]'),null);

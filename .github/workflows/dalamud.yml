@@ -62,6 +62,7 @@ jobs:
               run: |
                   ./plugins/dalamud/test-check-updates.ps1
                   ./plugins/dalamud/test-release-source.ps1
+                  ./plugins/dalamud/test-image-package.ps1
             - name: Check and download current stable Dalamud references
               run: ./plugins/dalamud/check-updates.ps1 -DownloadReferences -ReferenceDirectory $env:DALAMUD_HOME
             - name: Build and test the complete Windows Release package

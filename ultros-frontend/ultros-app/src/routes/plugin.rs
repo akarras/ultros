@@ -1,5 +1,6 @@
 use crate::global_state::labs::use_dalamud_labs;
 use crate::i18n::*;
+use browser::setup_available;
 use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::{components::Outlet, hooks::use_location};
@@ -16,18 +17,6 @@ struct PluginContext {
 
 pub fn is_plugin_path(path: &str) -> bool {
     path == "/plugin" || path.starts_with("/plugin/")
-}
-
-fn setup_available(config: &PluginWebsiteInfo) -> bool {
-    config.enabled
-        && (config.localhost
-            || [
-                &config.latest_version,
-                &config.repository_url,
-                &config.download_url,
-            ]
-            .iter()
-            .all(|value| value.as_ref().is_some_and(|value| !value.is_empty())))
 }
 
 #[component]
@@ -391,6 +380,7 @@ pub fn PluginDevices() -> impl IntoView {
 
 #[component]
 fn DeviceList() -> impl IntoView {
+    let plugin_available = browser::use_setup_available();
     let devices = LocalResource::new(browser::devices);
     let revoke = Action::new(|input: &(String, String)| {
         let (csrf, id) = input.clone();
@@ -434,7 +424,11 @@ fn DeviceList() -> impl IntoView {
             Err(error) => view! { <p role="alert">{error}</p> }.into_any(),
         })}
         <div class="flex flex-wrap gap-3">
-            <a class="btn-primary" href="/plugin/verify">"Connect a game"</a>
+            <Suspense fallback=|| ()>
+                <Show when=move || plugin_available.get()>
+                    <a class="btn-primary" href="/plugin/verify">"Connect a game"</a>
+                </Show>
+            </Suspense>
             <button class="btn-secondary" type="button" disabled=move || revoke.pending().get() on:click=move |_| devices.refetch()>"Refresh clients"</button>
         </div>
     }
