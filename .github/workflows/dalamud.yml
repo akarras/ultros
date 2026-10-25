@@ -1,0 +1,75 @@
+name: Dalamud
+
+on:
+    workflow_dispatch:
+    pull_request:
+        branches: ["main"]
+        paths:
+            - "plugins/dalamud/**"
+            - "ultros-list-doc/**"
+            - "ultros-list-doc-ffi/**"
+            - "ultros-api-types/**"
+            - "integration/fixtures/list-compatibility.json"
+            - "data/**"
+            - "game-data-pack/**"
+            - "xiv-gen/**"
+            - "Cargo.toml"
+            - "Cargo.lock"
+            - "rust-toolchain.toml"
+            - ".cargo/**"
+            - ".github/workflows/dalamud.yml"
+    push:
+        branches: ["main"]
+        paths:
+            - "plugins/dalamud/**"
+            - "ultros-list-doc/**"
+            - "ultros-list-doc-ffi/**"
+            - "ultros-api-types/**"
+            - "integration/fixtures/list-compatibility.json"
+            - "data/**"
+            - "game-data-pack/**"
+            - "xiv-gen/**"
+            - "Cargo.toml"
+            - "Cargo.lock"
+            - "rust-toolchain.toml"
+            - ".cargo/**"
+            - ".github/workflows/dalamud.yml"
+
+permissions:
+    contents: read
+
+jobs:
+    plugin:
+        name: Stable Dalamud compatibility and Windows package
+        runs-on: windows-latest
+        timeout-minutes: 30
+        defaults:
+            run:
+                shell: pwsh
+        env:
+            CARGO_BUILD_JOBS: "2"
+            DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+            DALAMUD_HOME: artifacts/dalamud/ci-stable-references
+        steps:
+            - uses: actions/checkout@v4.2.2
+            - uses: actions/setup-dotnet@v4
+              with:
+                  dotnet-version: "10.0.x"
+            - uses: dtolnay/rust-toolchain@master
+              with:
+                  toolchain: nightly-2026-10-13
+            - name: Check update policy and release provenance fixtures
+              run: |
+                  ./plugins/dalamud/test-check-updates.ps1
+                  ./plugins/dalamud/test-release-source.ps1
+                  ./plugins/dalamud/test-image-package.ps1
+            - name: Check and download current stable Dalamud references
+              run: ./plugins/dalamud/check-updates.ps1 -DownloadReferences -ReferenceDirectory $env:DALAMUD_HOME
+            - name: Build and test the complete Windows Release package
+              run: ./plugins/dalamud/build-plugin.ps1 -Configuration Release -StageOnly -DalamudHome $env:DALAMUD_HOME
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: ultros-dalamud-validation
+                  path: artifacts/dalamud/.staging-plugin/
+                  include-hidden-files: true
+                  if-no-files-found: error

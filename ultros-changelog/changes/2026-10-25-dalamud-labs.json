@@ -1,0 +1,8 @@
+{
+  "category": "features",
+  "importance": "high",
+  "title": "Try the Dalamud game plugin in Labs",
+  "blurb": "Enable the Dalamud game plugin in Settings → Labs to test market lookups, shared shopping lists, private retainer listings and alerts while you play.",
+  "link": "/plugin",
+  "labs": true
+}

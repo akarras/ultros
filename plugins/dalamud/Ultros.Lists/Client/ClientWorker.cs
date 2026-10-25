@@ -82,20 +82,29 @@ public sealed class ClientWorker : IDisposable
     }
     public bool CancelPairing()=>Offer(()=>{connection!.CancelPairing();return Task.CompletedTask;});
     public bool Disconnect(){CancelQueuedInventory();return Offer(async()=>{
+        try{CloseCart();}
+        catch(Exception){status="Disconnect paused: unsaved list edits could not be saved. Retry saving, then disconnect. Your connection and edits are still available.";return;}
         await StopFeed();
-        await connection!.Disconnect();cart?.Dispose();cart=null;lists=[];characters=[];inbox.Clear();shown.Clear();loadedDevice=null;estimate=null;rosterStatus="";
+        await connection!.Disconnect();lists=[];characters=[];inbox.Clear();shown.Clear();loadedDevice=null;estimate=null;rosterStatus="";
         ClearRetainerPrices();
         while(toasts.TryDequeue(out _)){}queuedToasts.Clear();CancelQueuedCaptures();
         status="Disconnected. Saved cart work remains bound to its original account and server.";
     });}
     public bool Refresh()=>Offer(async()=>{await connection!.Restore(stop.Token,true);await RefreshAccount();nextNotifications=DateTimeOffset.MinValue;nextCart=DateTimeOffset.MinValue;});
     public bool SelectList(int id){CancelQueuedInventory();return Offer(()=>OpenList(id));}
+    private void CloseCart()
+    {
+        // Keep the live document if its checkpoint cannot be written. This also
+        // fences a new device/account from replacing unsaved work during pairing.
+        if(cart?.Document.View.AwaitingPersist==true)cart.Save();
+        cart?.Dispose();cart=null;
+    }
+    private bool SessionReady()=>connection?.Connected==true&&loadedDevice==connection.Session?.Id;
     private async Task OpenList(int id)
     {
         CancelQueuedInventory();
         if(!lists.Any(l=>l.List.Id==id))throw new InvalidOperationException("Refresh the available lists first.");
-        if(cart?.Document.View.AwaitingPersist==true)cart.Save();
-        cart?.Dispose();cart=null;estimate=null;
+        CloseCart();estimate=null;
         cart=new ConnectedCart(connection!,id);await SyncCart();nextCart=DateTimeOffset.UtcNow.AddSeconds(60);
         AtomicFile.Write(SelectionPath(),JsonSerializer.SerializeToUtf8Bytes(id));
     }
@@ -226,21 +235,34 @@ public sealed class ClientWorker : IDisposable
         characters=await connection!.Send<UnverifiedCharacter[]>(HttpMethod.Post,$"/api/v1/plugin/characters/{PositiveId(character)}/uploads",new{enabled,delete_snapshots=delete},stop.Token);
         status=enabled?"Uploads enabled for this character. Revisit a retainer's selling list.":"Uploads paused. Queued captures from the previous consent epoch are invalid.";
     });
-    public bool Upload(string retainer,ListingCapture capture)
+    public Task<CaptureUploadResult>? Upload(string retainer,ListingCapture capture)
     {
-        if(Interlocked.Increment(ref queuedCaptures)>10){Interlocked.Decrement(ref queuedCaptures);return false;}
-        var account=View.Session?.AccountId;
+        if(Interlocked.Increment(ref queuedCaptures)>10){Interlocked.Decrement(ref queuedCaptures);return null;}
+        var session=View.Session;
         var generation=Volatile.Read(ref captureGeneration);
+        var completion=new TaskCompletionSource<CaptureUploadResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var accepted=Offer(async()=>{try{
-        if(generation!=Volatile.Read(ref captureGeneration)||account is null||connection!.Session?.AccountId!=account||DateTimeOffset.UtcNow-capture.ObservedAt>TimeSpan.FromMinutes(10))return;
-        // Identical receipt key/body survive a single bounded retry. No disk queue of raw game identifiers.
-        try {await connection!.Send<CaptureReceipt>(HttpMethod.Post,$"/api/v1/plugin/retainers/{PositiveId(retainer)}/listings",capture,stop.Token);}
-        catch(HttpRequestException) {await connection!.Send<CaptureReceipt>(HttpMethod.Post,$"/api/v1/plugin/retainers/{PositiveId(retainer)}/listings",capture,stop.Token);}
-        characters=await connection!.Send<UnverifiedCharacter[]>(HttpMethod.Get,"/api/v1/plugin/characters",null,stop.Token);
-        status="Private retainer listing snapshot uploaded.";
-        }finally{Interlocked.Decrement(ref queuedCaptures);}});
+            if(generation!=Volatile.Read(ref captureGeneration)||session is null||!connection!.Connected
+                ||connection.Session?.AccountId!=session.AccountId||connection.Session?.Id!=session.Id
+                ||DateTimeOffset.UtcNow-capture.ObservedAt>TimeSpan.FromMinutes(10))return;
+            var receipt=await connection.Send<CaptureReceipt>(HttpMethod.Post,$"/api/v1/plugin/retainers/{PositiveId(retainer)}/listings",capture,stop.Token);
+            // The POST is acknowledged even if the following roster read fails.
+            // Publish its revision before the game thread can queue the next capture.
+            characters=characters.Select(c=>c with{Retainers=c.Retainers.Select(r=>r.Id==retainer?r with{Revision=Math.Max(r.Revision,receipt.Revision)}:r).ToArray()}).ToArray();
+            status="Private retainer listing snapshot uploaded.";
+            try{characters=await connection.Send<UnverifiedCharacter[]>(HttpMethod.Get,"/api/v1/plugin/characters",null,stop.Token);}
+            catch(Exception)when(!stop.IsCancellationRequested){nextLists=DateTimeOffset.MinValue;}
+            Publish();completion.TrySetResult(new(true));
+        }
+        catch(OperationCanceledException)when(stop.IsCancellationRequested){throw;}
+        catch(Exception error){
+            status=error is ApiFailure api?api.Message:SafeError(error);
+            var retry=error is HttpRequestException or OperationCanceledException||error is ApiFailure{Status:429 or >=500};
+            completion.TrySetResult(new(false,retry,error is ApiFailure failure?Math.Max(15,failure.RetryAfter):15));
+        }
+        finally{Interlocked.Decrement(ref queuedCaptures);completion.TrySetResult(new(false));}});
         if(!accepted)Interlocked.Decrement(ref queuedCaptures);
-        return accepted;
+        return accepted?completion.Task:null;
     }
     public bool TestNotification()=>Offer(async()=>{
         _=await connection!.Send<bool>(HttpMethod.Post,"/api/v1/plugin/notifications/test",new{operation_id=Guid.NewGuid().ToString("N")},stop.Token);
@@ -291,10 +313,10 @@ public sealed class ClientWorker : IDisposable
     });
 
     private static string PositiveId(string id)=>long.TryParse(id,out var value)&&value>0&&value.ToString()==id?id:throw new ArgumentException("Invalid identifier.");
-    private bool CanTrackInventory()=>connection?.Connected==true&&connection.HasScope("lists:write")&&cart is not null
+    private bool CanTrackInventory()=>SessionReady()&&connection!.HasScope("lists:write")&&cart is not null
         &&!cart.AccessDenied&&lists.Any(list=>list.List.Id==cart.Id&&list.CanWrite)
         &&cart.Document.View.Ready&&!cart.Document.View.RecoveryReview;
-    private bool CanEdit()=>connection?.Connected==true&&connection.HasScope("lists:write")&&cart is not null
+    private bool CanEdit()=>SessionReady()&&connection!.HasScope("lists:write")&&cart is not null
         &&!cart.AccessDenied
         &&lists.Any(l=>l.List.Id==cart.Id&&l.CanWrite)&&cart.Document.View.Ready&&!cart.Document.View.RecoveryReview&&!cart.Document.View.AwaitingPersist;
     private async Task SyncCart()
@@ -386,14 +408,16 @@ public sealed class ClientWorker : IDisposable
     private void Publish()
     {
         var connected=connection?.Connected==true;
+        var ready=SessionReady();
+        var visibleCart=ready?cart:null;
         var showPrices=connected&&connection!.HasScope("retainers:read")
             &&pricesDevice==connection.Session?.Id&&pricesAccount==connection.Session?.AccountId;
         var visibleStatus=pendingInventory is { } pending&&cart?.Document.View.AwaitingPersist==true
             ? $"Inventory progress paused after {pending.Batch.Applied:N0} units; retry saving to finish the retained batch."
             : status;
         Volatile.Write(ref view,new ClientView(connected,visibleStatus,connection?.StorageMode??"",connection?.HumanCode,connection?.VerificationUrl??endpoint.At("/plugin/verify").AbsoluteUri,
-            connection?.Session,connected?lists:[],cart?.Id,cart?.Document.View,CanEdit(),connected?characters:[],connected?inbox.ToArray():[],market,sales,estimate,connection?.Session?.Scopes??[],priceRegion,Volatile.Read(ref feedReady)!=0?"Live notifications (SSE)":"Polling fallback",connected?rosterStatus:"",registering,connection?.ApprovalUrl,
-            showPrices?retainerPrices:null,showPrices?retainerPriceStatus:"",cart?.InstanceId,cart?.RecoveryRevision??0));
+            connection?.Session,ready?lists:[],visibleCart?.Id,visibleCart?.Document.View,CanEdit(),ready?characters:[],ready?inbox.ToArray():[],market,sales,ready?estimate:null,connection?.Session?.Scopes??[],priceRegion,Volatile.Read(ref feedReady)!=0?"Live notifications (SSE)":"Polling fallback",ready?rosterStatus:"",registering,connection?.ApprovalUrl,
+            showPrices?retainerPrices:null,showPrices?retainerPriceStatus:"",visibleCart?.InstanceId,visibleCart?.RecoveryRevision??0));
     }
     private async Task<Connection> AcquireConnection()
     {
@@ -429,7 +453,13 @@ public sealed class ClientWorker : IDisposable
                     if(await connection.Restore(stop.Token)){status=connection.Status;nextLists=nextNotifications=nextCart=DateTimeOffset.MinValue;}
                     if(connection.Connected)
                     {
-                        if(loadedDevice!=connection.Session!.Id){CancelQueuedInventory();await StopFeed();cart?.Dispose();cart=null;estimate=null;rosterStatus="";ClearRetainerPrices();LoadInbox();nextLists=nextNotifications=DateTimeOffset.MinValue;}
+                        if(loadedDevice!=connection.Session!.Id){
+                            CancelQueuedInventory();await StopFeed();
+                            // A failed save can delay the transition. Stop displaying
+                            // the previous device's queued messages during that pause.
+                            while(toasts.TryDequeue(out _)){}queuedToasts.Clear();
+                            CloseCart();estimate=null;rosterStatus="";ClearRetainerPrices();LoadInbox();nextLists=nextNotifications=DateTimeOffset.MinValue;
+                        }
                         if(DateTimeOffset.UtcNow>=nextLists)await RefreshAccount();
                         if(connection.HasScope("notifications:read"))await UpdateFeed();
                         if(DateTimeOffset.UtcNow>=nextNotifications&&connection.HasScope("notifications:read"))await PollNotifications();
