@@ -24,11 +24,11 @@ public sealed class CaptureGate
         var identity=JsonSerializer.Serialize(rows,Protocol.Json);
         if(candidate!=identity){candidate=identity;since=now;Status="Waiting for 500 ms of stable listings.";return null;}
         if(now-since<TimeSpan.FromMilliseconds(500))return null;
-        if(submitted==identity){Status="Listings unchanged since the last snapshot was queued.";return null;}
+        if(submitted==identity){Status="Listings unchanged since the last confirmed upload.";return null;}
         Status="Selling list ready to upload.";
         return rows;
     }
-    public void Submitted(PrivateListing[] rows)=>submitted=JsonSerializer.Serialize(rows,Protocol.Json);
+    public void Acknowledged(PrivateListing[] rows)=>submitted=JsonSerializer.Serialize(rows,Protocol.Json);
 }
 
 /// A market response can precede the selling addon's first readable frame.
