@@ -578,7 +578,7 @@ pub fn RetainerUndercuts() -> impl IntoView {
                                 <span class="content-title">{t!(i18n, retainers_undercuts_title)}</span>
                                 <div class="flex items-center gap-3">
                                     <RealtimeStatus status=live.status last_update=live.last_update />
-                                    <button class="btn" on:click=move |_| set_drawer_visible.set(true)>
+                                    <button type="button" class="btn" on:click=move |_| set_drawer_visible.set(true)>
                                         <Icon icon=i::BsBell />
                                         <span class="ml-1">{t!(i18n, add_alert_button)}</span>
                                     </button>

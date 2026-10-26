@@ -1,15 +1,11 @@
 //! Small in-process TTL cache for `/api/v1/price_series` responses.
 //!
-//! Values are already-serialized JSON strings: the endpoint's cost is the
+//! Values are shared serialized JSON bytes: the endpoint's cost is the
 //! ClickHouse scan plus serialization, and caching the string skips both.
 //!
 //! Deliberately not an LRU. Eviction on overflow clears expired entries first
 //! and then drops arbitrary ones — for a cache whose job is absorbing bursts
 //! of identical requests, exact recency ordering is not worth the bookkeeping.
-
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CacheKey {
@@ -17,6 +13,8 @@ pub(crate) struct CacheKey {
     pub scope: String,
     pub from: i64,
     pub to: i64,
+    pub default_from: bool,
+    pub default_to: bool,
     pub bucket: i64,
     pub group: &'static str,
     pub hq: &'static str,
@@ -26,54 +24,7 @@ pub(crate) struct CacheKey {
     pub bins: u16,
 }
 
-#[derive(Clone)]
-pub(crate) struct PriceSeriesCache {
-    inner: Arc<Mutex<HashMap<CacheKey, (Instant, String)>>>,
-    capacity: usize,
-}
-
-impl PriceSeriesCache {
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(HashMap::new())),
-            capacity,
-        }
-    }
-
-    pub fn get(&self, key: &CacheKey) -> Option<String> {
-        let map = self.inner.lock().ok()?;
-        let (expires_at, value) = map.get(key)?;
-        (*expires_at > Instant::now()).then(|| value.clone())
-    }
-
-    pub fn insert(&self, key: CacheKey, value: String, ttl: Duration) {
-        let Ok(mut map) = self.inner.lock() else {
-            return;
-        };
-        if map.len() >= self.capacity {
-            let now = Instant::now();
-            map.retain(|_, (expires_at, _)| *expires_at > now);
-            while map.len() >= self.capacity {
-                let Some(victim) = map.keys().next().cloned() else {
-                    break;
-                };
-                map.remove(&victim);
-            }
-        }
-        map.insert(key, (Instant::now() + ttl, value));
-    }
-
-    #[cfg(test)]
-    pub fn len(&self) -> usize {
-        self.inner.lock().map(|m| m.len()).unwrap_or(0)
-    }
-}
-
-impl Default for PriceSeriesCache {
-    fn default() -> Self {
-        Self::new(512)
-    }
-}
+pub(crate) type PriceSeriesCache = super::json_cache::JsonCache<CacheKey>;
 
 #[cfg(test)]
 mod tests {
@@ -86,6 +37,8 @@ mod tests {
             scope: "Gilgamesh".to_string(),
             from: 0,
             to: 100,
+            default_from: false,
+            default_to: false,
             bucket: 3600,
             group: "world",
             hq: "any",
@@ -97,7 +50,10 @@ mod tests {
     fn returns_a_stored_value_within_ttl() {
         let cache = PriceSeriesCache::new(4);
         cache.insert(key(1), "a".to_string(), Duration::from_secs(60));
-        assert_eq!(cache.get(&key(1)), Some("a".to_string()));
+        assert_eq!(
+            cache.get(&key(1)),
+            Some(axum::body::Bytes::from_static(b"a"))
+        );
         assert_eq!(cache.get(&key(2)), None);
     }
 
@@ -125,7 +81,7 @@ mod tests {
             ..key(1)
         };
         let mut variants = vec![base.clone()];
-        for index in 0..6 {
+        for index in 0..8 {
             let mut next = base.clone();
             match index {
                 0 => next.group = "floor",
@@ -133,7 +89,9 @@ mod tests {
                 2 => next.bucket = 86400,
                 3 => next.from = 1,
                 4 => next.to = 101,
-                _ => next.scope = "Aether".into(),
+                5 => next.scope = "Aether".into(),
+                6 => next.default_from = true,
+                _ => next.default_to = true,
             }
             variants.push(next);
         }
@@ -141,7 +99,7 @@ mod tests {
             cache.insert(key.clone(), i.to_string(), Duration::from_secs(60));
         }
         for (i, key) in variants.iter().enumerate() {
-            assert_eq!(cache.get(key), Some(i.to_string()));
+            assert_eq!(cache.get(key), Some(axum::body::Bytes::from(i.to_string())));
         }
     }
 }

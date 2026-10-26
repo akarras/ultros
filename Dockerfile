@@ -167,7 +167,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LEPTOS_OUTPUT_NAME="ultros" \
     LEPTOS_ENVIRONMENT="production" \
     LEPTOS_SITE_ADDR="0.0.0.0:8080" \
-    LEPTOS_SITE_ROOT="site"
+    LEPTOS_SITE_ROOT="site" \
+    ULTROS_PLUGIN_ENABLED="true" \
+    ULTROS_PLUGIN_RELEASE_DIR="/app/dalamud-releases" \
+    ULTROS_PLUGIN_KEY_FILE="/app/analyzer-data/plugin-keys.json"
 # Minimal runtime deps: TLS roots, freetype + fontconfig for resvg rendering.
 # No `apt upgrade` — keeps builds reproducible against the pinned base image.
 #
@@ -197,6 +200,7 @@ WORKDIR /app
 COPY --from=builder /app/target/server-release/ultros /app/ultros
 COPY --from=builder /app/target/site /app/site
 COPY --from=builder /app/Cargo.toml /app/Cargo.toml
+COPY plugins/dalamud/distribution/ /app/dalamud-releases/
 # Fonts used by resvg at runtime. Same files are also in /app/site for
 # the client; keeping the system install lets fontconfig find them server-side.
 RUN mkdir -p /usr/local/share/fonts

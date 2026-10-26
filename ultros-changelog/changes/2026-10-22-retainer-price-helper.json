@@ -3,5 +3,6 @@
   "importance": "medium",
   "title": "Compare retainer prices in game",
   "blurb": "Open your retainer's captured listings beside the Markets window and copy a suggested price based on recent listings on the same world. You choose and confirm every price in game.",
-  "link": "/plugin/setup"
+  "link": "/plugin",
+  "labs": true
 }
