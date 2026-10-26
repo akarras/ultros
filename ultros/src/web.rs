@@ -1831,44 +1831,32 @@ pub(crate) async fn get_lists(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
 ) -> Result<Json<Vec<ListWithPermission>>, ApiError> {
-    let lists = try_join_all(
-        db.get_lists_for_user(user.id as i64)
-            .await?
-            .into_iter()
-            .map(|(list, owner_name)| {
-                let db = db.clone();
-                let user_id = user.id as i64;
-                async move {
-                    let permission = db.get_permission(list.id, user_id).await?;
-                    Ok::<_, ApiError>(ListWithPermission {
-                        list: List::try_from(list)?,
-                        permission,
-                        owner_name,
-                    })
-                }
-            }),
-    )
-    .await?;
+    let lists = db
+        .get_lists_with_permissions(user.id as i64)
+        .await?
+        .into_iter()
+        .map(|(list, owner_name, permission)| {
+            Ok::<_, ApiError>(ListWithPermission {
+                list: List::try_from(list)?,
+                permission,
+                owner_name,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(lists))
 }
 
 pub(crate) async fn get_list(
     State(db): State<UltrosDb>,
-    perm: crate::web::list_permission::RequireListPermission<{ crate::web::list_permission::READ }>,
+    Path(id): Path<i32>,
+    user: AuthDiscordUser,
 ) -> Result<Json<(ListWithPermission, Vec<ListItem>)>, ApiError> {
-    let ((list, owner_name), list_items) = futures::future::try_join(
-        db.get_list(perm.list_id, perm.user_id),
-        db.get_list_items(perm.list_id, perm.user_id),
-    )
-    .await?;
-    let list_items = list_items
-        .into_iter()
-        .map(ListItem::from)
-        .collect::<Vec<_>>();
+    let authorized = db.get_authorized_list(id, user.id as i64).await?;
+    let list_items = authorized.items.into_iter().map(ListItem::from).collect();
     let list = ListWithPermission {
-        list: List::try_from(list)?,
-        permission: perm.permission,
-        owner_name: Some(owner_name),
+        list: List::try_from(authorized.list)?,
+        permission: authorized.permission,
+        owner_name: Some(authorized.owner_name),
     };
     Ok(Json((list, list_items)))
 }
