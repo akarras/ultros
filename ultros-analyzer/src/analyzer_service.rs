@@ -1489,6 +1489,21 @@ impl AnalyzerService {
         // ingestion needs this lock to write, and a deep scan is slow.
         drop(sale_history);
 
+        // Retain only the selected prices, not the world's read guard. A
+        // slow analytical query must not stop the listing consumer updating
+        // prices (and, in turn, every other selector it feeds).
+        let prices: BTreeMap<ItemKey, i32> = candidates
+            .iter()
+            .filter_map(|candidate| {
+                let key = ItemKey {
+                    item_id: candidate.item_id,
+                    hq: candidate.hq,
+                };
+                cheapest.item_map.get(&key).map(|value| (key, value.price))
+            })
+            .collect();
+        drop(cheapest);
+
         let mut requests: Vec<(i32, u8, i32)> = candidates
             .into_iter()
             .map(|c| (c.item_id, c.hq as u8, world_id))
@@ -1556,7 +1571,7 @@ impl AnalyzerService {
                     item_id: d.item_id,
                     hq: d.hq != 0,
                 };
-                let cheapest_price = cheapest.item_map.get(&key)?.price;
+                let cheapest_price = *prices.get(&key)?;
                 let window_days_f32 = (window_days as f32).max(1.0);
                 let sales_per_day = d.cleaned_sample_size as f32 / window_days_f32;
                 let pct_change_window = if d.vwap > 0 {
@@ -1795,6 +1810,9 @@ impl AnalyzerService {
                     .unwrap_or(true)
             })
             .collect();
+
+        drop(sale_world_listings);
+        drop(region);
 
         // === Phase 2 deep-scan enrichment ===
         //
@@ -2402,6 +2420,71 @@ mod test {
             hq,
             timestamp: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
         }
+    }
+
+    fn analyzer_with_client(
+        ch_client: ultros_clickhouse::ClickHouseClient,
+    ) -> super::AnalyzerService {
+        use std::sync::{Arc, atomic::AtomicBool};
+        use tokio::sync::RwLock;
+        use ultros_db::world_data::world_cache::AnySelector;
+
+        let mut cheapest = CheapestListings::default();
+        cheapest.add_listing(&active_listing(1, 100, false));
+        super::AnalyzerService {
+            recent_sale_history: Arc::new(BTreeMap::from([(54, RwLock::default())])),
+            cheapest_items: Arc::new(BTreeMap::from([
+                (AnySelector::World(54), RwLock::new(cheapest.clone())),
+                (AnySelector::Region(1), RwLock::new(cheapest)),
+            ])),
+            initiated: Arc::new(AtomicBool::new(true)),
+            cheapest_resync_in_flight: Arc::new(AtomicBool::new(false)),
+            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
+            floor_writer: ultros_clickhouse::writer::Writer::disabled(),
+            ch_client,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stalled_trends_query_does_not_block_live_cache_writes() {
+        use tokio::io::AsyncReadExt;
+        use ultros_db::world_data::world_cache::AnySelector;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            assert!(socket.read(&mut buffer).await.unwrap() > 0);
+            started_tx.send(()).unwrap();
+            release_rx.await.unwrap();
+        });
+        let analyzer = analyzer_with_client(ultros_clickhouse::ClickHouseClient::from_client(
+            clickhouse::Client::default().with_url(url),
+        ));
+        let reader = analyzer.clone();
+        let query = tokio::spawn(async move { reader.get_trends_v2(54, 30, false).await });
+        tokio::time::timeout(std::time::Duration::from_secs(5), started_rx)
+            .await
+            .expect("the query must reach the local HTTP endpoint")
+            .unwrap();
+
+        assert!(!query.is_finished(), "the HTTP response is still stalled");
+        assert!(
+            analyzer.cheapest_items[&AnySelector::World(54)]
+                .try_write()
+                .is_ok(),
+            "a ClickHouse round trip must not hold the world's listing lock"
+        );
+        assert!(analyzer.recent_sale_history[&54].try_write().is_ok());
+        release_tx.send(()).unwrap();
+        server.await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), query)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     /// `remove_if_cheapest` decides, without touching the database, whether a

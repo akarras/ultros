@@ -200,6 +200,15 @@ pub struct ClickHouseClient {
 }
 
 impl ClickHouseClient {
+    /// Wrap an explicitly configured client, including its transport and
+    /// endpoint. Keeps callers and tests independent of process environment.
+    pub fn from_client(client: Client) -> Self {
+        Self {
+            inner: Arc::new(client),
+            snapshot_queue: Arc::default(),
+        }
+    }
+
     /// Construct from environment variables. Reads:
     /// - `CLICKHOUSE_URL` (default `http://localhost:8123`)
     /// - `CLICKHOUSE_DATABASE` (default `ultros`)
@@ -218,10 +227,7 @@ impl ClickHouseClient {
             .with_database(database)
             .with_user(user)
             .with_password(password);
-        Self {
-            inner: Arc::new(inner),
-            snapshot_queue: Arc::default(),
-        }
+        Self::from_client(inner)
     }
 
     /// Access the underlying `clickhouse::Client`. Use for queries/inserts that

@@ -10592,6 +10592,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "chrono",
+ "clickhouse",
  "flate2",
  "futures",
  "itertools 0.15.0",
