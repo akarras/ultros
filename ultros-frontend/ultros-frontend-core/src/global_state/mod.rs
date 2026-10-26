@@ -9,6 +9,7 @@ pub mod crafter_levels;
 pub mod guest_alert_evaluator;
 pub mod guest_alerts;
 pub mod home_world;
+pub mod labs;
 pub mod lists_readonly;
 pub mod local_lists;
 pub mod local_world_data;

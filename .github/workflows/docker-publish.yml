@@ -42,7 +42,92 @@ env:
     APP_BUILD_JOBS: "2"
 
 jobs:
+    dalamud:
+        name: Prepare immutable Labs plugin package
+        runs-on: windows-latest
+        timeout-minutes: 30
+        permissions:
+            contents: read
+        defaults:
+            run:
+                shell: pwsh
+        env:
+            GH_TOKEN: ${{ github.token }}
+            CARGO_BUILD_JOBS: "2"
+            DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+            DALAMUD_HOME: artifacts/dalamud/image-stable-references
+        steps:
+            - uses: actions/checkout@v4.2.2
+              with:
+                  fetch-depth: 0
+            - uses: actions/setup-dotnet@v4
+              with:
+                  dotnet-version: "10.0.x"
+            - uses: dtolnay/rust-toolchain@master
+              with:
+                  toolchain: nightly-2026-10-13
+            - name: Check image package policy
+              run: ./plugins/dalamud/test-image-package.ps1
+            - name: Check and download stable Dalamud references
+              run: ./plugins/dalamud/check-updates.ps1 -DownloadReferences -ReferenceDirectory $env:DALAMUD_HOME
+            - name: Prepare tested package for the image
+              run: ./plugins/dalamud/prepare-image-package.ps1 -DalamudHome $env:DALAMUD_HOME -Repository $env:GITHUB_REPOSITORY
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: dalamud-image-package
+                  path: |
+                      plugins/dalamud/distribution/current.json
+                      plugins/dalamud/distribution/*/release.json
+                      plugins/dalamud/distribution/*/Ultros.zip
+                  if-no-files-found: error
+
+    publish-plugin:
+        name: Publish immutable Labs plugin prerelease
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        needs: dalamud
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/download-artifact@v4
+              with:
+                  name: dalamud-image-package
+                  path: package
+            - name: Publish new version without overwriting existing assets
+              shell: pwsh
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  $ErrorActionPreference = 'Stop'
+                  $release = Get-Content -Raw package/current.json | ConvertFrom-Json
+                  $tag = "dalamud-v$($release.version)"
+                  $index = "package/$($release.version)/release.json"
+                  $zip = "package/$($release.version)/Ultros.zip"
+                  if ((Get-FileHash -Algorithm SHA256 $zip).Hash -ine $release.sha256) { throw 'Package artifact hash mismatch.' }
+                  $existing = & gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>&1
+                  if ($LASTEXITCODE -eq 0) {
+                      # Also reject a conflicting publication that happened
+                      # after preparation. Never clobber an existing version.
+                      & gh release download $tag --repo $env:GITHUB_REPOSITORY --pattern Ultros.zip --pattern release.json --dir package/published
+                      if ($LASTEXITCODE) { throw 'Could not verify the existing plugin release.' }
+                      $published = Get-Content -Raw package/published/release.json | ConvertFrom-Json
+                      if ((Get-FileHash -Algorithm SHA256 package/published/Ultros.zip).Hash -ine $release.sha256 -or
+                          $published.commit -ne $release.commit -or $published.version -ne $release.version -or
+                          $published.sha256 -ne $release.sha256 -or $published.size -ne $release.size) { throw 'Plugin version already published with different content.' }
+                      Write-Output "Reusing published $tag."
+                      exit 0
+                  }
+                  if (($existing -join "`n") -notmatch '\(HTTP 404\)') { throw 'Could not check the existing plugin release.' }
+                  @(
+                      'Experimental Settings > Labs package. In-game end-to-end testing is still pending.',
+                      '', $release.changelog, '', "Source: $($release.commit)", "SHA-256: $($release.sha256)"
+                  ) | Set-Content package/notes.txt -Encoding utf8NoBOM
+                  & gh release create $tag $zip $index --repo $env:GITHUB_REPOSITORY --target $release.commit --title "Ultros Dalamud $($release.version) (Labs)" --prerelease --latest=false --notes-file package/notes.txt
+                  if ($LASTEXITCODE) { throw 'Could not publish the plugin prerelease.' }
+
     build:
+        needs: [dalamud, publish-plugin]
+        if: ${{ !cancelled() && needs.dalamud.result == 'success' && (needs.publish-plugin.result == 'success' || needs.publish-plugin.result == 'skipped') }}
         runs-on: ubuntu-latest
         permissions:
             contents: read
@@ -55,6 +140,12 @@ jobs:
               uses: actions/checkout@v4.2.2
               with:
                   lfs: true
+
+            - name: Download validated Labs plugin package
+              uses: actions/download-artifact@v4
+              with:
+                  name: dalamud-image-package
+                  path: plugins/dalamud/distribution
 
             # No QEMU: we build linux/amd64 only, on an amd64 runner. It bought
             # us nothing and parked a 32MB binfmt cache on every ref.

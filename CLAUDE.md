@@ -22,6 +22,9 @@ There are **no git submodules** in this repo anymore. FFXIV game data (item/reci
   regeneration and the fallout need fixing in the same change. Run
   `cargo run --release -p game-data-pack -- --latest`, then `cargo check -p xiv-gen-db --features embed`
   and `cargo test -p game-data-pack`, and resolve whatever the bump broke before opening the PR.
+  Include the stable Dalamud/client-struct check and Windows staged plugin build
+  described in `AGENTS.md`. Required plugin compatibility updates are part of
+  the game-data bump, including SDK/API migrations when needed.
 
 If you genuinely can't get LFS content (e.g. fully offline), **at least run `cargo fmt --all -- --check`** — it doesn't need the packs and catches most CI failures from this repo's history. Note this in the PR so a reviewer knows clippy was not run.
 

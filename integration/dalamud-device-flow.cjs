@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-const {clientFetch:fetch}=require("./dalamud-client.cjs");
+const {clientFetch:fetch,enableLabs}=require("./dalamud-client.cjs");
 // This harness uses the repository's test-auth workflow. Never point it at production.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
@@ -18,6 +18,7 @@ async function api(method, route, body, token, extra = {}) {
 }
 async function localPage(context) {
   const page=await context.newPage();
+  await enableLabs(page,base);
   page.setDefaultTimeout(45000);
   page.setDefaultNavigationTimeout(120000);
   await page.evaluateOnNewDocument(()=>{window.__pluginPolicyViolations=[];document.addEventListener("securitypolicyviolation",event=>window.__pluginPolicyViolations.push(event.violatedDirective+": "+event.blockedURI));});
