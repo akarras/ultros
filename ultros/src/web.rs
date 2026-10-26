@@ -11,6 +11,7 @@ pub(crate) mod list_permission;
 pub(crate) mod oauth;
 pub(crate) mod plugin;
 pub(crate) mod price_series_cache;
+pub(crate) mod refresh_jobs;
 pub(crate) mod shutdown;
 pub(crate) mod sitemap;
 pub(crate) mod social_card;
@@ -38,7 +39,6 @@ use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio::time::timeout;
 use tower::ServiceBuilder;
 use tower_http::classify::ServerErrorsFailureClass;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
@@ -1579,6 +1579,7 @@ async fn refresh_world_item_listings(
     Path((world, item_id)): Path<(String, i32)>,
     State(world_cache): State<Arc<WorldCache>>,
     State(universalis): State<UniversalisClient>,
+    State(refreshes): State<refresh_jobs::RefreshJobs>,
     State(listing_events): State<
         ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
     >,
@@ -1592,88 +1593,90 @@ async fn refresh_world_item_listings(
             .into_response());
     }
     let lookup = world_cache.lookup_value_by_name(&world)?;
+    let refresh_key = (AnySelector::from(&lookup), item_id);
     let all_worlds = world_cache
         .get_all_worlds_in(&lookup)
         .ok_or_else(|| anyhow::Error::msg("Unable to get worlds"))?;
     let world_clone = world.clone();
-    let future = tokio::spawn(async move {
-        let boards: Vec<_> = all_worlds
-            .iter()
-            .map(|world| (WorldId(*world), ItemId(item_id)))
-            .collect();
-        let versions = db.capture_listing_boards(&boards).await?;
-        let current_data = universalis
-            .marketboard_current_data(&world_clone, &[item_id])
-            .await?;
-        // we can potentially get listings from multiple worlds from this call so we should group listings by world
-        let listings = match current_data {
-            universalis::MarketView::SingleView(v) => v.listings,
-            universalis::MarketView::MultiView(_) => {
-                return Result::<_, anyhow::Error>::Err(anyhow::Error::msg(
-                    "multiple listings returned?",
-                ));
-            }
-        };
-
-        // now ensure we insert all worlds into the map to account for empty worlds
-        let listings_by_world: HashMap<u16, Vec<ListingView>> =
-            all_worlds.into_iter().map(|w| (w as u16, vec![])).collect();
-        let first_key = if listings_by_world.len() == 1 {
-            listings_by_world.keys().next().copied()
-        } else {
-            None
-        };
-        let listings_by_world = listings
-            .into_iter()
-            .flat_map(|l| {
-                if let Some(key) = first_key {
-                    Some((key, l))
-                } else {
-                    l.world_id.map(|w| (w, l))
-                }
-            })
-            .fold(listings_by_world, |mut m, (w, l)| {
-                m.entry(w).or_default().push(l);
-                m
-            });
-        debug!("manually refreshed worlds: {listings_by_world:?}");
-        for (world_id, listings) in listings_by_world {
-            let version = versions
-                .get(&(WorldId(world_id as i32), ItemId(item_id)))
-                .copied()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("snapshot returned a world outside the requested scope")
-                })?;
-            let ultros_db::listings::ListingWrite {
-                added,
-                removed,
-                changes,
-            } = db
-                .update_listings(listings, ItemId(item_id), WorldId(world_id as i32), version)
+    refreshes
+        .run(refresh_key, move || async move {
+            let boards: Vec<_> = all_worlds
+                .iter()
+                .map(|world| (WorldId(*world), ItemId(item_id)))
+                .collect();
+            let versions = db.capture_listing_boards(&boards).await?;
+            let current_data = universalis
+                .marketboard_current_data(&world_clone, &[item_id])
                 .await?;
-            crate::record_listing_changes(
-                &listing_events,
-                &changes,
-                ultros_clickhouse::rows::ListingEventSource::Manual,
-            );
-            senders
-                .listings
-                .send(EventType::Add(Arc::new(ListingEventData {
-                    item_id,
-                    world_id: world_id.into(),
-                    listings: added,
-                })))?;
-            senders
-                .listings
-                .send(EventType::Remove(Arc::new(ListingEventData {
-                    item_id,
-                    world_id: world_id.into(),
-                    listings: removed,
-                })))?;
-        }
-        Ok(())
-    });
-    let _ = timeout(Duration::from_secs(1), future).await?;
+            // we can potentially get listings from multiple worlds from this call so we should group listings by world
+            let listings = match current_data {
+                universalis::MarketView::SingleView(v) => v.listings,
+                universalis::MarketView::MultiView(_) => {
+                    return Result::<_, anyhow::Error>::Err(anyhow::Error::msg(
+                        "multiple listings returned?",
+                    ));
+                }
+            };
+
+            // now ensure we insert all worlds into the map to account for empty worlds
+            let listings_by_world: HashMap<u16, Vec<ListingView>> =
+                all_worlds.into_iter().map(|w| (w as u16, vec![])).collect();
+            let first_key = if listings_by_world.len() == 1 {
+                listings_by_world.keys().next().copied()
+            } else {
+                None
+            };
+            let listings_by_world = listings
+                .into_iter()
+                .flat_map(|l| {
+                    if let Some(key) = first_key {
+                        Some((key, l))
+                    } else {
+                        l.world_id.map(|w| (w, l))
+                    }
+                })
+                .fold(listings_by_world, |mut m, (w, l)| {
+                    m.entry(w).or_default().push(l);
+                    m
+                });
+            debug!("manually refreshed worlds: {listings_by_world:?}");
+            for (world_id, listings) in listings_by_world {
+                let version = versions
+                    .get(&(WorldId(world_id as i32), ItemId(item_id)))
+                    .copied()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("snapshot returned a world outside the requested scope")
+                    })?;
+                let ultros_db::listings::ListingWrite {
+                    added,
+                    removed,
+                    changes,
+                } = db
+                    .update_listings(listings, ItemId(item_id), WorldId(world_id as i32), version)
+                    .await?;
+                crate::record_listing_changes(
+                    &listing_events,
+                    &changes,
+                    ultros_clickhouse::rows::ListingEventSource::Manual,
+                );
+                senders
+                    .listings
+                    .send(EventType::Add(Arc::new(ListingEventData {
+                        item_id,
+                        world_id: world_id.into(),
+                        listings: added,
+                    })))?;
+                senders
+                    .listings
+                    .send(EventType::Remove(Arc::new(ListingEventData {
+                        item_id,
+                        world_id: world_id.into(),
+                        listings: removed,
+                    })))?;
+            }
+            Ok(())
+        })
+        .await?;
     Ok(Redirect::to(&format!("/item/{world}/{item_id}")).into_response())
 }
 
@@ -1828,44 +1831,32 @@ pub(crate) async fn get_lists(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
 ) -> Result<Json<Vec<ListWithPermission>>, ApiError> {
-    let lists = try_join_all(
-        db.get_lists_for_user(user.id as i64)
-            .await?
-            .into_iter()
-            .map(|(list, owner_name)| {
-                let db = db.clone();
-                let user_id = user.id as i64;
-                async move {
-                    let permission = db.get_permission(list.id, user_id).await?;
-                    Ok::<_, ApiError>(ListWithPermission {
-                        list: List::try_from(list)?,
-                        permission,
-                        owner_name,
-                    })
-                }
-            }),
-    )
-    .await?;
+    let lists = db
+        .get_lists_with_permissions(user.id as i64)
+        .await?
+        .into_iter()
+        .map(|(list, owner_name, permission)| {
+            Ok::<_, ApiError>(ListWithPermission {
+                list: List::try_from(list)?,
+                permission,
+                owner_name,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(lists))
 }
 
 pub(crate) async fn get_list(
     State(db): State<UltrosDb>,
-    perm: crate::web::list_permission::RequireListPermission<{ crate::web::list_permission::READ }>,
+    Path(id): Path<i32>,
+    user: AuthDiscordUser,
 ) -> Result<Json<(ListWithPermission, Vec<ListItem>)>, ApiError> {
-    let ((list, owner_name), list_items) = futures::future::try_join(
-        db.get_list(perm.list_id, perm.user_id),
-        db.get_list_items(perm.list_id, perm.user_id),
-    )
-    .await?;
-    let list_items = list_items
-        .into_iter()
-        .map(ListItem::from)
-        .collect::<Vec<_>>();
+    let authorized = db.get_authorized_list(id, user.id as i64).await?;
+    let list_items = authorized.items.into_iter().map(ListItem::from).collect();
     let list = ListWithPermission {
-        list: List::try_from(list)?,
-        permission: perm.permission,
-        owner_name: Some(owner_name),
+        list: List::try_from(authorized.list)?,
+        permission: authorized.permission,
+        owner_name: Some(authorized.owner_name),
     };
     Ok(Json((list, list_items)))
 }
