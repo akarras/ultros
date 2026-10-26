@@ -76,6 +76,23 @@ populated. Before this change these lookups panicked instead, which killed live
 sale ingestion and the ClickHouse dual-write outright while the process kept
 serving.
 
+## Database budget for market ingest
+
+Websocket writes, catch-up/manual board reconciliation, sale acceptance, and
+pre-fetch revision reads share one budget on the cloned `UltrosDb`. It admits
+`min(16, max(1, pool_max / 2))` operations. Each operation resolves metadata
+before opening its board transaction and issues batches sequentially, holding at
+most one connection. A pool larger than one therefore reserves at least half its
+ceiling for other work; a one-connection pool cannot reserve headroom. This is a
+per-process limit, not a replacement for budgeting Postgres across replicas.
+
+`ultros_ingest_database_budget_wait_seconds` measures time waiting for admission.
+Rising waits with healthy web latency mean the budget is absorbing ingest load.
+Listings, changed retainers, and missing buyers are written in chunks of at most
+500 rows. Do not add nested budget acquisitions inside an admitted operation or
+perform metadata lookups through the pool while holding its transaction.
+
+
 ## Tuning
 
 | Env var | Default | Effect |
