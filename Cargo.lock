@@ -10489,6 +10489,7 @@ dependencies = [
  "dotenvy",
  "envy",
  "futures",
+ "getrandom 0.4.3",
  "http-body",
  "http-body-util",
  "hyper",

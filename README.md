@@ -131,6 +131,10 @@ cargo run --release -p game-data-pack -- --latest
 `--pinned` (the default) rebuilds reproducibly from the recorded pins. Commit the changed
 packs and manifest together.
 
+Each game-data update also includes a [stable Dalamud compatibility check](plugins/dalamud/README.md#game-patch-maintenance).
+Required plugin SDK/API or game-reader updates belong in the same maintenance change.
+The Windows `Dalamud` CI workflow runs for pack/manifest changes as well as plugin changes.
+
 The two halves of the data come from different places:
 
 *   **CSV packs** (`data/xiv-db/*.rkyv`) are built from the community
