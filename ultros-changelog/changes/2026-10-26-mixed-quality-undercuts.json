@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "HQ undercuts no longer get overlooked",
+  "blurb": "Undercut alerts now check normal-quality and high-quality listings separately, including when both update together.",
+  "link": "/retainers/undercuts"
+}
