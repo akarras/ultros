@@ -57,7 +57,7 @@ jobs:
                   dotnet-version: "10.0.x"
             - uses: dtolnay/rust-toolchain@master
               with:
-                  toolchain: nightly-2026-10-13
+                  toolchain: nightly-2026-10-25
             - name: Check update policy and release provenance fixtures
               run: |
                   ./plugins/dalamud/test-check-updates.ps1
