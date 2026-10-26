@@ -17,3 +17,6 @@ pub mod pricing;
 
 #[cfg(test)]
 mod price_basis;
+
+#[cfg(feature = "worker")]
+pub mod recipe_work;

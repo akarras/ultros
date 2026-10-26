@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <!-- One checked-in version for every managed assembly and release package. -->
-    <UltrosPluginVersion>1.4.0.0</UltrosPluginVersion>
+    <UltrosPluginVersion>1.4.0.1</UltrosPluginVersion>
     <UltrosPluginReleaseNotes>Connect once with list editing and retainer syncing selected by default. Retainers save automatically at a summoning bell, and new characters upload private selling lists and price changes without extra setup. Existing upload pauses are preserved.</UltrosPluginReleaseNotes>
     <Version>$(UltrosPluginVersion)</Version>
     <AssemblyVersion>$(UltrosPluginVersion)</AssemblyVersion>
