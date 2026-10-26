@@ -23,6 +23,24 @@ excluded from native tests to keep SSR and hydration features separate; all
 GitHub Actions also runs the local
 JavaScript regression tests and a dependency security audit.
 
+## Game-data updates include Dalamud compatibility
+
+Whenever updating game-data pins or regenerating packs under `data/`, also
+check the official stable Dalamud release and client structs. Required
+Dalamud SDK/API, reference, or reader compatibility changes are explicitly
+in scope for that game-data update; do not defer them as unrelated dependency
+work. Do not regenerate the packs solely to run this check.
+
+Run `plugins/dalamud/check-updates.ps1` on Windows. Use
+`-DownloadReferences -ReferenceDirectory <empty-directory>` for fresh stable
+references, then run `plugins/dalamud/build-plugin.ps1 -Configuration Release
+-StageOnly -DalamudHome <that-directory>`. The `Dalamud` GitHub workflow does
+this on game-data and plugin changes, including managed/native regression
+checks. A new stable API fails with migration guidance. Record the checked
+Dalamud version, client-struct hash and build result in the update's validation.
+In-game testing remains a separate check; keep unverified readers disabled
+and never replace only `capture-compatibility.json` to bypass a mismatch.
+
 ## Shipping a user-visible feature? Add a changelog entry
 
 When a change alters something a player would notice — a new tool, a new

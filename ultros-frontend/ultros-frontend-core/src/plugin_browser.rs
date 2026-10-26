@@ -1,5 +1,36 @@
 //! Browser-only consent transport. Do not instrument request fields or responses.
+use leptos::prelude::*;
 use ultros_api_types::plugin::*;
+
+#[derive(Clone, Copy)]
+struct PluginAvailability(Resource<Option<PluginWebsiteInfo>>);
+
+/// Share one availability request across discovery links, only after Labs opt-in.
+pub fn provide_availability() {
+    let (labs, _) = crate::global_state::labs::use_dalamud_labs();
+    provide_context(PluginAvailability(Resource::new_blocking(
+        move || labs.get(),
+        |enabled| async move { if enabled { info().await.ok() } else { None } },
+    )));
+}
+
+pub fn use_setup_available() -> Signal<bool> {
+    let PluginAvailability(info) = expect_context::<PluginAvailability>();
+    let (labs, _) = crate::global_state::labs::use_dalamud_labs();
+    Signal::derive(move || labs.get() && info.get().flatten().as_ref().is_some_and(setup_available))
+}
+
+pub fn setup_available(config: &PluginWebsiteInfo) -> bool {
+    config.enabled
+        && (config.localhost
+            || [
+                &config.latest_version,
+                &config.repository_url,
+                &config.download_url,
+            ]
+            .iter()
+            .all(|value| value.as_ref().is_some_and(|value| !value.is_empty())))
+}
 
 pub async fn info() -> crate::error::AppResult<PluginWebsiteInfo> {
     crate::api::fetch_api("/api/v1/plugin/browser/info").await

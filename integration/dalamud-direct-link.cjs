@@ -1,5 +1,5 @@
 "use strict";
-const {clientFetch:fetch}=require("./dalamud-client.cjs");
+const {clientFetch:fetch,enableLabs}=require("./dalamud-client.cjs");
 const assert=require("node:assert/strict");
 const {createHash}=require("node:crypto");
 const fs=require("node:fs/promises");
@@ -32,6 +32,7 @@ async function main(){
   let page;
   try {
     page=await browser.newPage();await page.setViewport({width:1440,height:1000});page.setDefaultTimeout(45000);page.setDefaultNavigationTimeout(120000);
+    await enableLabs(page,base);
     async function click(selector){
       const element=await page.waitForSelector(selector,{visible:true});
       await element.evaluate(element=>element.scrollIntoView({block:"center",inline:"nearest"}));await element.dispose();

@@ -51,6 +51,7 @@ async fn handle_upgrade(
 
     enum Action {
         Tx(AlertsTx),
+        Batch(Vec<AlertsTx>),
         Pong(Vec<u8>),
     }
     // Set when the loop exits because the server is shutting down rather than
@@ -144,35 +145,22 @@ async fn handle_upgrade(
                             .handle_listing_event(listing_event.map_err(|e| e.into()))
                             .await
                         {
-                            Ok(ok) => match ok {
-                                None => {
+                            Ok(detections) => {
+                                if detections.is_empty() {
                                     continue;
                                 }
-                                Some(DetectedUndercut {
-                                    undercut:
-                                        Undercut {
-                                            item_id,
-                                            undercut_retainers,
-                                        },
-                                    ..
-                                }) => {
-                                    let item_name = utils::get_item_name(item_id).to_string();
-                                    Action::Tx(AlertsTx::RetainerUndercut {
-                                        item_id,
-                                        item_name,
-                                        undercut_retainers: undercut_retainers
-                                            .into_iter()
-                                            .map(|u| {
-                                                ultros_api_types::websocket::UndercutRetainer {
-                                                    id: u.id,
-                                                    name: u.name,
-                                                    undercut_amount: u.undercut_amount,
-                                                }
-                                            })
-                                            .collect(),
-                                    })
-                                }
-                            },
+                                let messages = detections.into_iter().map(|DetectedUndercut {
+                                    undercut: Undercut { item_id, undercut_retainers }, ..
+                                }| AlertsTx::RetainerUndercut {
+                                    item_id, item_name: utils::get_item_name(item_id).to_string(),
+                                    undercut_retainers: undercut_retainers.into_iter().map(|u| {
+                                        ultros_api_types::websocket::UndercutRetainer {
+                                            id: u.id, name: u.name, undercut_amount: u.undercut_amount,
+                                        }
+                                    }).collect(),
+                                }).collect();
+                                Action::Batch(messages)
+                            }
                             Err(e) => {
                                 error!("{e:?}");
                                 continue;
@@ -212,9 +200,21 @@ async fn handle_upgrade(
             },
         };
 
-        if let Err(value) = match result {
-            Action::Tx(tx) => ws.send(Message::Text(serde_json::to_string(&tx).unwrap().into())),
-            Action::Pong(pong) => ws.send(Message::Pong(pong.into())),
+        if let Err(value) = async {
+            match result {
+                Action::Tx(tx) => {
+                    ws.send(Message::Text(serde_json::to_string(&tx)?.into()))
+                        .await?
+                }
+                Action::Batch(messages) => {
+                    for tx in messages {
+                        ws.send(Message::Text(serde_json::to_string(&tx)?.into()))
+                            .await?;
+                    }
+                }
+                Action::Pong(pong) => ws.send(Message::Pong(pong.into())).await?,
+            }
+            Ok::<_, anyhow::Error>(())
         }
         .await
         {

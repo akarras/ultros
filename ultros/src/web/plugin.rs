@@ -2,6 +2,7 @@
 //! All game APIs use a separate bearer principal; no Discord token leaves the browser.
 pub(crate) mod browser;
 mod flows;
+mod key_file;
 mod notifications;
 mod releases;
 pub(crate) fn wake_notifications(owner: i64) {
@@ -134,29 +135,19 @@ impl PluginConfig {
             url.scheme() == "https" || local,
             "HTTP plugin mode requires the plugin-localhost feature and a loopback HOSTNAME"
         );
-        fn deployment_key(name: &str) -> anyhow::Result<Vec<u8>> {
-            let value = std::env::var(name).map_err(|_| {
-                anyhow::anyhow!("{name} is required when plugin connections are enabled")
-            })?;
-            anyhow::ensure!(
-                value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()),
-                "{name} must contain 64 hexadecimal characters"
-            );
-            (0..64)
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&value[i..i + 2], 16).map_err(anyhow::Error::from))
-                .collect()
-        }
         let keys = if local {
             PluginKeys::new(cookie_key.signing(), cookie_key.encryption(), &origin)
+                .map_err(|_| anyhow::anyhow!("invalid plugin deployment keys"))?
         } else {
-            PluginKeys::new(
-                &deployment_key("ULTROS_PLUGIN_PAIRING_KEY")?,
-                &deployment_key("ULTROS_PLUGIN_IDENTITY_KEY")?,
+            key_file::deployment_keys(
+                std::env::var("ULTROS_PLUGIN_PAIRING_KEY").ok().as_deref(),
+                std::env::var("ULTROS_PLUGIN_IDENTITY_KEY").ok().as_deref(),
+                std::env::var_os("ULTROS_PLUGIN_KEY_FILE")
+                    .as_deref()
+                    .map(std::path::Path::new),
                 &origin,
-            )
-        }
-        .map_err(|_| anyhow::anyhow!("invalid plugin deployment keys"))?;
+            )?
+        };
         let trusted_proxies = std::env::var("ULTROS_PLUGIN_TRUSTED_PROXIES")
             .unwrap_or_default()
             .split(',')

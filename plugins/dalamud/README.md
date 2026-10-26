@@ -4,7 +4,9 @@ One plugin with browser-approved account access, item listings/recent sales, sha
 
 ## Install
 
-Visit **https://ultros.app/plugin/** for availability and setup. The backend serves a [Dalamud custom repository](https://dalamud.dev/plugin-publishing/custom-repositories/) at **https://ultros.app/api/v1/plugin/repository.json**. Add that address under Dalamud Settings → Experimental → Custom Plugin Repositories, then install **Ultros** in `/xlplugins`. Open `/ultros` and connect using browser approval. The repository remains empty until an operator publishes a compatible release.
+The plugin is an experimental Labs feature and has not completed in-game testing. Enable **Dalamud game plugin** under **Settings → Labs** on the website to show its navigation, installation guide, account connection flow and Labs announcements. Discovery links also require an enabled backend and an available package; opting in never advertises a missing installation. The toggle defaults off and is saved for this browser. Turning it off hides those entry points; existing clients can still be disconnected at `/plugin/devices`.
+
+For a published release, visit **https://ultros.app/plugin/** for availability and setup. The backend serves a [Dalamud custom repository](https://dalamud.dev/plugin-publishing/custom-repositories/) at **https://ultros.app/api/v1/plugin/repository.json**. Add that address under Dalamud Settings → Experimental → Custom Plugin Repositories, then install **Ultros** in `/xlplugins`. Open `/ultros` and connect using browser approval. The repository remains empty until an operator publishes a compatible release.
 
 For migration from the development prototype, disable every old Ultros dev-plugin entry before installing. The internal name is now **Ultros**, so this is a fresh plugin installation and needs a new connection. Preserve any unsynchronized local work before removing old files. Website lists and retainer registrations stay with your account.
 
@@ -41,14 +43,51 @@ Add the printed Ultros.dll path under **Dalamud settings → Experimental → De
 
 Rebuild in the same configuration for C# iteration; the script publishes dependencies and compatibility metadata before replacing the watched plugin DLL. At runtime, the release client copies its tested Rust library into a hash-checked cache inside its configuration directory before loading it. This keeps the installed source DLL replaceable during updates, while existing documents keep their original module alive through finalization. Old prototype installations loaded that source DLL directly: exit the game once if they still lock it. No timestamped or hashed installation folders are created.
 
+## Game patch maintenance
+
+Whenever updating game-data pins or regenerating packs, check stable Dalamud too.
+Required SDK/API, reference and game-reader compatibility changes are part of that
+maintenance work. This check does not change the live Dalamud installation:
+
+~~~powershell
+# Read-only check of official stable Dalamud against installed development references:
+pwsh -File plugins/dalamud/check-updates.ps1
+# Download a consistent stable distribution into an empty, separate directory:
+pwsh -File plugins/dalamud/check-updates.ps1 -DownloadReferences -ReferenceDirectory artifacts/dalamud/stable-references
+pwsh -File plugins/dalamud/build-plugin.ps1 -Configuration Release -StageOnly -DalamudHome artifacts/dalamud/stable-references
+~~~
+
+The checker pins metadata and ZIP to one official stable distribution commit,
+compares its API with the SDK pin, and checks the downloaded assembly version.
+API migration, stale references and unavailable upstream metadata fail the check.
+Record the Dalamud version, client-struct SHA-256 and staged build result with the
+game-data update. Same-API releases can change client structs, so use a fresh full
+package build rather than replacing compatibility metadata. The Windows `Dalamud`
+workflow performs this check/build on plugin and game-data changes. It does not
+publish a release or establish in-game/Wine compatibility.
+
+For the browser/device flow on an isolated `test-auth,plugin-localhost` server,
+enable `RUN_DALAMUD=1` in `scripts/run_e2e.sh`. This runs the full device flow,
+including rotation, disconnect and denial. When validating a published release,
+also set `EXPECT_PLUGIN_RELEASE=1` so an empty repository fails.
+
 ## Publish a release
 
 The single version source is `Directory.Build.props`: `UltrosPluginVersion`, a four-part numeric version (`major.minor.patch.revision`), with `UltrosPluginReleaseNotes` for the installer changelog. Feature additions increment minor; compatible fixes increment patch. Protocol 1 and native ABI 2 are separate compatibility contracts and change only when those contracts change.
+
+The Docker workflow prepares the Windows package before building the web image. New versions get a clean full Release build, regression checks and a `dalamud-v<version>` GitHub prerelease containing `Ultros.zip` and `release.json`. PR builds validate and stage packages without publishing. Later web builds reuse the published bytes and preserve older version directories in the image. Changed package inputs (including root dependency/toolchain configuration) or stable Dalamud references require a version bump; the workflow fails with guidance instead of silently shipping an old package or replacing immutable bytes.
+
+For ultros.app, merge to `main` and let the Docker workflow publish `ghcr.io/akarras/ultros:main`. Watchtower on `chew@boxbox` follows that image. Do not manually restart/recreate the container or copy files into it. The runtime image enables the plugin endpoints and includes the validated release directory. Verify the release, repository and ZIP after Watchtower updates it; website discovery remains behind Labs.
+
+The image uses `ULTROS_PLUGIN_KEY_FILE=/app/analyzer-data/plugin-keys.json` on the existing persistent data volume. First startup generates two independent cryptographically random keys and atomically saves an owner-only file; subsequent starts reuse it. Preserve and back up this file with the volume: losing the identity key or changing the production origin orphans private identity registrations. Invalid/inaccessible files fail closed without overwriting them. Supplying both explicit environment keys overrides file-backed keys; supplying only one is rejected. Plugin keys are separate from the website cookie key and never baked into the image.
+
+For a separately managed server, the manual packaging path remains available:
 
 1. Update the version, metadata and player changelog, run the root `./check_ci.sh`, and commit the release sources.
 2. Run `pwsh -File plugins/dalamud/build-plugin.ps1 -Configuration Release -PublishRelease`. This builds/tests a fresh native library, checks managed/native versions and emits an immutable ZIP plus metadata under `artifacts/dalamud/releases/<version>/`. It also runs the native shadow-copy update test. Localhost-enabled, dirty-source and reused-native builds cannot be published. Publishing does not replace the live development installation.
 3. Copy the complete version directory to the release volume, then atomically replace `current.json` last. Mount that volume read-only in the web container and set `ULTROS_PLUGIN_RELEASE_DIR` to its container path. Keep old version directories for immutable download URLs.
 4. Check `/api/v1/plugin/release`, `/api/v1/plugin/repository.json` and the advertised ZIP. The index includes the source commit, SHA-256, byte size, protocol, native ABI and Dalamud API level. Reusing a version with different package content is rejected; bump the version instead.
+5. Keep the website behind its default-off Labs toggle while testing. Mark plugin announcements with `labs: true` and link them to `/plugin` so they follow the opt-in and do not light the public what's-new badge. Public setup requires enabled connections and a published download; localhost testing can use a development build without publishing.
 
 Set `ULTROS_PLUGIN_MINIMUM_VERSION` (default `1.0.0.0`) when a release must replace older clients. Every game API request carries `X-Ultros-Client-Version` and `X-Ultros-Protocol-Version`; missing, malformed, old or incompatible values receive HTTP 426 with an update address. These labels are compatibility checks; scoped bearer authentication remains required independently. Capabilities, installation downloads and revocation remain available to outdated clients. Publish a usable release before raising the minimum.
 
@@ -62,9 +101,11 @@ pwsh -File ./plugins/dalamud/serve-localhost.ps1 -Port 8080
 
 This enables server feature plugin-localhost, sets ULTROS_PLUGIN_ENABLED=true, and binds to loopback. In the plugin's **Settings**, enable **Target localhost development server**, enter the exact origin (such as http://localhost:8080), save, and reload. Hostname and port must match the server's HOSTNAME. Production and localhost have different credential/cache namespaces.
 
+On the local website, enable **Settings → Labs → Dalamud game plugin** before opening the guide or approving a connection. This browser preference controls website discovery; the server's plugin flag, published package and scoped device grants still control API availability and access.
+
 Optional server switch **-TestAuth** enables the repository fixture login. On an isolated local server, visit /test/login?user_id=7777777777777&username=LocalPlayer&redirect=/plugin/verify to bypass Discord. Otherwise use ordinary Discord login. The helper does not change your database or Discord configuration.
 
-Production connections default off. Enabling ULTROS_PLUGIN_ENABLED=true requires HTTPS HOSTNAME and separately provisioned, stable 32-byte hexadecimal ULTROS_PLUGIN_PAIRING_KEY and ULTROS_PLUGIN_IDENTITY_KEY secrets. Localhost derives separate origin-bound development keys from the existing cookie key. Preserve the identity key across deployments.
+Raw server runs default to disabled connections. Enabling ULTROS_PLUGIN_ENABLED=true requires HTTPS HOSTNAME and either a persistent ULTROS_PLUGIN_KEY_FILE or both stable 32-byte hexadecimal ULTROS_PLUGIN_PAIRING_KEY and ULTROS_PLUGIN_IDENTITY_KEY secrets. The production Docker image supplies the enabled flag, package location and persistent key-file path. Localhost derives separate origin-bound development keys from the existing cookie key. Preserve the identity key across deployments.
 
 ## Website setup guide
 
@@ -94,8 +135,8 @@ Changing list/account/character, disabling the option, loading incomplete invent
 - Discord credentials never enter the plugin. Access tokens stay in memory. Rotating refresh tokens use verified Windows CurrentUser DPAPI and a user-only directory ACL. Wine/unverified storage uses memory only. This does not isolate credentials from other code running as your OS user or inside the game.
 - Refresh expires after 30 idle days/90 absolute days. An uncertain refresh is not retried; the client attempts revocation and requires reconnecting. Tokens never enter URLs, logs, Rust, clipboard or plugin configuration.
 - Use a distinct profile per simultaneous game process. Exclusive locks protect credentials/documents. Connected carts are keyed by origin, profile, account and list. Server authorization is checked again for every operation.
-- Rust owns recovery; C# writes atomic checkpoints before sending pending work or resuming recovered edits. Save failure pauses edits/sync. Recovery conflicts retain both copies; **Keep server copy** backs up the original local document. Explicit list permission denial removes its cached checkpoints; login/network failure preserves unsent work.
-- Uploads are private, consent/revision checked and receipt-idempotent. Open All Listings/Undercuts pages check for private captures every five seconds while visible, alongside existing public market events. The in-memory capture queue holds at most 10, expires after 10 minutes and is invalidated when the visit/module stops. Raw content IDs are HMACed before database storage and never persisted in a local upload queue.
+- Rust owns recovery; C# writes atomic checkpoints before sending pending work or resuming recovered edits. Save failure pauses edits/sync. Disconnect waits for unsaved work to save; if storage is still unavailable, the connection and live document stay open for retry. Connection replacement also saves before releasing the old document, and hides it from the new session while waiting. Recovery conflicts retain both copies; **Keep server copy** backs up the original local document. Explicit list permission denial removes its cached checkpoints; login/network failure preserves unsent work.
+- Uploads are private, consent/revision checked and receipt-idempotent. Transient failures retry the same receipt/body while Markets stays open, with backoff; only server-confirmed rows are suppressed as unchanged. Permission/consent/revision denials require a fresh selling-list update. Open All Listings/Undercuts pages check for private captures every five seconds while visible, alongside existing public market events. The in-memory capture queue holds at most 10, expires after 10 minutes and is invalidated when the visit/module stops. Raw content IDs are HMACed before database storage and never persisted in a local upload queue.
 - Notifications are delivered at least once. A crash around toast acknowledgment can repeat one. Alert acceptance and destination queues commit together; external destinations retry transient failures.
 - The local lab saves Cart A under merge-lab-carts/PROFILE/cart.loro. Peer B is scratch state. cart.loro.before-merge preserves the previous cart; unload retries dirty saves and attempts .unsaved-recovery. Restore backups with the plugin unloaded.
 

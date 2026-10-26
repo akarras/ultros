@@ -1,0 +1,8 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Retainer uploads recover from interruptions",
+  "blurb": "Temporary connection or server failures now retry your private retainer snapshot while Markets stays open. Listings are marked uploaded after the server confirms them.",
+  "link": "/plugin",
+  "labs": true
+}

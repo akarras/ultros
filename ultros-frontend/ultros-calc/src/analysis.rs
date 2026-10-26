@@ -806,6 +806,24 @@ mod tests {
     }
 
     #[test]
+    fn flip_estimated_sale_price_behavior() {
+        // When there is no floor, we assume the item will sell at the median.
+        assert_eq!(flip_estimated_sale_price(1000, None), 1000);
+
+        // When the floor is valid and below the median, we conservatively assume
+        // the item will sell at the floor.
+        assert_eq!(flip_estimated_sale_price(1000, Some(800)), 800);
+
+        // When the floor is valid but above the median, we cap the estimate at the median.
+        assert_eq!(flip_estimated_sale_price(1000, Some(1200)), 1000);
+
+        // When the floor is an obvious troll listing (e.g. 100,000 when median is 1000),
+        // we ignore the floor entirely and fall back to the median.
+        let troll_floor = 1000 * TROLL_MULTIPLE as i32 + 1;
+        assert_eq!(flip_estimated_sale_price(1000, Some(troll_floor)), 1000);
+    }
+
+    #[test]
     fn test_analyze_sales_empty() {
         let stats = analyze_sales(&[], false);
         assert_eq!(stats.total_sales, 0);
