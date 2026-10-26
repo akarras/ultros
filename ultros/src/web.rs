@@ -4,12 +4,14 @@ pub(crate) mod country_code_decoder;
 pub(crate) mod error;
 pub(crate) mod home_feed_cache;
 pub(crate) mod item_card;
+mod json_cache;
 #[cfg(feature = "test-auth")]
 mod list_market_fixture;
 pub(crate) mod list_permission;
 pub(crate) mod oauth;
 pub(crate) mod plugin;
 pub(crate) mod price_series_cache;
+pub(crate) mod refresh_jobs;
 pub(crate) mod shutdown;
 pub(crate) mod sitemap;
 pub(crate) mod social_card;
@@ -37,7 +39,6 @@ use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio::time::timeout;
 use tower::ServiceBuilder;
 use tower_http::classify::ServerErrorsFailureClass;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
@@ -531,6 +532,30 @@ fn open_window_cache_stamp(to_ts: i64, grain: i64) -> i64 {
     to_ts - to_ts.rem_euclid(grain)
 }
 
+/// Defaults move with `now`, including the lower bound. Quantize only their
+/// cache identities; explicit timestamps remain exact and queries keep the
+/// original window, including the newest partial bucket.
+fn chart_cache_window(
+    from: i64,
+    to: i64,
+    default_from: bool,
+    default_to: bool,
+    grain: i64,
+) -> (i64, i64) {
+    (
+        if default_from {
+            open_window_cache_stamp(from, grain)
+        } else {
+            from
+        },
+        if default_to {
+            open_window_cache_stamp(to, grain)
+        } else {
+            to
+        },
+    )
+}
+
 /// Uniform bin height covering `[lo, hi]` inclusive in `bins` steps, floored
 /// at 1 gil so degenerate windows (every sale at one price) still bin sanely.
 fn density_bin_width(lo: u32, hi: u32, bins: u16) -> f64 {
@@ -732,7 +757,7 @@ async fn price_series(
     State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
     Path((world, item_id)): Path<(String, i32)>,
     axum::extract::Query(query): axum::extract::Query<PriceSeriesQuery>,
-) -> Result<axum::response::Response, WebError> {
+) -> Result<axum::response::Response, error::SharedWebError> {
     let group = match query.group.as_deref() {
         Some("region") => SeriesGroup::Region,
         Some("datacenter") => SeriesGroup::Datacenter,
@@ -745,16 +770,18 @@ async fn price_series(
     };
 
     let now = chrono::Utc::now();
-    let to = query
-        .to
-        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
-        .unwrap_or(now);
-    let from = query
-        .from
-        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
-        .unwrap_or_else(|| now - chrono::Duration::days(365 * 12));
+    let to = match query.to {
+        Some(t) => chrono::DateTime::from_timestamp(t, 0)
+            .ok_or_else(|| error::SharedWebError::from(WebError::BadRequest))?,
+        None => now,
+    };
+    let from = match query.from {
+        Some(t) => chrono::DateTime::from_timestamp(t, 0)
+            .ok_or_else(|| error::SharedWebError::from(WebError::BadRequest))?,
+        None => now - chrono::Duration::days(365 * 12),
+    };
     if from >= to {
-        return Err(WebError::BadRequest);
+        return Err(WebError::BadRequest.into());
     }
 
     let span_secs = (to - from).num_seconds().max(1);
@@ -768,11 +795,13 @@ async fn price_series(
     // `to` itself is left at `now`: only the cache key is quantized, so live
     // views still share an entry without the query window losing its newest
     // sales. See [`open_window_cache_stamp`] for why flooring `to` is a bug.
-    let cache_to = if query.to.is_none() {
-        open_window_cache_stamp(to.timestamp(), ttl_secs as i64)
-    } else {
-        to.timestamp()
-    };
+    let (cache_from, cache_to) = chart_cache_window(
+        from.timestamp(),
+        to.timestamp(),
+        query.from.is_none(),
+        query.to.is_none(),
+        ttl_secs as i64,
+    );
 
     // The cache key is built from the *pre-widening* `bucket_seconds` — the
     // value resolved above from the request, before `build_price_series`'s
@@ -796,34 +825,35 @@ async fn price_series(
     let cache_key = crate::web::price_series_cache::CacheKey {
         item_id,
         scope: world.clone(),
-        from: from.timestamp(),
+        from: cache_from,
         to: cache_to,
+        default_from: query.from.is_none(),
+        default_to: query.to.is_none(),
         bucket: bucket_seconds,
         group: group.as_str(),
         hq: hq.as_str(),
         bins: 0,
     };
-    if let Some(hit) = cache.get(&cache_key) {
-        return Ok(cached_json(hit, ttl));
-    }
+    let body = cache
+        .get_or_load(cache_key, ttl, move || async move {
+            let payload = build_price_series(
+                &ch,
+                &world_cache,
+                PriceSeriesArgs {
+                    world: &world,
+                    item_id,
+                    from,
+                    to,
+                    group,
+                    hq,
+                    bucket: Some(bucket_seconds),
+                },
+            )
+            .await?;
 
-    let payload = build_price_series(
-        &ch,
-        &world_cache,
-        PriceSeriesArgs {
-            world: &world,
-            item_id,
-            from,
-            to,
-            group,
-            hq,
-            bucket: Some(bucket_seconds),
-        },
-    )
-    .await?;
-
-    let body = serde_json::to_string(&payload).map_err(anyhow::Error::from)?;
-    cache.insert(cache_key, body.clone(), ttl);
+            serde_json::to_string(&payload).map_err(|e| WebError::from(anyhow::Error::from(e)))
+        })
+        .await?;
     Ok(cached_json(body, ttl))
 }
 
@@ -857,6 +887,8 @@ async fn floor_history(
         } else {
             open_window_cache_stamp(to, 60)
         },
+        default_from: false,
+        default_to: query.to.is_none(),
         bucket: 0,
         group: "floor",
         hq: hq.as_str(),
@@ -938,6 +970,8 @@ async fn undercut_pressure(
         } else {
             open_window_cache_stamp(to, 60)
         },
+        default_from: false,
+        default_to: query.to.is_none(),
         bucket: requested_bucket,
         group: "pressure",
         hq: hq.as_str(),
@@ -1010,6 +1044,8 @@ async fn floor_history_batch(
         scope: world.clone(),
         from: request.from,
         to: request.to,
+        default_from: false,
+        default_to: false,
         bucket: request.interval.seconds(),
         group: "floor_window",
         hq: if hq { "hq" } else { "nq" },
@@ -1029,7 +1065,7 @@ async fn floor_history_batch(
         {
             match cache
                 .get(&key(item_id, hq))
-                .and_then(|body| serde_json::from_str::<ItemFloorHistory>(&body).ok())
+                .and_then(|body| serde_json::from_slice::<ItemFloorHistory>(&body).ok())
             {
                 Some(hit) => hits.push(hit),
                 None => complete = false,
@@ -1074,7 +1110,11 @@ async fn floor_history_batch(
 
 /// JSON response carrying a `Cache-Control` matching the in-process TTL, so
 /// the browser and any CDN absorb repeats too.
-fn cached_json(body: String, ttl: std::time::Duration) -> axum::response::Response {
+fn cached_json(
+    body: impl Into<axum::body::Bytes>,
+    ttl: std::time::Duration,
+) -> axum::response::Response {
+    let body = body.into();
     (
         [
             (
@@ -1134,7 +1174,7 @@ async fn price_density(
     State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
     Path((world, item_id)): Path<(String, i32)>,
     axum::extract::Query(query): axum::extract::Query<PriceDensityQuery>,
-) -> Result<axum::response::Response, WebError> {
+) -> Result<axum::response::Response, error::SharedWebError> {
     let hq = match query.hq.as_deref() {
         Some("hq") => HqFilter::Hq,
         Some("nq") => HqFilter::Nq,
@@ -1143,16 +1183,18 @@ async fn price_density(
     let bins = query.price_bins.unwrap_or(32).clamp(8, 96);
 
     let now = chrono::Utc::now();
-    let to = query
-        .to
-        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
-        .unwrap_or(now);
-    let from = query
-        .from
-        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
-        .unwrap_or_else(|| now - chrono::Duration::days(365 * 12));
+    let to = match query.to {
+        Some(t) => chrono::DateTime::from_timestamp(t, 0)
+            .ok_or_else(|| error::SharedWebError::from(WebError::BadRequest))?,
+        None => now,
+    };
+    let from = match query.from {
+        Some(t) => chrono::DateTime::from_timestamp(t, 0)
+            .ok_or_else(|| error::SharedWebError::from(WebError::BadRequest))?,
+        None => now - chrono::Duration::days(365 * 12),
+    };
     if from >= to {
-        return Err(WebError::BadRequest);
+        return Err(WebError::BadRequest.into());
     }
 
     let span_secs = (to - from).num_seconds().max(1);
@@ -1171,88 +1213,93 @@ async fn price_density(
     // same data-loss trap, as price_series.
     let ttl_secs = cache_ttl_secs(query.to.is_some(), bucket_seconds);
     let ttl = std::time::Duration::from_secs(ttl_secs);
-    let cache_to = if query.to.is_none() {
-        open_window_cache_stamp(to.timestamp(), ttl_secs as i64)
-    } else {
-        to.timestamp()
-    };
+    let (cache_from, cache_to) = chart_cache_window(
+        from.timestamp(),
+        to.timestamp(),
+        query.from.is_none(),
+        query.to.is_none(),
+        ttl_secs as i64,
+    );
 
     let cache_key = crate::web::price_series_cache::CacheKey {
         item_id,
         scope: world.clone(),
-        from: from.timestamp(),
+        from: cache_from,
         to: cache_to,
+        default_from: query.from.is_none(),
+        default_to: query.to.is_none(),
         bucket: bucket_seconds,
         group: "density",
         hq: hq.as_str(),
         bins,
     };
-    if let Some(hit) = cache.get(&cache_key) {
-        return Ok(cached_json(hit, ttl));
-    }
+    let body = cache
+        .get_or_load(cache_key, ttl, move || async move {
+            let selected_value = world_cache.lookup_value_by_name(&world)?;
+            let worlds = world_cache
+                .get_all_worlds_in(&selected_value)
+                .ok_or_else(|| Error::msg("Unable to get worlds"))?;
 
-    let selected_value = world_cache.lookup_value_by_name(&world)?;
-    let worlds = world_cache
-        .get_all_worlds_in(&selected_value)
-        .ok_or_else(|| Error::msg("Unable to get worlds"))?;
-
-    let extent = ultros_clickhouse::queries::price_min_max(&ch, item_id, &worlds, hq, from, to)
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = ?e, item_id, "price_density min_max CH query failed");
-            crate::web::error::ClickHouseQueryError::new("price_min_max", e)
-        })?;
-
-    let payload = match extent {
-        None => ultros_api_types::price_density::PriceDensity {
-            bucket_seconds,
-            from: from.naive_utc(),
-            to: to.naive_utc(),
-            price_lo: 0,
-            bin_width: 1.0,
-            price_bins: bins,
-            cells: Vec::new(),
-        },
-        Some((lo, hi)) => {
-            let bin_width = density_bin_width(lo, hi, bins);
-            let rows = ultros_clickhouse::queries::price_density(
-                &ch,
-                item_id,
-                &worlds,
-                hq,
-                from,
-                to,
-                bucket_seconds,
-                lo,
-                bin_width,
-                bins,
+            let extent = ultros_clickhouse::queries::price_min_max(
+                &ch, item_id, &worlds, hq, from, to,
             )
             .await
             .map_err(|e| {
-                tracing::warn!(error = ?e, item_id, "price_density CH query failed");
-                crate::web::error::ClickHouseQueryError::new("price_density", e)
+                tracing::warn!(error = ?e, item_id, "price_density min_max CH query failed");
+                crate::web::error::ClickHouseQueryError::new("price_min_max", e)
             })?;
-            ultros_api_types::price_density::PriceDensity {
-                bucket_seconds,
-                from: from.naive_utc(),
-                to: to.naive_utc(),
-                price_lo: lo as i32,
-                bin_width,
-                price_bins: bins,
-                cells: rows
-                    .into_iter()
-                    .map(|r| ultros_api_types::price_density::DensityCell {
-                        ts: r.bucket.naive_utc(),
-                        bin: r.price_bin,
-                        n: u32::try_from(r.n).unwrap_or(u32::MAX),
-                    })
-                    .collect(),
-            }
-        }
-    };
 
-    let body = serde_json::to_string(&payload).map_err(anyhow::Error::from)?;
-    cache.insert(cache_key, body.clone(), ttl);
+            let payload = match extent {
+                None => ultros_api_types::price_density::PriceDensity {
+                    bucket_seconds,
+                    from: from.naive_utc(),
+                    to: to.naive_utc(),
+                    price_lo: 0,
+                    bin_width: 1.0,
+                    price_bins: bins,
+                    cells: Vec::new(),
+                },
+                Some((lo, hi)) => {
+                    let bin_width = density_bin_width(lo, hi, bins);
+                    let rows = ultros_clickhouse::queries::price_density(
+                        &ch,
+                        item_id,
+                        &worlds,
+                        hq,
+                        from,
+                        to,
+                        bucket_seconds,
+                        lo,
+                        bin_width,
+                        bins,
+                    )
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(error = ?e, item_id, "price_density CH query failed");
+                        crate::web::error::ClickHouseQueryError::new("price_density", e)
+                    })?;
+                    ultros_api_types::price_density::PriceDensity {
+                        bucket_seconds,
+                        from: from.naive_utc(),
+                        to: to.naive_utc(),
+                        price_lo: lo as i32,
+                        bin_width,
+                        price_bins: bins,
+                        cells: rows
+                            .into_iter()
+                            .map(|r| ultros_api_types::price_density::DensityCell {
+                                ts: r.bucket.naive_utc(),
+                                bin: r.price_bin,
+                                n: u32::try_from(r.n).unwrap_or(u32::MAX),
+                            })
+                            .collect(),
+                    }
+                }
+            };
+
+            serde_json::to_string(&payload).map_err(|e| WebError::from(anyhow::Error::from(e)))
+        })
+        .await?;
     Ok(cached_json(body, ttl))
 }
 
@@ -1345,6 +1392,25 @@ mod failure_report_level_tests {
 #[cfg(test)]
 mod price_series_tests {
     use super::*;
+
+    #[test]
+    fn default_chart_bounds_share_a_key_while_explicit_bounds_stay_exact() {
+        let grain = 3600;
+        let lookback = 365 * 12 * 86_400;
+        let first = chart_cache_window(NOW - lookback, NOW, true, true, grain);
+        let next = chart_cache_window(NOW + 1 - lookback, NOW + 1, true, true, grain);
+        assert_eq!(first, next, "both moving defaults must be canonicalized");
+        let explicit = chart_cache_window(NOW - lookback + 7, NOW + 9, false, false, grain);
+        assert_eq!(explicit, (NOW - lookback + 7, NOW + 9));
+        assert_eq!(
+            chart_cache_window(7, NOW + 1, false, true, grain),
+            (7, first.1)
+        );
+        assert_eq!(
+            chart_cache_window(NOW + 1 - lookback, 9, true, false, grain),
+            (first.0, 9)
+        );
+    }
 
     #[test]
     fn density_bin_width_covers_the_inclusive_range() {
@@ -1513,6 +1579,7 @@ async fn refresh_world_item_listings(
     Path((world, item_id)): Path<(String, i32)>,
     State(world_cache): State<Arc<WorldCache>>,
     State(universalis): State<UniversalisClient>,
+    State(refreshes): State<refresh_jobs::RefreshJobs>,
     State(listing_events): State<
         ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
     >,
@@ -1526,88 +1593,90 @@ async fn refresh_world_item_listings(
             .into_response());
     }
     let lookup = world_cache.lookup_value_by_name(&world)?;
+    let refresh_key = (AnySelector::from(&lookup), item_id);
     let all_worlds = world_cache
         .get_all_worlds_in(&lookup)
         .ok_or_else(|| anyhow::Error::msg("Unable to get worlds"))?;
     let world_clone = world.clone();
-    let future = tokio::spawn(async move {
-        let boards: Vec<_> = all_worlds
-            .iter()
-            .map(|world| (WorldId(*world), ItemId(item_id)))
-            .collect();
-        let versions = db.capture_listing_boards(&boards).await?;
-        let current_data = universalis
-            .marketboard_current_data(&world_clone, &[item_id])
-            .await?;
-        // we can potentially get listings from multiple worlds from this call so we should group listings by world
-        let listings = match current_data {
-            universalis::MarketView::SingleView(v) => v.listings,
-            universalis::MarketView::MultiView(_) => {
-                return Result::<_, anyhow::Error>::Err(anyhow::Error::msg(
-                    "multiple listings returned?",
-                ));
-            }
-        };
-
-        // now ensure we insert all worlds into the map to account for empty worlds
-        let listings_by_world: HashMap<u16, Vec<ListingView>> =
-            all_worlds.into_iter().map(|w| (w as u16, vec![])).collect();
-        let first_key = if listings_by_world.len() == 1 {
-            listings_by_world.keys().next().copied()
-        } else {
-            None
-        };
-        let listings_by_world = listings
-            .into_iter()
-            .flat_map(|l| {
-                if let Some(key) = first_key {
-                    Some((key, l))
-                } else {
-                    l.world_id.map(|w| (w, l))
-                }
-            })
-            .fold(listings_by_world, |mut m, (w, l)| {
-                m.entry(w).or_default().push(l);
-                m
-            });
-        debug!("manually refreshed worlds: {listings_by_world:?}");
-        for (world_id, listings) in listings_by_world {
-            let version = versions
-                .get(&(WorldId(world_id as i32), ItemId(item_id)))
-                .copied()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("snapshot returned a world outside the requested scope")
-                })?;
-            let ultros_db::listings::ListingWrite {
-                added,
-                removed,
-                changes,
-            } = db
-                .update_listings(listings, ItemId(item_id), WorldId(world_id as i32), version)
+    refreshes
+        .run(refresh_key, move || async move {
+            let boards: Vec<_> = all_worlds
+                .iter()
+                .map(|world| (WorldId(*world), ItemId(item_id)))
+                .collect();
+            let versions = db.capture_listing_boards(&boards).await?;
+            let current_data = universalis
+                .marketboard_current_data(&world_clone, &[item_id])
                 .await?;
-            crate::record_listing_changes(
-                &listing_events,
-                &changes,
-                ultros_clickhouse::rows::ListingEventSource::Manual,
-            );
-            senders
-                .listings
-                .send(EventType::Add(Arc::new(ListingEventData {
-                    item_id,
-                    world_id: world_id.into(),
-                    listings: added,
-                })))?;
-            senders
-                .listings
-                .send(EventType::Remove(Arc::new(ListingEventData {
-                    item_id,
-                    world_id: world_id.into(),
-                    listings: removed,
-                })))?;
-        }
-        Ok(())
-    });
-    let _ = timeout(Duration::from_secs(1), future).await?;
+            // we can potentially get listings from multiple worlds from this call so we should group listings by world
+            let listings = match current_data {
+                universalis::MarketView::SingleView(v) => v.listings,
+                universalis::MarketView::MultiView(_) => {
+                    return Result::<_, anyhow::Error>::Err(anyhow::Error::msg(
+                        "multiple listings returned?",
+                    ));
+                }
+            };
+
+            // now ensure we insert all worlds into the map to account for empty worlds
+            let listings_by_world: HashMap<u16, Vec<ListingView>> =
+                all_worlds.into_iter().map(|w| (w as u16, vec![])).collect();
+            let first_key = if listings_by_world.len() == 1 {
+                listings_by_world.keys().next().copied()
+            } else {
+                None
+            };
+            let listings_by_world = listings
+                .into_iter()
+                .flat_map(|l| {
+                    if let Some(key) = first_key {
+                        Some((key, l))
+                    } else {
+                        l.world_id.map(|w| (w, l))
+                    }
+                })
+                .fold(listings_by_world, |mut m, (w, l)| {
+                    m.entry(w).or_default().push(l);
+                    m
+                });
+            debug!("manually refreshed worlds: {listings_by_world:?}");
+            for (world_id, listings) in listings_by_world {
+                let version = versions
+                    .get(&(WorldId(world_id as i32), ItemId(item_id)))
+                    .copied()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("snapshot returned a world outside the requested scope")
+                    })?;
+                let ultros_db::listings::ListingWrite {
+                    added,
+                    removed,
+                    changes,
+                } = db
+                    .update_listings(listings, ItemId(item_id), WorldId(world_id as i32), version)
+                    .await?;
+                crate::record_listing_changes(
+                    &listing_events,
+                    &changes,
+                    ultros_clickhouse::rows::ListingEventSource::Manual,
+                );
+                senders
+                    .listings
+                    .send(EventType::Add(Arc::new(ListingEventData {
+                        item_id,
+                        world_id: world_id.into(),
+                        listings: added,
+                    })))?;
+                senders
+                    .listings
+                    .send(EventType::Remove(Arc::new(ListingEventData {
+                        item_id,
+                        world_id: world_id.into(),
+                        listings: removed,
+                    })))?;
+            }
+            Ok(())
+        })
+        .await?;
     Ok(Redirect::to(&format!("/item/{world}/{item_id}")).into_response())
 }
 
@@ -1762,44 +1831,32 @@ pub(crate) async fn get_lists(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
 ) -> Result<Json<Vec<ListWithPermission>>, ApiError> {
-    let lists = try_join_all(
-        db.get_lists_for_user(user.id as i64)
-            .await?
-            .into_iter()
-            .map(|(list, owner_name)| {
-                let db = db.clone();
-                let user_id = user.id as i64;
-                async move {
-                    let permission = db.get_permission(list.id, user_id).await?;
-                    Ok::<_, ApiError>(ListWithPermission {
-                        list: List::try_from(list)?,
-                        permission,
-                        owner_name,
-                    })
-                }
-            }),
-    )
-    .await?;
+    let lists = db
+        .get_lists_with_permissions(user.id as i64)
+        .await?
+        .into_iter()
+        .map(|(list, owner_name, permission)| {
+            Ok::<_, ApiError>(ListWithPermission {
+                list: List::try_from(list)?,
+                permission,
+                owner_name,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(lists))
 }
 
 pub(crate) async fn get_list(
     State(db): State<UltrosDb>,
-    perm: crate::web::list_permission::RequireListPermission<{ crate::web::list_permission::READ }>,
+    Path(id): Path<i32>,
+    user: AuthDiscordUser,
 ) -> Result<Json<(ListWithPermission, Vec<ListItem>)>, ApiError> {
-    let ((list, owner_name), list_items) = futures::future::try_join(
-        db.get_list(perm.list_id, perm.user_id),
-        db.get_list_items(perm.list_id, perm.user_id),
-    )
-    .await?;
-    let list_items = list_items
-        .into_iter()
-        .map(ListItem::from)
-        .collect::<Vec<_>>();
+    let authorized = db.get_authorized_list(id, user.id as i64).await?;
+    let list_items = authorized.items.into_iter().map(ListItem::from).collect();
     let list = ListWithPermission {
-        list: List::try_from(list)?,
-        permission: perm.permission,
-        owner_name: Some(owner_name),
+        list: List::try_from(authorized.list)?,
+        permission: authorized.permission,
+        owner_name: Some(authorized.owner_name),
     };
     Ok(Json((list, list_items)))
 }

@@ -1161,7 +1161,7 @@ impl UpdateService {
         let mut tally = CatchupTally::default();
         let total_chunks = item_ids.chunks(100).len();
         for (chunk_index, item_ids) in item_ids.chunks(100).enumerate() {
-            if checkpoint.is_some() && self.shutdown.is_cancelled() {
+            if self.shutdown.is_cancelled() {
                 info!(world = %world_name, "full sweep: stopping for shutdown; progress is recorded");
                 break;
             }
@@ -1171,7 +1171,11 @@ impl UpdateService {
                 .iter()
                 .map(|item| (world_id, ItemId(*item)))
                 .collect();
-            let versions = match self.db.capture_listing_boards(&boards).await {
+            let captured = tokio::select! {
+                _ = self.shutdown.cancelled() => break,
+                result = self.db.capture_listing_boards(&boards) => result,
+            };
+            let versions = match captured {
                 Ok(versions) => versions,
                 Err(error) => {
                     let remaining = (total_chunks - chunk_index) as u64;
@@ -1182,12 +1186,11 @@ impl UpdateService {
                     break;
                 }
             };
-            let market_data = match retry_transient(|| {
-                self.universalis
-                    .marketboard_current_data(world_name, item_ids)
-            })
-            .await
-            {
+            let fetched = tokio::select! {
+                _ = self.shutdown.cancelled() => break,
+                result = retry_transient(|| self.universalis.marketboard_current_data(world_name, item_ids)) => result,
+            };
+            let market_data = match fetched {
                 Ok(data) => data,
                 Err(e) if e.is_transient() => {
                     // Preserve eligibility even after these items leave the
@@ -1296,8 +1299,12 @@ impl UpdateService {
                             }
                             Err(e) => {
                                 if e.downcast_ref::<ultros_db::listings::StaleBoardSnapshot>().is_some() {
-                                    info!(?item_id, ?world_id, "snapshot superseded by live market activity; retrying later");
-                                    return CatchupOutcome::Failed;
+                                    // Live events already wrote a newer board. Treating
+                                    // this as a failure would pin the sweep's restart
+                                    // point, so a busy board could keep its world from
+                                    // ever completing.
+                                    info!(?item_id, ?world_id, "snapshot superseded by live market activity");
+                                    return CatchupOutcome::Noop;
                                 }
                                 error!(error = ?e, item_id = item_id.0, world_id = world_id.0, "catch-up listing update failed");
                                 // Storing the sales would bump `listing_last_updated`,

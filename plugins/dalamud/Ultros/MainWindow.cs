@@ -14,8 +14,7 @@ internal sealed class MainWindow : Window
     private readonly InventoryAcquisition inventoryProgress;
     private readonly Configuration config;
     private string label="My game client";
-    private bool editLists,register,upload,readRetainers;
-    private bool permissionsInitialized;
+    private bool editLists=true,register=true,upload=true,readRetainers=true;
     private bool localhost;
     private string localOrigin,profile;
     private string search="",scope="";
@@ -57,7 +56,6 @@ internal sealed class MainWindow : Window
         var v=worker.View;
         if(automaticScope)scope=v.PriceRegion;
         if(pendingMarket&&scope.Length>0){pendingMarket=false;Submit(worker.FetchItem(itemId,scope));}
-        if(!permissionsInitialized&&v.Session is not null){editLists=v.Scopes.Contains("lists:write");register=v.Scopes.Contains("retainers:register");upload=v.Scopes.Contains("retainers:upload");readRetainers=v.Scopes.Contains("retainers:read");permissionsInitialized=true;}
         ImGui.TextUnformatted(v.Connected?$"Connected · {v.Session?.AccountName} · {v.Session?.Label}":"Connect this game client to Ultros");
         if(config.Localhost)ImGui.TextColored(new Vector4(1,.7f,.2f,1),"LOCALHOST DEVELOPMENT");
         ImGui.TextWrapped(v.Status);
@@ -80,11 +78,15 @@ internal sealed class MainWindow : Window
     {
         ImGui.TextWrapped(v.StorageMode);
         ImGui.InputText("Client label",ref label,64);
-        ImGui.TextWrapped("Approve permissions in your browser. Notification delivery and list reading are requested by default.");
-        ImGui.Checkbox("Edit cart rows",ref editLists);
-        ImGui.Checkbox("View characters and retainer listings",ref readRetainers);
-        ImGui.Checkbox("Observe and register retainers",ref register);
-        ImGui.Checkbox("Upload private retainer listings",ref upload);
+        ImGui.TextWrapped("Connect once to sync lists, save your retainers, upload private selling prices and receive alerts. All connection permissions are selected by default; review them in your browser.");
+        if(v.Connected&&(!v.Scopes.Contains("lists:write")||!v.Scopes.Contains("retainers:register")||!v.Scopes.Contains("retainers:upload")))
+            ImGui.TextWrapped("This connection has limited permissions. Choose Review new permissions to enable the remaining features with one browser approval.");
+        if(ImGui.CollapsingHeader("Customize connection permissions")) {
+            ImGui.Checkbox("Edit cart rows",ref editLists);
+            if(ImGui.Checkbox("View characters and retainer listings",ref readRetainers)&&!readRetainers)register=upload=false;
+            if(ImGui.Checkbox("Observe and register retainers",ref register)&&register)readRetainers=true;
+            if(ImGui.Checkbox("Upload private retainer listings",ref upload)&&upload)readRetainers=true;
+        }
         if(ImGui.Button(v.Connected?"Review new permissions":"Connect to Ultros"))Submit(worker.Pair(label,editLists,register,upload,readRetainers));
         if(v.HumanCode is { } code)
         {
@@ -252,7 +254,7 @@ internal sealed class MainWindow : Window
             }finally{ImGui.EndDisabled();}
         }
         if(v.Connected&&ImGui.Button("Open my retainers on Ultros"))Open(new Uri(new Uri(v.VerificationUrl),"/retainers").AbsoluteUri);
-        ImGui.TextWrapped("Saving adds retainers to your Ultros account on the website and in game. Characters observed in game are unverified. There is no Lodestone bio challenge to complete.");
+        ImGui.TextWrapped("With registration approved, visiting a summoning bell automatically saves observed retainers to your Ultros account. New characters allow private uploads by default; you can pause them below. Game observations do not verify Lodestone ownership.");
         foreach(var character in v.Characters)
         {
             ImGui.PushID(character.Id);
@@ -283,9 +285,9 @@ internal sealed class MainWindow : Window
     }
     private void UploaderControls()
     {
-        var enabled=config.CaptureEnabled&&config.CaptureGameBuild==capture.GameBuild;
+        var enabled=config.CaptureEnabled&&capture.Compatible&&capture.GameBuild is not null&&config.CaptureGameBuild==capture.GameBuild;
         ImGui.TextUnformatted($"Listing uploader on this game client: {(enabled?"enabled":"off")}");
-        ImGui.TextWrapped("Reads selling lists you open for characters with upload permission below. Listings are private until Universalis confirms them.");
+        ImGui.TextWrapped("Enabled by default after connection approval. Reads selling lists you open and uploads confirmed price changes. Pause this client or individual characters at any time. Listings are private until Universalis confirms them.");
         ImGui.BeginDisabled(!capture.Compatible||capture.GameBuild is null);
         try
         {

@@ -22,6 +22,9 @@ internal static class ClientChecks
         ListEditTargetChecks.Run();
         InventoryProgressChecks.Run();
         RetainerPriceChecks.Run();
+        CaptureUploadChecks.Run();
+        await WorkerChecks.Uploads();
+        await WorkerChecks.DefaultSetup();
         var observationTime=DateTimeOffset.UtcNow;
         var observedCharacter=new ObservedCharacter("123456789","Same Name",63,[]);
         var oldCharacter=new UnverifiedCharacter("1","Same Name",63,true,false,false,0,observationTime.AddDays(-1),[]);
@@ -139,7 +142,7 @@ internal static class ClientChecks
         Require(gate.Observe("visit-a",false,true,1,rows,now.AddSeconds(3)) is null,"Debounce skipped.");
         Require(gate.Observe("visit-a",false,true,1,rows,now.AddMilliseconds(3400)) is null,"Debounce too short.");
         Require(gate.Observe("visit-a",false,true,1,rows,now.AddMilliseconds(3600)) is not null,"Stable complete capture missing.");
-        gate.Submitted(rows);
+        gate.Acknowledged(rows);
         Require(gate.Observe("visit-a",false,true,1,rows,now.AddSeconds(5)) is null,"Identical capture submitted twice.");
         var changed=new[]{rows[0] with {UnitPrice=90}};
         Require(gate.Observe("visit-a",false,true,1,changed,now.AddSeconds(6)) is null,"Price-only change skipped debounce.");

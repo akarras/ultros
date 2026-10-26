@@ -29,7 +29,7 @@ Authorization, cookies, raw credential responses, pairing credentials and launch
 
 ## Authority and private game data
 
-Notification delivery/read state, list reads/writes and retainer reads/registration/uploads have distinct approved scopes. Dependencies are checked as a set. Registration, list editing and uploads require explicit choices; private uploads also require the module switch and per-character consent.
+Notification delivery/read state, list reads/writes and retainer reads/registration/uploads have distinct approved scopes. Dependencies are checked as a set. The plugin requests all of them by default in one browser approval; players can customize a more limited grant. Approved registration automatically saves observed retainers at a summoning bell. The local listing uploader defaults on only with verified reader compatibility, and registration enables uploads for a new character or an untouched epoch-zero preference. Local settings with no saved game-build pin also adopt the new default. Explicit pauses are preserved, and the local/per-character pause controls and consent epochs still apply. Existing limited grants require browser reauthorization to add scopes.
 
 Game APIs authenticate bearer proof independently from browser cookies. Version/protocol headers are compatibility labels, not authorization. Missing/unsupported versions receive HTTP 426; capabilities, public release downloads and credential revocation remain available. See [release metadata and gates](../ultros/src/web/plugin/releases.rs).
 

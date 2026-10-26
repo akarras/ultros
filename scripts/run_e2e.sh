@@ -469,7 +469,7 @@ esac
 if [ "${RUN_DALAMUD:-0}" = "1" ]; then
     log "running plugin installation, consent, release and private-retainer E2E"
     dalamud_exit=0
-    for suite in test:plugin-link-bootstrap test:dalamud-releases test:dalamud-guide test:dalamud-direct-link test:dalamud-retainers; do
+    for suite in test:plugin-link-bootstrap test:dalamud-releases test:dalamud-guide test:dalamud-direct-link test:dalamud; do
         ( cd integration && BASE_URL="$BASE_URL" npm run "$suite" ) || dalamud_exit=$?
     done
     if [ "$dalamud_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then test_exit="$dalamud_exit"; fi

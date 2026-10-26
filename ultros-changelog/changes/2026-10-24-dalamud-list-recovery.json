@@ -1,0 +1,8 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Keep unsaved in-game list progress",
+  "blurb": "Ultros saves pending list edits before disconnecting or changing connections. If saving is still unavailable, your edits stay open so you can retry.",
+  "link": "/plugin",
+  "labs": true
+}

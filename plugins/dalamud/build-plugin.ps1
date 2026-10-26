@@ -19,6 +19,7 @@ if ($PublishRelease -and ($Configuration -ne 'Release' -or $EnableLocalhost -or 
 if (![System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
     throw 'Build this Windows x64 plugin on Windows with the MSVC Rust toolchain.'
 }
+if ($DalamudHome) { $DalamudHome = (Resolve-Path -LiteralPath $DalamudHome).Path }
 
 function Invoke-Checked([string]$Program, [string[]]$Arguments) {
     & $Program @Arguments
@@ -140,6 +141,7 @@ try {
             SourceCommit=$initialSource.Commit
             SourceDirty=($initialSource.Dirty -or $finalSource.Dirty -or $initialSource.Commit -ne $finalSource.Commit)
             ClientStructsSha256=$compatibility.ClientStructsSha256
+            DalamudVersion=[Reflection.AssemblyName]::GetAssemblyName((Join-Path $referenceDirectory 'Dalamud.dll')).Version.ToString(4)
             NativeSha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $staging 'ultros_list_doc_ffi.dll')).Hash
             CpuBaseline='x86-64'; PanicStrategy='unwind'
         }

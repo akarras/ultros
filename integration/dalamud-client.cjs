@@ -14,4 +14,9 @@ function clientFetch(input, init = {}) {
   }
   return globalThis.fetch(input,{...init,headers:merged});
 }
-module.exports = {headers,clientFetch,version};
+async function enableLabs(page, base) {
+  const url = new URL(base);
+  if (!["localhost","127.0.0.1","[::1]"].includes(url.hostname)) throw new Error("Labs fixtures require a loopback server");
+  await page.setCookie({name:"LABS_DALAMUD",value:"true",url:url.origin+"/",path:"/",sameSite:"Lax"});
+}
+module.exports = {headers,clientFetch,version,enableLabs};

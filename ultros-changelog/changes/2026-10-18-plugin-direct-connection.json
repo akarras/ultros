@@ -3,5 +3,6 @@
   "importance": "medium",
   "title": "Connect your game without typing a code",
   "blurb": "Open the plugin’s approval link to review your connection directly. A short matching code is still available when you sign in on your phone or another device.",
-  "link": "/plugin/verify"
+  "link": "/plugin",
+  "labs": true
 }

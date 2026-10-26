@@ -1200,8 +1200,8 @@ pub fn ListShop(
                     <div class="flex flex-wrap items-center justify-between gap-3">
                         <strong data-testid="shop-totals">{t_string!(i18n, list_shop_totals, cost = totals.cost.separate_with_commas(), surplus = totals.surplus.separate_with_commas(), missing = totals.missing.separate_with_commas())}</strong>
                         <div class="flex flex-wrap gap-2">
-                            <button class="btn-secondary min-h-11" data-testid="shop-refresh" on:click=move |_| refresh.run(())>{move || t_string!(i18n, list_shop_replan)}</button>
-                            <button class="btn-secondary min-h-11" data-testid="open-shopping-companion" on:click=pop_out>{move || t_string!(i18n, list_shop_popout)}</button>
+                            <button type="button" class="btn-secondary min-h-11" data-testid="shop-refresh" on:click=move |_| refresh.run(())>{move || t_string!(i18n, list_shop_replan)}</button>
+                            <button type="button" class="btn-secondary min-h-11" data-testid="open-shopping-companion" on:click=pop_out>{move || t_string!(i18n, list_shop_popout)}</button>
                         </div>
                     </div>
                     {feed.fetched_at().map(|time| view! { <p class="text-xs text-[color:var(--color-text-muted)]" data-testid="shop-price-age">{t_string!(i18n, lists_estimate_fetched)}" "<RelativeToNow timestamp=time.naive_utc() /></p> })}
@@ -1230,8 +1230,8 @@ pub fn ListShop(
                         <p>{t_string!(i18n, list_shop_review_current)}" "{totals_text(&current)}</p>
                         <p data-testid="shop-review-next">{t_string!(i18n, list_shop_review_next)}" "{totals_text(&next)}</p>
                         <div class="flex flex-wrap gap-2">
-                            <button class="btn-primary min-h-11" data-testid="shop-review-apply" on:click=apply_review>{t_string!(i18n, list_shop_review_apply)}</button>
-                            <button class="btn-secondary min-h-11" data-testid="shop-review-keep" on:click=move |_| review.set(None)>{t_string!(i18n, list_shop_review_keep)}</button>
+                            <button type="button" class="btn-primary min-h-11" data-testid="shop-review-apply" on:click=apply_review>{t_string!(i18n, list_shop_review_apply)}</button>
+                            <button type="button" class="btn-secondary min-h-11" data-testid="shop-review-keep" on:click=move |_| review.set(None)>{t_string!(i18n, list_shop_review_keep)}</button>
                         </div>
                     </div>
                 }
@@ -1281,7 +1281,7 @@ pub fn ListShop(
                                             amount.set(limit.get_untracked().to_string());
                                         }
                                     }/>
-                                    <button class="btn-primary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="shop-stack-bought" disabled=move || !row.get().can_buy || !can_edit.get() on:click=move |_| {
+                                    <button type="button" class="btn-primary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="shop-stack-bought" disabled=move || !row.get().can_buy || !can_edit.get() on:click=move |_| {
                                         let live = row.get_untracked();
                                         match amount.get_untracked().parse::<i32>() {
                                             Ok(quantity) if quantity > 0 && i64::from(quantity) <= live.quantity => {
@@ -1291,7 +1291,7 @@ pub fn ListShop(
                                             _ => notice.set(live.invalid_quantity),
                                         }
                                     }>{move || if row.get().done { t_string!(i18n, list_shop_recorded).to_string() } else { t_string!(i18n, list_shop_bought).to_string() }}</button>
-                                    <button class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="shop-stack-gone" disabled=move || row.get().done on:click=move |_| {
+                                    <button type="button" class="btn-secondary min-h-11 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="shop-stack-gone" disabled=move || row.get().done on:click=move |_| {
                                         if let Ok(id) = gone_key.parse() { unavailable.update(|ids| { ids.insert(id); }); }
                                         notice.set(t_string!(i18n, list_shop_excluded).to_string());
                                     }>{move || t_string!(i18n, list_shop_gone)}</button>

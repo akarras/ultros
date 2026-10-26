@@ -139,11 +139,11 @@ pub fn Groups() -> impl IntoView {
                             <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, groups_page_heading)}</h1>
                                 <div class="flex flex-wrap gap-2">
-                                    <button class="btn-secondary" on:click=move |_| toggle_panel(CreatePanel::Discord)>
+                                    <button type="button" class="btn-secondary" on:click=move |_| toggle_panel(CreatePanel::Discord)>
                                         <Icon icon=if panel() == CreatePanel::Discord { i::AiCloseOutlined } else { i::BsDiscord } />
                                         {move || if panel() == CreatePanel::Discord { Either::Left(t!(i18n, cancel)) } else { Either::Right(t!(i18n, groups_create_from_discord)) }}
                                     </button>
-                                    <button class="btn-primary" on:click=move |_| toggle_panel(CreatePanel::Manual)>
+                                    <button type="button" class="btn-primary" on:click=move |_| toggle_panel(CreatePanel::Manual)>
                                         <Icon icon=if panel() == CreatePanel::Manual { i::AiCloseOutlined } else { i::BiPlusRegular } />
                                         {move || if panel() == CreatePanel::Manual { Either::Left(t!(i18n, cancel)) } else { Either::Right(t!(i18n, groups_create_group)) }}
                                     </button>

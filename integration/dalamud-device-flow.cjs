@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-const {clientFetch:fetch}=require("./dalamud-client.cjs");
+const {clientFetch:fetch,enableLabs}=require("./dalamud-client.cjs");
 // This harness uses the repository's test-auth workflow. Never point it at production.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
@@ -18,6 +18,7 @@ async function api(method, route, body, token, extra = {}) {
 }
 async function localPage(context) {
   const page=await context.newPage();
+  await enableLabs(page,base);
   page.setDefaultTimeout(45000);
   page.setDefaultNavigationTimeout(120000);
   await page.evaluateOnNewDocument(()=>{window.__pluginPolicyViolations=[];document.addEventListener("securitypolicyviolation",event=>window.__pluginPolicyViolations.push(event.violatedDirective+": "+event.blockedURI));});
@@ -140,12 +141,13 @@ async function main() {
     }
     await page.screenshot({path:path.join(artifact,"saved-retainers.png"),fullPage:true});
     assert.deepEqual(pageErrors,[],"the saved roster routes must hydrate without browser exceptions");
-    const consent=await api("POST","/api/v1/plugin/characters/"+character.id+"/uploads",{enabled:true},access);
-    assert.equal(consent.status,200);const current=consent.data.find(c=>c.id===character.id);const retainer=current.retainers[0];
+    assert.equal(character.upload_enabled,true,"new registrations must allow uploads without a second opt-in");
+    const current=character;const retainer=current.retainers[0];
     assert(Number.isInteger(retainer.public_retainer_id),"registration must create a real retainer record before any Universalis listing");
     await page.goto(new URL("/retainers/listings",base).href,{waitUntil:"networkidle0"});
     const capture={capture_id:crypto.randomUUID().replaceAll("-",""),base_revision:retainer.revision,capture_epoch:current.capture_epoch,observed_at:new Date().toISOString(),complete:true,listings:[{slot:0,item_id:8,hq:false,quantity:5,unit_price:100},{slot:1,item_id:8,hq:false,quantity:5,unit_price:100}]};
-    assert.equal((await api("POST","/api/v1/plugin/retainers/"+retainer.id+"/listings",capture,access)).status,200);
+    const uploaded=await api("POST","/api/v1/plugin/retainers/"+retainer.id+"/listings",capture,access);
+    assert.equal(uploaded.status,200);
     const pricePath="/api/v1/plugin/retainers/"+retainer.id+"/prices";
     assert.equal((await api("GET",pricePath)).status,401,"price lookup needs a scoped game credential");
     const prices=await api("GET",pricePath,undefined,access);
@@ -160,6 +162,10 @@ async function main() {
     assert(gameGroup,"observed characters must be grouped in the normal API");
     const pendingRows=gameGroup[1].find(([r])=>r.id===retainer.public_retainer_id)[1];
     assert.equal(pendingRows.length,2);assert(pendingRows.every(row=>row.id.source==="in_game"));
+    assert.equal(await page.$$eval('[data-listing-source="in-game"]',rows=>rows.length),2,"identical uploaded stacks must stay separate in the open page");
+    const repriced={...capture,capture_id:crypto.randomUUID().replaceAll("-",""),base_revision:uploaded.data.revision,observed_at:new Date().toISOString(),listings:capture.listings.map(row=>row.slot===0?{...row,unit_price:90}:row)};
+    assert.equal((await api("POST","/api/v1/plugin/retainers/"+retainer.id+"/listings",repriced,access)).status,200);
+    await page.waitForFunction(()=>Array.from(document.querySelectorAll('[data-listing-source="in-game"]')).some(source=>source.closest("tr").querySelectorAll("td")[2]?.textContent.trim()==="90"),{timeout:15000});
     const legacyRoster=await api("GET","/api/v1/user/retainer",undefined,undefined,{Cookie:cookies});
     assert.equal(legacyRoster.status,200);
     assert(legacyRoster.data.retainers.every(([group])=>group===null||("id" in group&&!('kind' in group))),"v1 characters must keep their flat legacy shape");
