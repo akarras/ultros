@@ -9,6 +9,7 @@ pub use ultros_frontend_core::global_state::craft_options;
 pub use ultros_frontend_core::global_state::crafter_levels;
 pub use ultros_frontend_core::global_state::guest_alerts;
 pub use ultros_frontend_core::global_state::home_world;
+pub use ultros_frontend_core::global_state::labs;
 pub use ultros_frontend_core::global_state::lists_readonly;
 pub use ultros_frontend_core::global_state::local_world_data;
 pub use ultros_frontend_core::global_state::notifications;

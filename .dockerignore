@@ -4,6 +4,10 @@
 # Local exports must not invalidate COPY . . when CI extracts another target.
 /build-timings
 /debug
+/artifacts
+/plugins/dalamud/**/bin
+/plugins/dalamud/**/obj
+/integration/artifacts
 
 # Docker
 Dockerfile
@@ -36,6 +40,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+/analyzer-data/plugin-keys.json
 
 # Repo-level docs (not needed in the runtime image; build context only)
 /README.md
