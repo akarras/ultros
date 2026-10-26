@@ -1,8 +1,8 @@
 <Project>
   <PropertyGroup>
     <!-- One checked-in version for every managed assembly and release package. -->
-    <UltrosPluginVersion>1.3.1.1</UltrosPluginVersion>
-    <UltrosPluginReleaseNotes>Keep unsaved list progress when disconnecting or changing connections, and retry interrupted private retainer uploads without reopening Markets.</UltrosPluginReleaseNotes>
+    <UltrosPluginVersion>1.3.1.2</UltrosPluginVersion>
+    <UltrosPluginReleaseNotes>Rebuilt on refreshed dependencies. No behaviour changes.</UltrosPluginReleaseNotes>
     <Version>$(UltrosPluginVersion)</Version>
     <AssemblyVersion>$(UltrosPluginVersion)</AssemblyVersion>
     <FileVersion>$(UltrosPluginVersion)</FileVersion>
