@@ -15,6 +15,7 @@ pub mod lists;
 pub mod market_sweep;
 pub mod notification_outbox;
 pub mod plugin;
+pub mod recent_sales;
 pub mod recently_updated;
 pub mod retainers;
 pub mod sales;

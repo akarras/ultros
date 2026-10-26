@@ -19,8 +19,7 @@ use migration::{
     sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set},
 };
 use sea_orm::{
-    ActiveValue, Condition, DatabaseTransaction, DbBackend, FromQueryResult, QueryOrder,
-    QuerySelect, Statement,
+    ActiveValue, Condition, DatabaseTransaction, FromQueryResult, QueryOrder, QuerySelect,
 };
 use tracing::{instrument, warn};
 use ultros_api_types::{SaleHistory, UnknownCharacter};
@@ -225,6 +224,7 @@ impl UltrosDb {
         }))
         .exec_with_returning(transaction)
         .await?;
+        crate::recent_sales::project_sales(transaction, &inserted, world_id, item_id).await?;
         let buyers_by_id: HashMap<i32, _> = buyers.into_values().map(|b| (b.id, b)).collect();
         Ok(attach_buyers(inserted, &buyers_by_id))
     }
@@ -359,15 +359,7 @@ impl UltrosDb {
         &self,
         n_sales: i32,
     ) -> Result<impl Stream<Item = Result<AbbreviatedSaleData, DbErr>> + '_, DbErr> {
-        AbbreviatedSaleData::find_by_statement(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                r#"SELECT filter.* FROM (SELECT h.sold_item_id, h.hq, h.price_per_item, h.sold_date, h.world_id,
-                RANK() OVER (PARTITION BY h.sold_item_id, h.hq, h.world_id ORDER BY h.sold_date DESC) sale_rank
-                FROM sale_history h) filter
-                WHERE filter.sale_rank <= $1
-                "#,
-                vec![n_sales.into()],
-            ))
+        AbbreviatedSaleData::find_by_statement(self.recent_sales_statement(n_sales).await?)
             .stream(&self.db)
             .await
     }

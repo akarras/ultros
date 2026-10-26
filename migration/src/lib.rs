@@ -7,6 +7,7 @@ mod m20260923_000001_active_listing_id_bigint;
 mod m20260923_000002_sale_history_id_seq_wrap;
 mod m20261018_000001_retainer_name_prefix;
 mod m20261023_000001_listing_board_revisions;
+mod m20261023_000002_recent_sale_history;
 
 mod m20220101_000001_create_table;
 mod m20220908_111724_create_index;
@@ -126,6 +127,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261018_000004_game_retainer_listings::Migration),
             Box::new(m20261020_000001_listing_board_reviews::Migration),
             Box::new(m20261023_000001_listing_board_revisions::Migration),
+            Box::new(m20261023_000002_recent_sale_history::Migration),
         ]
     }
 }
