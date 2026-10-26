@@ -14,10 +14,7 @@ pub const SCOPES: &[(&str, &str)] = &[
     ("lists:write", "Edit shopping list rows"),
     ("retainers:read", "Read private characters and retainers"),
     ("retainers:register", "Register characters and retainers"),
-    (
-        "retainers:upload",
-        "Upload listings for opted-in characters",
-    ),
+    ("retainers:upload", "Upload private retainer listings"),
 ];
 
 pub fn valid_scopes(scopes: &[String]) -> bool {

@@ -366,6 +366,10 @@ async fn plugin_connected_flows_postgres() {
         .unwrap();
     assert_eq!(registered[0].id, again[0].id);
     assert_eq!(registered[0].retainers.len(), 1);
+    assert!(
+        registered[0].upload_enabled,
+        "new registrations allow uploads by default"
+    );
     let website = db.registered_game_characters(owner).await.unwrap();
     assert_eq!(website[0].id, registered[0].id);
     assert_eq!(website[0].retainers[0].name, "FixtureRetainer");
@@ -405,10 +409,42 @@ async fn plugin_connected_flows_postgres() {
     ));
     let character = registered[0].id.parse::<i64>().unwrap();
     let retainer = registered[0].retainers[0].id.parse::<i64>().unwrap();
-    let mut capture = ListingCapture {
+    // Emulate a character saved by the old client before any upload preference
+    // was chosen. The new client's automatic registration adopts the new default.
+    exec(
+        &db.db,
+        "UPDATE plugin_character SET upload_enabled=false,capture_epoch=0 WHERE id=$1",
+        vec![character.into()],
+    )
+    .await
+    .unwrap();
+    let upgraded = db
+        .register_plugin_retainers(
+            &principal,
+            &keys,
+            &RegisterRetainers {
+                operation_id: format!("register-default-upgrade-{suffix}"),
+                character: observation.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    let upgraded_character = upgraded
+        .iter()
+        .find(|c| c.id == character.to_string())
+        .unwrap();
+    assert!(
+        upgraded_character.upload_enabled,
+        "untouched old defaults adopt automatic uploads"
+    );
+    assert_eq!(
+        upgraded_character.capture_epoch,
+        registered[0].capture_epoch
+    );
+    let capture = ListingCapture {
         capture_id: format!("capture-one-{suffix}"),
         base_revision: 0,
-        capture_epoch: 0,
+        capture_epoch: registered[0].capture_epoch,
         observed_at: chrono::Utc::now(),
         complete: true,
         listings: vec![PrivateListing {
@@ -419,23 +455,27 @@ async fn plugin_connected_flows_postgres() {
             unit_price: 100,
         }],
     };
-    assert!(
-        db.upload_plugin_listings(&principal, retainer, &capture)
-            .await
-            .is_err()
-    );
-    let consent = db
-        .set_plugin_upload_consent(
-            &principal,
-            character,
-            &UploadConsent {
-                enabled: true,
-                delete_snapshots: false,
-            },
-        )
+    let registration_tokens = pair(
+        &db,
+        &keys,
+        owner,
+        vec!["retainers:read".into(), "retainers:register".into()],
+        &format!("fixture/{suffix}/registration-only"),
+    )
+    .await;
+    let registration_only = db
+        .authenticate_plugin(&registration_tokens.access_token)
         .await
         .unwrap();
-    capture.capture_epoch = consent[0].capture_epoch;
+    assert!(
+        matches!(
+            db.upload_plugin_listings(&registration_only, retainer, &capture)
+                .await,
+            Err(PluginError::Forbidden)
+        ),
+        "default upload preferences must still require an approved upload scope"
+    );
+    // The first snapshot needs no second, per-character opt-in.
     let receipt = db
         .upload_plugin_listings(&principal, retainer, &capture)
         .await
@@ -817,6 +857,32 @@ async fn plugin_connected_flows_postgres() {
     )
     .await
     .unwrap();
+    let paused = db.plugin_characters(&principal).await.unwrap();
+    let paused_epoch = paused
+        .iter()
+        .find(|c| c.id == character.to_string())
+        .unwrap()
+        .capture_epoch;
+    let registered_again = db
+        .register_plugin_retainers(
+            &principal,
+            &keys,
+            &RegisterRetainers {
+                operation_id: format!("register-paused-{suffix}"),
+                character: observation.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    let paused_again = registered_again
+        .iter()
+        .find(|c| c.id == character.to_string())
+        .unwrap();
+    assert!(
+        !paused_again.upload_enabled,
+        "automatic registration must preserve an explicit pause"
+    );
+    assert_eq!(paused_again.capture_epoch, paused_epoch);
     assert!(
         db.plugin_retainer_snapshots(&principal)
             .await
