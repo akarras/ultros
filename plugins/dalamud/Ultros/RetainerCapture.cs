@@ -19,6 +19,8 @@ internal sealed unsafe class RetainerCapture : IDisposable
     private readonly CaptureFreshness freshness = new();
     private CaptureUpload? upload;
     private DateTimeOffset nextRead;
+    private DateTimeOffset nextRegistration;
+    private string? registrationContext;
     internal ObservedCharacter? Character { get; private set; }
     private string status = "Uploader is off.";
     internal string Status
@@ -65,6 +67,13 @@ internal sealed unsafe class RetainerCapture : IDisposable
         }
         catch(JsonException){CompatibilityStatus="capture-compatibility.json is invalid. Rebuild or extract the complete plugin package and reload.";}
         catch {Compatible=false;}
+        // No build pin means the uploader has never been configured, including
+        // old default-off settings. Explicit pauses always save their build pin.
+        if(Compatible&&GameBuild is not null&&config.CaptureGameBuild is null) {
+            config.CaptureEnabled=true;
+            config.CaptureGameBuild=GameBuild;
+            Plugin.Interface.SavePluginConfig(config);
+        }
         Plugin.Log.Information("Ultros retainer reader: {Compatibility}; game {Game}; plugin {Path}",CompatibilityStatus,GameBuild??"unknown",Plugin.Interface.AssemblyLocation.FullName);
         Plugin.GameGui.AgentUpdate+=OnAgentUpdate;
         Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostSetup,"RetainerSellList",OnSellingListUpdate);
@@ -109,12 +118,17 @@ internal sealed unsafe class RetainerCapture : IDisposable
             }
             if(roster.Count>10||Plugin.Player.ContentId!=player)throw new InvalidOperationException();
             Character=new(player.ToString(),Plugin.Player.CharacterName,(int)Plugin.Player.HomeWorld.RowId,roster.ToArray());
+            var view=worker.View;
+            var registrationVisit=$"{view.Session?.Id}/{Character.ContentId}";
+            if(registrationContext!=registrationVisit){registrationContext=registrationVisit;nextRegistration=DateTimeOffset.MinValue;}
+            if(Plugin.Condition[ConditionFlag.OccupiedSummoningBell]&&view.Connected&&view.Scopes.Contains("retainers:register")&&DateTimeOffset.UtcNow>=nextRegistration
+                &&ClientWorker.NeedsRegistration(view.Characters,Character)&&worker.Register(Character))
+                nextRegistration=DateTimeOffset.UtcNow.AddSeconds(15);
             if(!config.CaptureEnabled){Reset("Listing capture is off on this game client. Click Enable listing uploader to send listings from Markets.");return;}
             if(config.CaptureGameBuild!=GameBuild){Reset("Game build changed. Enable the uploader for the current build in Settings.");return;}
-            var view=worker.View;
             if(!view.Connected||!view.Scopes.Contains("retainers:upload")){Reset("Connect and approve retainer uploads first.");return;}
             var matches=view.Characters.Where(c=>c.Name==Character.Name&&c.HomeWorld==Character.HomeWorld&&c.Registered&&c.UploadEnabled).ToArray();
-            if(matches.Length!=1){Reset("Register this character and enable its uploads first.");return;}
+            if(matches.Length!=1){Reset(view.Registering?"Saving this character's retainers…":"Check this character's registration and paused uploads in Characters & retainers.",true);return;}
             if(!Plugin.Condition[ConditionFlag.OccupiedSummoningBell]){Reset("Visit a summoning bell and open a retainer's selling list.");return;}
             var addon=Plugin.GameGui.GetAddonByName("RetainerSellList",1);
             if(addon.IsNull||!addon.IsReady||!addon.IsVisible){Reset("Open a retainer's selling list.",true);return;}

@@ -19,9 +19,27 @@ internal static class WorkerChecks
     private sealed class Handler : HttpMessageHandler
     {
         internal readonly List<string> Bodies=[];
+        internal readonly List<string[]> PairingScopes=[];
+        internal readonly List<ObservedCharacter> Registrations=[];
+        internal UnverifiedCharacter[] RegisteredCharacters=[];
         internal HttpStatusCode? Failure=HttpStatusCode.ServiceUnavailable;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancellation)
         {
+            var route=request.RequestUri!.AbsolutePath;
+            if(route=="/api/v1/plugin/capabilities")
+                return new(HttpStatusCode.OK){Content=new StringContent("{\"protocol\":1}")};
+            if(route=="/api/v1/plugin/session/reauthorize") {
+                using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellation));
+                PairingScopes.Add(body.RootElement.GetProperty("scopes").EnumerateArray().Select(value=>value.GetString()!).ToArray());
+                return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(new {
+                    device_code=new string('A',43),user_code="AAAA-AAAA",verification_uri="https://ultros.app/plugin/verify",expires_in=300,interval=5
+                }))};
+            }
+            if(route=="/api/v1/plugin/retainers/register") {
+                using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellation));
+                Registrations.Add(body.RootElement.GetProperty("character").Deserialize<ObservedCharacter>(Protocol.Json)!);
+                return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(RegisteredCharacters,Protocol.Json))};
+            }
             if(request.Method==HttpMethod.Get&&request.RequestUri!.AbsolutePath=="/api/v1/plugin/lists")
                 return new(HttpStatusCode.OK){Content=new StringContent("[]")};
             if(request.Method==HttpMethod.Get&&request.RequestUri!.AbsolutePath=="/api/v1/plugin/characters")
@@ -30,6 +48,54 @@ internal static class WorkerChecks
             Bodies.Add(await request.Content!.ReadAsStringAsync(cancellation));
             return new(Failure??HttpStatusCode.OK){Content=new StringContent(Failure is null?"{\"revision\":1,\"hash\":\"fixture\"}":"{\"error\":\"service_unavailable\"}",Encoding.UTF8,"application/json")};
         }
+    }
+    internal static async Task DefaultSetup()
+    {
+        using var fixture=new Fixture();await fixture.Connect();
+        var worker=fixture.Worker;
+        Require(worker.Pair("Default setup"),"Default pairing was not queued.");
+        await Until(()=>worker.View.HumanCode is not null);
+        string[] expected=["notifications:read","notifications:ack","notifications:mark-read","lists:read","lists:write","retainers:read","retainers:register","retainers:upload"];
+        Require(fixture.Handler.PairingScopes.Single().Order().SequenceEqual(expected.Order()),"A default connection still needs extra feature opt-ins.");
+        Require(worker.CancelPairing(),"Pairing cancellation was not queued.");
+        await Until(()=>worker.View.HumanCode is null);
+        Require(worker.Pair("Read-only setup",false,false,false,false),"Custom pairing was not queued.");
+        await Until(()=>worker.View.HumanCode is not null);
+        Require(fixture.Handler.PairingScopes.Last().Order().SequenceEqual(new[]{"notifications:read","notifications:ack","notifications:mark-read","lists:read"}.Order()),"Customized permissions silently restored optional scopes.");
+        worker.CancelPairing();await Until(()=>worker.View.HumanCode is null);
+        Require(worker.Pair("Upload only",false,false,true,false),"Upload-only pairing was not queued.");
+        await Until(()=>worker.View.HumanCode is not null);
+        var uploadScopes=fixture.Handler.PairingScopes.Last();
+        Require(uploadScopes.Contains("retainers:read")&&uploadScopes.Contains("retainers:upload")&&!uploadScopes.Contains("retainers:register"),"Upload permissions lost their read dependency or added registration.");
+        worker.CancelPairing();await Until(()=>worker.View.HumanCode is null);
+
+        var observation=new ObservedCharacter("111","Fixture",63,[new("222","Retainer",1)]);
+        Require(!worker.Register(observation)&&fixture.Handler.Registrations.Count==0,"Automatic registration bypassed its approved scope.");
+        var authorized=fixture.Session with{Scopes=expected};
+        await fixture.OnWorker(()=>fixture.SetSession(authorized));
+        await Until(()=>worker.View.Scopes.Contains("retainers:register"));
+        var saved=worker.View.Characters.Single() with{UploadEnabled=false};
+        fixture.Handler.RegisteredCharacters=[saved];
+        Require(!ClientWorker.NeedsRegistration([saved],observation),"A paused character was treated as unsaved.");
+        Require(ClientWorker.NeedsRegistration([saved with{CaptureEpoch=0}],observation),"An untouched old upload default was not upgraded.");
+        Require(ClientWorker.NeedsRegistration([],observation),"The first summoning-bell visit does not save retainers.");
+        Require(!ClientWorker.NeedsRegistration([],observation with{Retainers=[]}),"An unloaded roster was registered.");
+        var expanded=observation with{Retainers=[..observation.Retainers,new("333","New retainer",1)]};
+        Require(ClientWorker.NeedsRegistration([saved],expanded),"A newly observed retainer was ignored.");
+        var conflict=saved with{Retainers=[..saved.Retainers,new("2","New retainer",1,false,0,DateTimeOffset.UtcNow,true)]};
+        Require(!ClientWorker.NeedsRegistration([conflict],expanded),"A grouping conflict caused endless automatic registration attempts.");
+        Require(worker.Register(observation),"Authorized registration was not queued.");
+        await Until(()=>worker.View.RosterStatus.StartsWith("Saved",StringComparison.Ordinal));
+        Require(fixture.Handler.Registrations.Count==1&&fixture.Handler.Registrations[0].ContentId==observation.ContentId
+            &&!worker.View.Characters.Single().UploadEnabled,"Registration lost the observation or changed a saved pause.");
+
+        await fixture.OnWorker(()=>{
+            Require(worker.Register(observation),"Bound registration was not queued.");
+            fixture.SetSession(authorized with{Id="another-device",AccountId="456"});
+        });
+        await fixture.OnWorker(()=>{});
+        Require(fixture.Handler.Registrations.Count==1,"A queued game observation crossed to a different account.");
+        Console.WriteLine("PASS: default connection permissions, customized grants, automatic retainer registration decisions, saved pauses and account-bound registration.");
     }
     private sealed class Fixture : IDisposable
     {

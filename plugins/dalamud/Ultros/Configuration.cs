@@ -7,7 +7,7 @@ internal sealed class Configuration : IPluginConfiguration
     public string Profile { get; set; } = "main";
     public bool Localhost { get; set; }
     public string LocalOrigin { get; set; } = "http://localhost:8080";
-    public bool CaptureEnabled { get; set; }
+    public bool CaptureEnabled { get; set; } = true;
     public string? CaptureGameBuild { get; set; }
     public bool InventoryProgressEnabled { get; set; }
     public string? InventoryProgressGameBuild { get; set; }
