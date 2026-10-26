@@ -1296,8 +1296,12 @@ impl UpdateService {
                             }
                             Err(e) => {
                                 if e.downcast_ref::<ultros_db::listings::StaleBoardSnapshot>().is_some() {
-                                    info!(?item_id, ?world_id, "snapshot superseded by live market activity; retrying later");
-                                    return CatchupOutcome::Failed;
+                                    // Live events already wrote a newer board. Treating
+                                    // this as a failure would pin the sweep's restart
+                                    // point, so a busy board could keep its world from
+                                    // ever completing.
+                                    info!(?item_id, ?world_id, "snapshot superseded by live market activity");
+                                    return CatchupOutcome::Noop;
                                 }
                                 error!(error = ?e, item_id = item_id.0, world_id = world_id.0, "catch-up listing update failed");
                                 // Storing the sales would bump `listing_last_updated`,
