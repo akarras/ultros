@@ -9,79 +9,32 @@
 //! (`"<feed>:<scope>:<params>"`), so a hit skips both the query and the
 //! serialization.
 //!
-//! Same shape as [`crate::web::price_series_cache`]: not an LRU — overflow
+//! Shares [`super::json_cache::JsonCache`] with chart responses: overflow
 //! drops expired entries first, then arbitrary ones. The key space is small
 //! (feeds × scopes × directions), so eviction is a backstop, not a policy.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-
-#[derive(Clone)]
-pub(crate) struct HomeFeedCache {
-    inner: Arc<Mutex<HashMap<String, (Instant, String)>>>,
-    capacity: usize,
-}
-
-impl HomeFeedCache {
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(HashMap::new())),
-            capacity,
-        }
-    }
-
-    pub fn get(&self, key: &str) -> Option<String> {
-        let map = self.inner.lock().ok()?;
-        let (expires_at, value) = map.get(key)?;
-        (*expires_at > Instant::now()).then(|| value.clone())
-    }
-
-    pub fn insert(&self, key: String, value: String, ttl: Duration) {
-        let Ok(mut map) = self.inner.lock() else {
-            return;
-        };
-        if map.len() >= self.capacity {
-            let now = Instant::now();
-            map.retain(|_, (expires_at, _)| *expires_at > now);
-            while map.len() >= self.capacity {
-                let Some(victim) = map.keys().next().cloned() else {
-                    break;
-                };
-                map.remove(&victim);
-            }
-        }
-        map.insert(key, (Instant::now() + ttl, value));
-    }
-
-    #[cfg(test)]
-    pub fn len(&self) -> usize {
-        self.inner.lock().map(|m| m.len()).unwrap_or(0)
-    }
-}
-
-impl Default for HomeFeedCache {
-    fn default() -> Self {
-        Self::new(1024)
-    }
-}
+pub(crate) type HomeFeedCache = super::json_cache::JsonCache<String>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn returns_a_stored_value_within_ttl() {
         let cache = HomeFeedCache::new(4);
-        cache.insert("pulse:3".into(), "a".into(), Duration::from_secs(60));
-        assert_eq!(cache.get("pulse:3"), Some("a".to_string()));
+        cache.insert("pulse:3".into(), "a", Duration::from_secs(60));
+        assert_eq!(
+            cache.get("pulse:3"),
+            Some(axum::body::Bytes::from_static(b"a"))
+        );
         assert_eq!(cache.get("pulse:4"), None);
     }
 
     #[test]
     fn expired_entries_are_not_returned() {
         let cache = HomeFeedCache::new(4);
-        cache.insert("pulse:3".into(), "a".into(), Duration::from_secs(0));
+        cache.insert("pulse:3".into(), "a", Duration::from_secs(0));
         assert_eq!(cache.get("pulse:3"), None);
     }
 

@@ -68,15 +68,15 @@ public sealed class ClientWorker : IDisposable
         running=Task.Run(Run);
     }
     private bool Offer(Func<Task> action) => commands.Writer.TryWrite(action);
-    public bool Pair(string label, bool editLists, bool register, bool upload, bool readRetainers=false)
+    public bool Pair(string label, bool editLists=true, bool register=true, bool upload=true, bool readRetainers=true)
     {
         CancelQueuedInventory();
         return Offer(async () => {
         var scopes=new List<string>(Protocol.DefaultScopes);
-        if(editLists)scopes.Add("lists:write");
-        if(readRetainers||register||upload)scopes.Add("retainers:read");
-        if(register)scopes.Add("retainers:register");
-        if(upload)scopes.Add("retainers:upload");
+        if(!editLists)scopes.Remove("lists:write");
+        if(!readRetainers&&!register&&!upload)scopes.Remove("retainers:read");
+        if(!register)scopes.Remove("retainers:register");
+        if(!upload)scopes.Remove("retainers:upload");
         await connection!.BeginPairing(label,scopes.ToArray(),stop.Token);
         });
     }
@@ -217,20 +217,34 @@ public sealed class ClientWorker : IDisposable
     internal static UnverifiedCharacter? LatestObservation(IEnumerable<UnverifiedCharacter> roster,ObservedCharacter observation)=>
         roster.Where(c=>c.Name==observation.Name&&c.HomeWorld==observation.HomeWorld)
             .OrderByDescending(c=>c.ObservedAt).FirstOrDefault();
-    public bool Register(ObservedCharacter observation)=>Offer(async()=>{
-        registering=true;rosterStatus="Saving retainers to your Ultros account…";Publish();
-        try {
-            var request=new {operation_id=Guid.NewGuid().ToString("N"),character=observation};
-            characters=await connection!.Send<UnverifiedCharacter[]>(HttpMethod.Post,"/api/v1/plugin/retainers/register",request,stop.Token);
-            var saved=LatestObservation(characters,observation);
-            var count=observation.Retainers.Count(observed=>saved?.Retainers.Any(r=>r.Registered&&r.Name==observed.Name)==true);
-            rosterStatus=status=$"Saved {count} of {observation.Retainers.Length} retainers for {observation.Name}. Available on the website and in game."
-                +(count<observation.Retainers.Length?" Some retainers already belong to another saved character; their assignments were kept.":"");
-        }
-        catch(ApiFailure e){rosterStatus="Retainers were not confirmed saved. "+e.Message;throw;}
-        catch(Exception e){rosterStatus="Retainers were not confirmed saved. "+SafeError(e);throw;}
-        finally{registering=false;}
-    });
+    public static bool NeedsRegistration(IEnumerable<UnverifiedCharacter> roster,ObservedCharacter observation)
+    {
+        var saved=LatestObservation(roster,observation);
+        return observation.Retainers.Length>0&&(saved?.Registered!=true||!saved.UploadEnabled&&saved.CaptureEpoch==0||observation.Retainers.Any(observed=>
+            !saved.Retainers.Any(retainer=>retainer.Name==observed.Name&&(retainer.Registered||retainer.GroupingConflict))));
+    }
+    public bool Register(ObservedCharacter observation)
+    {
+        // A queued observation belongs to the account/device that saw it.
+        var session=View.Session;
+        if(!View.Connected||session is null||!session.Scopes.Contains("retainers:register"))return false;
+        return Offer(async()=>{
+            if(connection?.Connected!=true||connection.Session?.Id!=session.Id
+                ||connection.Session.AccountId!=session.AccountId||!connection.HasScope("retainers:register"))return;
+            registering=true;rosterStatus="Saving retainers to your Ultros account…";Publish();
+            try {
+                var request=new {operation_id=Guid.NewGuid().ToString("N"),character=observation};
+                characters=await connection!.Send<UnverifiedCharacter[]>(HttpMethod.Post,"/api/v1/plugin/retainers/register",request,stop.Token);
+                var saved=LatestObservation(characters,observation);
+                var count=observation.Retainers.Count(observed=>saved?.Retainers.Any(r=>r.Registered&&r.Name==observed.Name)==true);
+                rosterStatus=status=$"Saved {count} of {observation.Retainers.Length} retainers for {observation.Name}. Available on the website and in game."
+                    +(count<observation.Retainers.Length?" Some retainers already belong to another saved character; their assignments were kept.":"");
+            }
+            catch(ApiFailure e){rosterStatus="Retainers were not confirmed saved. "+e.Message;throw;}
+            catch(Exception e){rosterStatus="Retainers were not confirmed saved. "+SafeError(e);throw;}
+            finally{registering=false;}
+        });
+    }
     public bool UploadConsent(string character,bool enabled,bool delete=false)=>Offer(async()=>{
         characters=await connection!.Send<UnverifiedCharacter[]>(HttpMethod.Post,$"/api/v1/plugin/characters/{PositiveId(character)}/uploads",new{enabled,delete_snapshots=delete},stop.Token);
         status=enabled?"Uploads enabled for this character. Revisit a retainer's selling list.":"Uploads paused. Queued captures from the previous consent epoch are invalid.";

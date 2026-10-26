@@ -21,7 +21,7 @@ use ultros_db::{
     listings::ListingSummary,
     world_data::world_cache::WorldCache,
 };
-use universalis::{UniversalisClient, WorldId, WorldItemRecencyView};
+use universalis::{ItemId, UniversalisClient, WorldId, WorldItemRecencyView};
 
 use crate::event::{EventProducer, EventType};
 
@@ -1165,6 +1165,23 @@ impl UpdateService {
                 info!(world = %world_name, "full sweep: stopping for shutdown; progress is recorded");
                 break;
             }
+            // Capture before the HTTP request, never after it: an event that
+            // lands while Universalis is answering makes this snapshot stale.
+            let boards: Vec<_> = item_ids
+                .iter()
+                .map(|item| (world_id, ItemId(*item)))
+                .collect();
+            let versions = match self.db.capture_listing_boards(&boards).await {
+                Ok(versions) => versions,
+                Err(error) => {
+                    let remaining = (total_chunks - chunk_index) as u64;
+                    warn!(?error, world = %world_name, "sweep aborted: cannot capture listing board revisions");
+                    metrics::counter!("ultros_sweep_chunks_failed", "world" => world_name.clone(), "kind" => "database").increment(remaining);
+                    tally.chunks_failed += remaining;
+                    tally.retry_chunk(item_ids);
+                    break;
+                }
+            };
             let market_data = match retry_transient(|| {
                 self.universalis
                     .marketboard_current_data(world_name, item_ids)
@@ -1240,12 +1257,17 @@ impl UpdateService {
             };
             info!("missing data {item_ids:?}");
 
+            let versions = &versions;
             let outcomes = stream::iter(
                 market_data
                     .items()
                     .map(|(item_id, listings, sales)| async move {
+                        let Some(&version) = versions.get(&(world_id, item_id)) else {
+                            error!(?item_id, ?world_id, "snapshot returned an unrequested board");
+                            return CatchupOutcome::Failed;
+                        };
                         let listings_changed;
-                        match self.db.update_listings(listings, item_id, world_id).await {
+                        match self.db.update_listings(listings, item_id, world_id, version).await {
                             Ok(ultros_db::listings::ListingWrite {
                                 added,
                                 removed,
@@ -1273,6 +1295,14 @@ impl UpdateService {
                                 )));
                             }
                             Err(e) => {
+                                if e.downcast_ref::<ultros_db::listings::StaleBoardSnapshot>().is_some() {
+                                    // Live events already wrote a newer board. Treating
+                                    // this as a failure would pin the sweep's restart
+                                    // point, so a busy board could keep its world from
+                                    // ever completing.
+                                    info!(?item_id, ?world_id, "snapshot superseded by live market activity");
+                                    return CatchupOutcome::Noop;
+                                }
                                 error!(error = ?e, item_id = item_id.0, world_id = world_id.0, "catch-up listing update failed");
                                 // Storing the sales would bump `listing_last_updated`,
                                 // the very marker this service diffs against Universalis

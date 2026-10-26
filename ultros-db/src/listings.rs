@@ -21,38 +21,12 @@ use crate::{
     entity::{active_listing, retainer},
 };
 
-/// Ceiling on how many per-listing writes one board update may have in flight.
-///
-/// `add_listings` and `update_listings` issue one *insert* per listing —
-/// `create_listing` is an
-/// `INSERT INTO active_listing … ON CONFLICT … RETURNING`, which has no
-/// batched equivalent that still hands each row back. Running them under
-/// `join_all` polls every future immediately, so each one holds its own pooled
-/// connection: a full market board is up to 100 listings, i.e. up to 100
-/// simultaneous connections for a single item.
-///
-/// The delete side needs no fan-out at all: both `update_listings` and
-/// `remove_listings` clear their rows with a single statement. The websocket
-/// removal also guards the observed state — see [`delete_unchanged_listings`].
-///
-/// That multiplies with the catch-up sweep, which drives items through
-/// `buffer_unordered(50)` (`item_update_service::check_items`). Unbounded, one
-/// sweep can therefore demand thousands of connections against a
-/// `POSTGRES_MAX_CONNECTIONS` of 300 — and the symptoms are all over production:
-/// `catch-up listing update failed: Failed to acquire connection from pool:
-/// Connection pool timed out` (GlitchTip #6869/#6868), `acquired connection, but
-/// time to acquire exceeded slow threshold`, and 1.5–2.0s
-/// `INSERT INTO "active_listing" …` slow-statement breadcrumbs sitting directly
-/// next to the 10s SSR loopback timeouts filed as #2209/#2210. Those timeouts
-/// are what leave the SSR render owner disposed, which is where the panic family
-/// #7150/#7157/#7158/#7164 comes from.
-///
-/// #1172 bounded the per-world *sale* fan-out for the same reason; this is the
-/// write side it left behind. At 4, the catch-up sweep's peak demand is
-/// 50 × 4 = 200 connections, leaving headroom for websocket ingest and web
-/// requests. Buffering changes nothing observable: `buffered` preserves output
-/// order, so the call sites still zip results back against their input by
-/// position.
+mod board_version;
+pub use board_version::{BoardVersion, StaleBoardSnapshot};
+
+/// Bound the pending per-listing futures inside a board transaction. All
+/// writes share that transaction's one pooled connection; separate boards may
+/// still proceed concurrently. `buffered` preserves input/result association.
 const MAX_CONCURRENT_LISTING_WRITES: usize = 4;
 
 /// Run per-listing writes with at most [`MAX_CONCURRENT_LISTING_WRITES`] in
@@ -639,6 +613,7 @@ impl UltrosDb {
         use active_listing::*;
         let instant = Instant::now();
         let retainers = self.resolve_retainers(&listings, world_id).await?;
+        let transaction = self.lock_listing_board(world_id, item_id, None).await?;
 
         let existing_items = Entity::find()
             .filter(
@@ -647,10 +622,11 @@ impl UltrosDb {
                     .and(Column::ItemId.eq(item_id.0)),
             )
             .find_also_related(retainer::Entity)
-            .all(&self.db)
+            .all(&transaction)
             .await?;
 
         let to_add = listings_to_upsert(listings, existing_items);
+        let connection = &transaction;
         let written = fan_out_listing_writes(to_add.into_iter().map(|(m, previous)| {
             let retainer_id = retainers
                 .get(&m.retainer_name)
@@ -662,7 +638,7 @@ impl UltrosDb {
             // this call with "implementation of `Send` is not general enough".
             async move {
                 let row = self
-                    .create_listing(&m, item_id, world_id, Some(retainer_id))
+                    .create_listing(&m, item_id, world_id, retainer_id, connection)
                     .await?;
                 Ok((row, previous))
             }
@@ -695,7 +671,8 @@ impl UltrosDb {
         // marker is compared against their upload time, so *not* stamping would
         // make every uploaded item read as permanently behind and drag the
         // catch-up sweep into refetching the whole market.
-        self.set_last_updated(world_id, item_id).await?;
+        self.commit_listing_board(transaction, world_id, item_id, true)
+            .await?;
         counter!("ultros_db_inserted_items", "world_id" => world_id.0.to_string())
             .increment(added.len() as u64);
         histogram!("ultros_db_add_listings_duration_seconds").record(instant.elapsed());
@@ -712,8 +689,12 @@ impl UltrosDb {
         item_id: ItemId,
         world_id: WorldId,
     ) -> Result<ListingWrite> {
-        let listings = self
-            .get_all_listings_in_worlds_with_retainers(&[world_id.0], item_id)
+        let transaction = self.lock_listing_board(world_id, item_id, None).await?;
+        let listings = active_listing::Entity::find()
+            .filter(active_listing::Column::WorldId.eq(world_id.0))
+            .filter(active_listing::Column::ItemId.eq(item_id.0))
+            .find_also_related(retainer::Entity)
+            .all(&transaction)
             .await?;
         let db_listings: Vec<(active_listing::Model, retainer::Model)> = listings
             .into_iter()
@@ -722,19 +703,23 @@ impl UltrosDb {
 
         let candidates = listings_to_remove_with_identity(db_listings, remove_listings);
         let Some(delete) = delete_unchanged_listings(&candidates) else {
+            self.commit_listing_board(transaction, world_id, item_id, false)
+                .await?;
             return Ok(ListingWrite::default());
         };
         // Only publish rows actually deleted. A concurrent reprice can make a
         // candidate fail the predicate; reporting it as removed would still
         // evict the live listing from the analyzer even though the DB kept it.
-        let items = delete.exec_with_returning(&self.db).await?;
+        let items = delete.exec_with_returning(&transaction).await?;
         if items.is_empty() {
+            self.commit_listing_board(transaction, world_id, item_id, false)
+                .await?;
             return Ok(ListingWrite::default());
         }
         let retainers = items.iter().map(|i| i.retainer_id).unique();
         let retainers: HashMap<i32, Retainer> = retainer::Entity::find()
             .filter(retainer::Column::Id.is_in(retainers))
-            .all(&self.db)
+            .all(&transaction)
             .await?
             .into_iter()
             .map(|r| (r.id, r.into()))
@@ -744,9 +729,8 @@ impl UltrosDb {
         // not record "this item was ingested" — if a concurrent update_listings
         // failed, an unconditional stamp would hide the gap from catch-up forever
         // (the PR #986 bug class).
-        if !items.is_empty() {
-            self.set_last_updated(world_id, item_id).await?;
-        }
+        self.commit_listing_board(transaction, world_id, item_id, true)
+            .await?;
         let observed_at = chrono::Utc::now();
         let changes = items
             .iter()
@@ -910,13 +894,16 @@ impl UltrosDb {
         Ok(listings)
     }
 
-    /// Updates listings assuming a pure view of the listing board
+    /// Reconcile a complete board using a token captured before its HTTP fetch.
+    /// The board, review evidence, and ingest marker commit atomically; a newer
+    /// committed write rejects the fetched snapshot without changing the board.
     #[instrument(skip(self, listings), level = "trace")]
     pub async fn update_listings(
         &self,
         listings: Vec<ListingView>,
         item_id: ItemId,
         world_id: WorldId,
+        version: BoardVersion,
     ) -> Result<ListingWrite> {
         use active_listing::*;
         let instant = Instant::now();
@@ -924,6 +911,9 @@ impl UltrosDb {
         // First, query the db to see what listings it has
         // Then diff against the listings that we have (diff_update_listings sorts both sides)
         let retainers = self.resolve_retainers(&listings, world_id).await?;
+        let transaction = self
+            .lock_listing_board(world_id, item_id, Some(version))
+            .await?;
         let existing_items = Entity::find()
             .filter(
                 Column::WorldId
@@ -931,10 +921,10 @@ impl UltrosDb {
                     .and(Column::ItemId.eq(item_id.0)),
             )
             .find_also_related(retainer::Entity)
-            .all(&self.db)
+            .all(&transaction)
             .await?;
-        let BoardDiff { added, removed } = diff_board_with_identity(listings, existing_items);
-        let remove_iter = removed.iter();
+        let BoardDiff { added, mut removed } = diff_board_with_identity(listings, existing_items);
+        let connection = &transaction;
         // Each future owns its `ListingView` — see the note in `add_listings`.
         let added = added.into_iter().map(|(m, previous)| {
             let retainer_id = retainers
@@ -943,28 +933,28 @@ impl UltrosDb {
                 .id;
             async move {
                 let row = self
-                    .create_listing(&m, item_id, world_id, Some(retainer_id))
+                    .create_listing(&m, item_id, world_id, retainer_id, connection)
                     .await?;
                 Ok((row, previous))
             }
         });
+        let to_remove = &removed;
         let (written, removed_result) =
             futures::future::join(fan_out_listing_writes(added), async move {
-                let ids_to_remove: Vec<i64> = remove_iter.map(|(l, _)| l.id).collect();
-                if ids_to_remove.is_empty() {
-                    return Result::<usize>::Ok(0);
-                }
-                let res = active_listing::Entity::delete_many()
-                    .filter(active_listing::Column::Id.is_in(ids_to_remove))
-                    .exec(&self.db)
-                    .await?;
-                Result::<usize>::Ok(res.rows_affected as usize)
+                let candidates: Vec<_> = to_remove.iter().map(|(row, _)| row.clone()).collect();
+                let rows = if let Some(delete) = delete_unchanged_listings(&candidates) {
+                    delete.exec_with_returning(connection).await?
+                } else {
+                    vec![]
+                };
+                Result::<Vec<active_listing::Model>>::Ok(rows)
             })
             .await;
-        // Writes may have partially succeeded, but a failed insert or delete
-        // must not report a successful reconciliation or advance its marker.
+        // A failed insert or delete rolls back the whole board transaction,
+        // including its revision, review evidence, and catch-up marker.
         let written = written?;
-        removed_result?;
+        let deleted_ids: HashSet<_> = removed_result?.into_iter().map(|row| row.id).collect();
+        removed.retain(|(row, _)| deleted_ids.contains(&row.id));
 
         let observed_at = chrono::Utc::now();
         // Every deleted row is a change even when its retainer is unknown and
@@ -995,7 +985,7 @@ impl UltrosDb {
         // Only a successful full-board reconciliation reviews every competitor.
         // Sales and incremental add/remove events retain their existing catch-up
         // marker semantics but must not renew this evidence for untouched rows.
-        self.db
+        transaction
             .execute_raw(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "INSERT INTO listing_board_review(world_id,item_id,date_time) VALUES($1,$2,$3)
@@ -1007,9 +997,9 @@ impl UltrosDb {
                 ],
             ))
             .await?;
-        // Keep failed review writes eligible for catch-up. A later catch-up
-        // marker failure can leave a truthful completed-board review in place.
-        self.set_last_updated(world_id, item_id).await?;
+        // Publish board state, review evidence, and the catch-up marker together.
+        self.commit_listing_board(transaction, world_id, item_id, true)
+            .await?;
         counter!("ultros_db_inserted_items", "world_id" => world_id.0.to_string())
             .increment(added.len() as u64);
         counter!("ultros_db_removed_items", "world_id" => world_id.0.to_string())
@@ -1112,8 +1102,8 @@ pub struct ListingSummary {
 #[cfg(test)]
 mod fan_out_tests {
     //! The point of [`fan_out_listing_writes`] is that a single board update
-    //! never has more than [`MAX_CONCURRENT_LISTING_WRITES`] queries holding a
-    //! pooled connection at once. Each task bumps a counter on entry and yields
+    //! never retains more than [`MAX_CONCURRENT_LISTING_WRITES`] pending writes
+    //! inside its shared transaction. Each task bumps a counter on entry and yields
     //! before dropping it, so the observed peak is a real concurrency reading
     //! rather than a scheduling artifact.
 
