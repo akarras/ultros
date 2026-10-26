@@ -27,9 +27,12 @@ use crate::global_state::{
 use crate::i18n::*;
 use crate::query_defaults::filter_query_signal;
 use crate::recipe_planner::{
-    self as planner, Material, Offer, Recipe, SavingLine, Travel, marginal_saving_line,
-    saving_line, savings_basis,
+    self as planner, Material, Offer, Recipe, SavingLine, Travel, marginal_saving_line, saving_line,
 };
+
+use ultros_calc::recipe_work::{self as work, Cards};
+#[cfg(test)]
+use ultros_calc::recipe_work::{cheapest_badge, legacy_visits};
 
 pub(crate) use ultros_ui_crafting::links::recipe_href;
 
@@ -102,17 +105,6 @@ fn write_route(worlds: &BTreeSet<i32>) -> String {
             .collect::<Vec<_>>()
             .join(",")
     }
-}
-
-/// Legacy `visits=N` links: the best-ranked card visiting at most `visits`
-/// extra worlds. `4` was "full scope" and means the best-ranked card overall.
-fn legacy_visits(plans: &[planner::ShoppingPlan], visits: usize) -> Option<usize> {
-    plans
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| visits >= 4 || p.worlds.len() <= visits)
-        .min_by_key(|(_, p)| planner::rank(p))
-        .map(|(i, _)| i)
 }
 
 fn pairs(raw: Option<String>) -> BTreeMap<i32, i64> {
@@ -276,37 +268,6 @@ struct MarketData {
     ids: Vec<i32>,
     items: BTreeMap<i32, CurrentlyShownItem>,
     failed: BTreeSet<i32>,
-}
-
-/// What the card row renders: frontier cards, plus a pinned shared route
-/// inserted by travel distance, and the badge positions after insertion.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct Cards {
-    plans: Vec<planner::ShoppingPlan>,
-    pinned: Option<usize>,
-    best_value: Option<usize>,
-    cheapest: Option<usize>,
-    /// The card every other card's saving line compares against: the first
-    /// card (pinned card included) that completes the recipe, or `None`
-    /// when no card does.
-    basis: Option<usize>,
-}
-
-/// The frontier's rightmost card is the most complete plan found, but because
-/// the frontier improves lexicographically on `(missing, cost)`, completing
-/// the recipe can cost more gil than an earlier, incomplete card. Badge it
-/// "Cheapest" only when its gil cost is actually the lowest among the
-/// displayed cards; otherwise the incomplete cards' "Does not complete"
-/// marker already tells the story, and a false "Cheapest" claim would
-/// mislead.
-fn cheapest_badge(plans: &[planner::ShoppingPlan], candidate: Option<usize>) -> Option<usize> {
-    let i = candidate?;
-    let cost = plans.get(i)?.cost;
-    plans
-        .iter()
-        .enumerate()
-        .all(|(j, p)| j == i || cost <= p.cost)
-        .then_some(i)
 }
 
 #[component]
@@ -700,75 +661,64 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             unavailable: pair_set(unavailable.get()),
         }
     });
-    let comparison = Memo::new(move |_| {
-        if loaded.get().is_none() || home_id.get() == 0 {
-            return planner::RouteComparison::default();
-        }
-        materials
-            .get()
-            .map(|m| planner::compare_routes(&m, &offers.get(), &vendors.get(), &context.get()))
-            .unwrap_or_default()
-    });
-    // Frontier cards plus, when a shared link names a route that is not on
-    // the frontier, that route as a pinned card inserted by travel distance.
-    // Badges follow the frontier's best-value and cheapest cards by identity.
-    let cards = Memo::new(move |_| {
-        let comparison = comparison.get();
-        let best_worlds = comparison
-            .best_value()
-            .map(|i| comparison.cards[i].worlds.clone());
-        let cheapest_worlds = comparison.cheapest().map(|p| p.worlds.clone());
-        let mut plans = comparison.cards;
-        let mut pinned = None;
-        let unranked = route_set(route.get().as_deref())
-            .filter(|set| !plans.is_empty() && !plans.iter().any(|p| p.worlds == *set));
-        if let (Some(mut allowed), Ok(m)) = (unranked, materials.get()) {
-            allowed.insert(home_id.get());
-            let ctx = context.get();
-            let plan = planner::shop(&m, &offers.get(), &vendors.get(), &allowed, &ctx);
-            let key = (ctx.weights.distance(plan.travel), plan.travel);
-            let at = plans.partition_point(|p| (ctx.weights.distance(p.travel), p.travel) <= key);
-            plans.insert(at, plan);
-            pinned = Some(at);
-        }
-        let find = |worlds: Option<BTreeSet<i32>>| {
-            worlds.and_then(|w| plans.iter().position(|p| p.worlds == w))
-        };
-        let badges = if plans.len() > 1 {
-            (
-                find(best_worlds),
-                cheapest_badge(&plans, find(cheapest_worlds)),
-            )
-        } else {
-            (None, None)
-        };
-        let basis = savings_basis(&plans);
-        Cards {
-            plans,
-            pinned,
-            best_value: badges.0,
-            cheapest: badges.1,
-            basis,
-        }
-    });
-    let selected_index = Memo::new(move |_| {
-        let cards = cards.get();
-        if cards.plans.is_empty() {
+    let request = Memo::new(move |_| {
+        let data = loaded.get()?;
+        if home_id.get() == 0 {
             return None;
         }
-        let default = cards.best_value.or(Some(0));
-        if let Some(set) = route_set(route.get().as_deref()) {
-            return cards
-                .plans
-                .iter()
-                .position(|p| p.worlds == set)
-                .or(cards.pinned)
-                .or(default);
-        }
-        visits
+        let require_hq = quality(recipe.item_result).unwrap_or(false);
+        let finished = data
+            .items
+            .get(&recipe.item_result)
+            .map(|item| work::FinishedInput {
+                item: recipe.item_result,
+                quantity: quantity.get(),
+                offers: item
+                    .listings
+                    .iter()
+                    .filter(|(l, _)| l.hq == require_hq)
+                    .map(|(l, _)| Offer {
+                        id: l.id,
+                        world: l.world_id,
+                        quantity: i64::from(l.quantity),
+                        price: i64::from(l.price_per_unit),
+                    })
+                    .collect(),
+            });
+        Some(work::Request {
+            materials: materials.get().ok()?,
+            offers: offers.get(),
+            vendors: vendors.get(),
+            context: context.get(),
+            route: route_set(route.get().as_deref()),
+            visits: visits.get(),
+            finished,
+            buy_output: buy_output.get(),
+            craft_materials: if buy_output.get() {
+                craft_materials.get().ok()
+            } else {
+                None
+            },
+        })
+    });
+    let planning = crate::recipe_work::use_planning(request);
+    let planning_pending = RwSignal::new(false);
+    let planned = Memo::new(move |_| {
+        planning
             .get()
-            .and_then(|v| legacy_visits(&cards.plans, v))
-            .or(default)
+            .and_then(Result::ok)
+            .flatten()
+            .unwrap_or_default()
+    });
+    let cards = Memo::new(move |_| planned.with(|output| output.cards.clone()));
+    let selected_index = Memo::new(move |_| {
+        cards.with(|cards| {
+            work::selected_index(
+                cards,
+                route_set(route.get().as_deref()).as_ref(),
+                visits.get(),
+            )
+        })
     });
     let selected = Memo::new(move |_| {
         selected_index
@@ -780,60 +730,9 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
     let stops = Memo::new(move |_| {
         selected.with(|plan| plan.as_ref().map(planner::itinerary).unwrap_or_default())
     });
-    let finished = Memo::new(move |_| {
-        let data = loaded.get()?;
-        let item = data.items.get(&recipe.item_result)?;
-        let require_hq = quality(recipe.item_result).unwrap_or(false);
-        let offers: Vec<_> = item
-            .listings
-            .iter()
-            .filter(|(l, _)| l.hq == require_hq)
-            .map(|(l, _)| Offer {
-                id: l.id,
-                world: l.world_id,
-                quantity: i64::from(l.quantity),
-                price: i64::from(l.price_per_unit),
-            })
-            .collect();
-        let demand = output_demand(recipe.item_result, quantity.get());
-        // Buy the finished item within the selected route: those stops are
-        // being made anyway, so they carry no extra travel.
-        let mut allowed = selected.get().map(|p| p.worlds).unwrap_or_default();
-        allowed.insert(home_id.get());
-        let ctx = planner::RouteContext {
-            locked: BTreeMap::new(),
-            ..context.get()
-        };
-        planner::shop(
-            &demand,
-            &BTreeMap::from([(recipe.item_result, offers)]),
-            &vendors.get(),
-            &allowed,
-            &ctx,
-        )
-        .purchases
-        .remove(&recipe.item_result)
-    });
-    let craft_comparison = Memo::new(move |_| {
-        if !buy_output.get() {
-            return selected.get();
-        }
-        loaded.get()?;
-        let demand = craft_materials.get().ok()?;
-        let mut allowed = selected.get()?.worlds;
-        allowed.insert(home_id.get());
-        let ctx = planner::RouteContext {
-            locked: BTreeMap::new(),
-            ..context.get()
-        };
-        Some(planner::shop(
-            &demand,
-            &offers.get(),
-            &vendors.get(),
-            &allowed,
-            &ctx,
-        ))
-    });
+    let finished = Memo::new(move |_| planned.with(|output| output.finished.clone()));
+    let craft_comparison =
+        Memo::new(move |_| planned.with(|output| output.craft_comparison.clone()));
     let query = use_query_map_or_default();
     let resolved_query = Memo::new(move |_| {
         resolve_market_query(
@@ -939,10 +838,12 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             <Show when=move ||selected.get().is_some_and(|p|p.missing>0)><p role="status" class="panel rounded-xl p-4 text-amber-300">"This plan has missing items. The amount shown covers available purchases only; it is not the full cost of your plan."</p></Show>
             <Show when=move ||subcrafts.get().unwrap_or(false) && craft.get().is_none()><p class="text-sm text-[color:var(--color-text-muted)]">"Your analyzer estimate included subcrafts. Choose which ingredients to craft below to price whole batches and their shopping stops."</p></Show>
             {move ||materials.get().err().map(|error|view!{<p role="alert" class="panel rounded-xl p-4 text-amber-300">{error}<button type="button" class="btn-secondary ml-3" on:click=move |_|set_craft.set(None)>"Reset craft choices"</button></p>})}
+            <Show when=move ||planning_pending.get()><p role="status" class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, recipe_planner_updating)}</p></Show>
+            <Show when=move ||planning.get().is_some_and(|result| result.is_err())><p role="alert" class="panel rounded-xl p-4 text-amber-300">{t!(i18n, recipe_planner_update_failed)}<button type="button" class="btn-secondary ml-3" on:click=move |_|planning.refetch()>{t!(i18n, recipe_planner_retry)}</button></p></Show>
             <section aria-label="World visit comparison" class="space-y-2">
                 <div class="flex flex-wrap justify-between gap-2"><h2 class="font-semibold text-lg">{t!(i18n, recipe_planner_route_heading)}</h2><span class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, recipe_planner_route_subheading)}</span></div>
                 <div class="grid grid-cols-2 xl:grid-cols-5 gap-2">
-                <Suspense fallback=move ||view!{<div class="panel rounded-xl p-5 animate-pulse">"Loading ingredient markets…"</div>}>
+                <Transition set_pending=SignalSetter::map(move |pending|planning_pending.set(pending)) fallback=move ||view!{<div class="panel rounded-xl p-5 animate-pulse">"Loading ingredient markets…"</div>}>
                     {move || {
                         let Cards{plans,pinned,best_value,cheapest,basis}=cards.get();
                         let basis_name=move ||if basis==Some(0) { t_string!(i18n, recipe_planner_route_basis_home).to_string() } else { t_string!(i18n, recipe_planner_route_basis_first_complete).to_string() };
@@ -996,7 +897,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                             </button>}
                         }).collect_view()
                     }}
-                </Suspense>
+                </Transition>
                 </div>
             </section>
             <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_22rem] gap-5 items-start">
@@ -1039,7 +940,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                     <p class="text-sm font-medium text-brand-300" data-testid="output-savings">{move ||craft_comparison.get().zip(finished.get()).filter(|(p,f)|p.missing==0 && f.missing()==0).map(|(p,f)|if f.cost>=p.cost{format!("Crafting saves {} in purchase spend",gil(f.cost-p.cost))}else{format!("Buying finished saves {}",gil(p.cost-f.cost))})}</p>
                     <p class="text-xs text-[color:var(--color-text-muted)]">"Finished-item purchases use the same buying scope and the selected route's stops."</p>
                     <div class="flex flex-wrap items-center gap-2 text-sm"><span>"Copy shopping plan"</span><Clipboard clipboard_text=copy_plan /></div>
-                    <button type="button" class="btn-primary w-full" disabled=move ||selected.get().is_none() on:click=move |_|show_save.set(true)>{move ||if buy_output.get(){"Add finished items to a list"}else{"Add remaining materials to a list"}}</button>
+                    <button type="button" class="btn-primary w-full" disabled=move ||selected.get().is_none() || planning_pending.get() on:click=move |_|show_save.set(true)>{move ||if buy_output.get(){"Add finished items to a list"}else{"Add remaining materials to a list"}}</button>
                     <p class="text-xs text-[color:var(--color-text-muted)]">"No account needed to plan or share. Sign in only to save to a list."</p>
                 </aside>
             </div>

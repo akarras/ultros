@@ -38,7 +38,7 @@ pub extern "C" fn setup(worlds: i32, items: i32, needed: i32, listings: i32) {
             let offers = (1..=worlds)
                 .flat_map(|world| {
                     (0..listings).map(move |n| planner::Offer {
-                        id: item * 100_000 + world * 1000 + n,
+                        id: i64::from(item * 100_000 + world * 1000 + n),
                         world,
                         quantity: i64::from(1 + (n * 17 + item * 3 + world * 7) % 99),
                         price: i64::from(100 + (world * 137 + item * 251 + n * 31) % 5000),
