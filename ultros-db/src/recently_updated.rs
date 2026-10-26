@@ -8,14 +8,6 @@ use universalis::{ItemId, WorldId};
 use crate::{UltrosDb, entity::listing_last_updated};
 
 impl UltrosDb {
-    pub(crate) async fn set_last_updated(
-        &self,
-        world_id: WorldId,
-        item_id: ItemId,
-    ) -> Result<(), anyhow::Error> {
-        self.set_last_updated_on(&self.db, world_id, item_id).await
-    }
-
     pub(crate) async fn set_last_updated_on<C: ConnectionTrait>(
         &self,
         connection: &C,
