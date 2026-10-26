@@ -369,29 +369,17 @@ impl UltrosDb {
         Ok(model)
     }
 
-    #[instrument(skip(self))]
-    pub async fn create_listing(
+    #[instrument(skip(self, connection))]
+    async fn create_listing<C: sea_orm::ConnectionTrait>(
         &self,
         listing: &ListingView,
         item_id: ItemId,
         world_id: WorldId,
-        retainer_id: Option<i32>,
+        retainer_id: i32,
+        connection: &C,
     ) -> Result<active_listing::Model> {
         let price_per_unit = listing.price_per_unit.unwrap_or(listing.total) as i32;
         let quantity = listing.quantity.unwrap_or(1) as i32;
-        let retainer_id = if let Some(retainer_id) = retainer_id {
-            retainer_id
-        } else {
-            let retainer = self
-                .store_retainer(
-                    listing.retainer_id.as_deref().unwrap_or_default(),
-                    &listing.retainer_name,
-                    world_id,
-                    listing.retainer_city as i32,
-                )
-                .await?;
-            retainer.id
-        };
         use active_listing::{Column, Entity};
         use sea_orm::ExprTrait;
         let materia = (!listing.materia.is_empty()).then(|| {
@@ -452,7 +440,7 @@ impl UltrosDb {
                 ])
                 .to_owned(),
             )
-            .exec_with_returning(&self.db)
+            .exec_with_returning(connection)
             .await?;
         Ok(m)
     }

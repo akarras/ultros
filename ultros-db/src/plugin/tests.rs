@@ -7,24 +7,7 @@ use serde_json::json;
 use ultros_api_types::{list::ListPermission, plugin::*};
 use ultros_list_doc::{ListDocument, RowKey};
 
-fn disposable_plugin_database(url: &str) -> bool {
-    // Match a deliberately narrow URL grammar: no password, alternate host,
-    // escaped names, query options or fragment can redirect a destructive fixture.
-    let Some(address) = url.strip_prefix("postgres://ultros_plugin@127.0.0.1:") else {
-        return false;
-    };
-    let Some((port, database)) = address.split_once('/') else {
-        return false;
-    };
-    let Some(name) = database.strip_prefix("ultros_plugin_") else {
-        return false;
-    };
-    !port.is_empty()
-        && port.bytes().all(|c| c.is_ascii_digit())
-        && port.parse::<u16>().is_ok_and(|port| port > 0)
-        && !name.is_empty()
-        && name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
-}
+use crate::common::test_db::disposable_plugin_database;
 
 #[test]
 fn disposable_plugin_database_guard_is_strict() {
@@ -69,6 +52,16 @@ fn market_listing(name: &str, city: u32, price: u32, hq: bool) -> universalis::L
         total: price,
         tax: 0,
     }
+}
+
+async fn apply_market_board(
+    db: &UltrosDb,
+    listings: Vec<universalis::ListingView>,
+    item: universalis::ItemId,
+    world: universalis::WorldId,
+) -> anyhow::Result<crate::listings::ListingWrite> {
+    let version = db.capture_listing_board(world, item).await?;
+    db.update_listings(listings, item, world, version).await
 }
 
 async fn pair(
@@ -562,7 +555,8 @@ async fn plugin_connected_flows_postgres() {
             .status,
         "unknown_age"
     );
-    db.update_listings(
+    apply_market_board(
+        &db,
         board.clone(),
         universalis::ItemId(1),
         universalis::WorldId(30000),
@@ -644,13 +638,13 @@ async fn plugin_connected_flows_postgres() {
         CREATE TRIGGER ultros_plugin_review_fail BEFORE INSERT OR UPDATE ON listing_board_review
         FOR EACH ROW WHEN (NEW.world_id=30000 AND NEW.item_id=1) EXECUTE FUNCTION ultros_plugin_review_fail()")
         .await.unwrap();
-    let failed_review = db
-        .update_listings(
-            board.clone(),
-            universalis::ItemId(1),
-            universalis::WorldId(30000),
-        )
-        .await;
+    let failed_review = apply_market_board(
+        &db,
+        board.clone(),
+        universalis::ItemId(1),
+        universalis::WorldId(30000),
+    )
+    .await;
     db.db
         .execute_unprepared(
             "DROP TRIGGER ultros_plugin_review_fail ON listing_board_review;
@@ -679,9 +673,14 @@ async fn plugin_connected_flows_postgres() {
             .status,
         "stale"
     );
-    db.update_listings(board, universalis::ItemId(1), universalis::WorldId(30000))
-        .await
-        .unwrap();
+    apply_market_board(
+        &db,
+        board,
+        universalis::ItemId(1),
+        universalis::WorldId(30000),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         db.plugin_retainer_prices(&principal, retainer)
             .await
