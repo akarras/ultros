@@ -307,9 +307,9 @@ mod browser {
                 <header class="flex flex-wrap items-center justify-between gap-3">
                     <h1 class="text-2xl font-bold">{t!(i18n, lists_page_title)}</h1>
                     <div class="flex flex-wrap gap-2">
-                        <button class="btn-secondary" data-testid="list-restore-open" on:click=move |_| {error.set(String::new());set_restoring(true);} >{t!(i18n, online_restore)}</button>
-                        <Show when=move || user_id.get().is_some()><button class="btn-secondary" data-testid="list-join-open" on:click=move |_| {error.set(String::new());set_joining(true);} >{t!(i18n, lists_redeem_invite_label)}</button></Show>
-                        <button class="btn-primary" data-testid="list-new" on:click=move |_| {error.set(String::new());storage_online.set(true);set_creating(true);} >{t!(i18n, online_new)}</button>
+                        <button type="button" class="btn-secondary" data-testid="list-restore-open" on:click=move |_| {error.set(String::new());set_restoring(true);} >{t!(i18n, online_restore)}</button>
+                        <Show when=move || user_id.get().is_some()><button type="button" class="btn-secondary" data-testid="list-join-open" on:click=move |_| {error.set(String::new());set_joining(true);} >{t!(i18n, lists_redeem_invite_label)}</button></Show>
+                        <button type="button" class="btn-primary" data-testid="list-new" on:click=move |_| {error.set(String::new());storage_online.set(true);set_creating(true);} >{t!(i18n, online_new)}</button>
                     </div>
                 </header>
                 <input type="search" class="input w-full" data-testid="lists-search" aria-label=move || t_string!(i18n, search_your_lists).to_string() placeholder=move || t_string!(i18n, search_your_lists).to_string() prop:value=move || filter.get() on:input=move |e| filter.set(event_target_value(&e)) />
@@ -460,7 +460,7 @@ mod browser {
                     <label for="device-restore">{t!(i18n,guest_workspace_paste_backup)}</label>
                     <textarea id="device-restore" class="input w-full h-32" data-testid="device-list-backup" prop:value=move || backup.get() on:input=move |ev|backup.set(event_target_value(&ev)) />
                     <Show when=move || !error.get().is_empty()><p role="alert" class="text-negative">{move || error.get()}</p></Show>
-                    <button class="btn-primary" data-testid="device-list-restore" disabled=move || busy.get() || backup.get().trim().is_empty() on:click=move |_| {
+                    <button type="button" class="btn-primary" data-testid="device-list-restore" disabled=move || busy.get() || backup.get().trim().is_empty() on:click=move |_| {
                         busy.set(true); error.set(String::new()); let text=backup.get_untracked();
                         leptos::task::spawn_local(async move {
                             match GuestListHandle::restore(&text).await {
@@ -475,7 +475,7 @@ mod browser {
                     <h2 class="text-xl font-bold">{t!(i18n,lists_redeem_invite_label)}</h2>
                     <input class="input w-full" data-testid="list-join-code" aria-label=move ||t_string!(i18n,lists_invite_code_placeholder).to_string() prop:value=move ||invite.get() disabled=move ||redeem.pending().get() on:input=move |e|invite.set(event_target_value(&e)) />
                     <Show when=move || !error.get().is_empty()><p role="alert" class="text-negative">{move || error.get()}</p></Show>
-                    <button class="btn-primary" data-testid="list-join-submit" disabled=move ||invite.get().trim().is_empty() || redeem.pending().get() on:click=move |_|{error.set(String::new());redeem.dispatch(invite.get_untracked());}>{t!(i18n,lists_redeem_button)}</button>
+                    <button type="button" class="btn-primary" data-testid="list-join-submit" disabled=move ||invite.get().trim().is_empty() || redeem.pending().get() on:click=move |_|{error.set(String::new());redeem.dispatch(invite.get_untracked());}>{t!(i18n,lists_redeem_button)}</button>
                 </div></Modal></Show>
             </section>
         }
@@ -940,7 +940,7 @@ mod browser {
                     primary=move || view! {
                         <Show when=move || !recovery.get()><crate::routes::guest_list_adoption::DeviceListAdoption handle=handle.get_value() continuation=Signal::derive(move || travel.device_continue_href(&device_id.get_value(), shop.get())) /></Show>
                         <Show when=move || handle.with_value(|h| h.needs_save_retry())>
-                        <button class="btn-secondary" on:click=move |_| {
+                        <button type="button" class="btn-secondary" on:click=move |_| {
                             let h = handle.get_value();
                             leptos::task::spawn_local(async move { if let Err(e) = h.flush().await { let _ = error.try_set(e); } });
                         }>{t!(i18n, guest_workspace_retry)}</button>
@@ -953,10 +953,10 @@ mod browser {
                         <crate::routes::guest_list_adoption::DeviceListSeparateUpload handle=handle.get_value() on_connect=Callback::new(move |()| storage_open.set(false)) />
                         <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, guest_workspace_backup_warning)}</p>
                         <div class="flex flex-wrap gap-2">
-                            <button class="btn-secondary" data-testid="device-list-export" on:click=move |_| {
+                            <button type="button" class="btn-secondary" data-testid="device-list-export" on:click=move |_| {
                                 let h = handle.get_value(); leptos::task::spawn_local(async move { match h.backup().await { Ok(text) => { let _ = backup.try_set(text); }, Err(e) => { let _ = error.try_set(e); } } });
                             }>{t!(i18n, guest_workspace_export)}</button>
-                            <button class="btn-danger" data-testid="device-list-delete" on:click=move |_| confirm_delete.set(true)>{t!(i18n, guest_workspace_delete)}</button>
+                            <button type="button" class="btn-danger" data-testid="device-list-delete" on:click=move |_| confirm_delete.set(true)>{t!(i18n, guest_workspace_delete)}</button>
                         </div>
                         <Show when=move || !backup.get().is_empty()>
                             <label class="block text-sm">{t!(i18n, guest_workspace_backup_help)}
@@ -967,8 +967,8 @@ mod browser {
                             <div class="rounded-lg border border-red-400/50 p-4 space-y-3" role="group" aria-label={move || t_string!(i18n, guest_workspace_delete_label).to_string()}>
                                 <p>{t!(i18n, guest_workspace_delete_confirm)}</p>
                                 <div class="flex flex-wrap gap-2">
-                                    <button class="btn-secondary" disabled=move || deleting.get() on:click=move |_| confirm_delete.set(false)>{t!(i18n, guest_workspace_keep)}</button>
-                                    <button class="btn-danger" data-testid="device-list-confirm-delete" disabled=move || deleting.get() on:click=move |_| {
+                                    <button type="button" class="btn-secondary" disabled=move || deleting.get() on:click=move |_| confirm_delete.set(false)>{t!(i18n, guest_workspace_keep)}</button>
+                                    <button type="button" class="btn-danger" data-testid="device-list-confirm-delete" disabled=move || deleting.get() on:click=move |_| {
                                         if deleting.get_untracked() { return; }
                                         deleting.set(true);
                                         let h = handle.get_value();

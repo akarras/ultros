@@ -826,8 +826,8 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 <label class="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked=move ||hq.get().unwrap_or(false) prop:checked=move ||hq.get().unwrap_or(false) on:change=move |e|set_hq.set(Some(event_target_checked(&e))) />"HQ ingredients only"</label>
                 <label class="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked=move ||exclude_crystals.get() prop:checked=move ||exclude_crystals.get() on:change=move |e|set_shards.set(Some(event_target_checked(&e))) />"Exclude crystals"</label>
                 <label class="flex items-center gap-2 text-sm pb-2"><input type="checkbox" aria-label="Include NPC vendors" checked=move ||include_vendors.get().unwrap_or(true) prop:checked=move ||include_vendors.get().unwrap_or(true) on:change=move |e|set_include_vendors.set(Some(event_target_checked(&e))) />"Include NPC vendors"</label>
-                <button class="btn-secondary text-sm" on:click=move |_|refresh.update(|n|*n=n.wrapping_add(1))>"Refresh prices"</button>
-                <button class="btn-secondary text-sm" aria-label=move ||t_string!(i18n, recipe_planner_settings).to_string() on:click=move |_|show_settings.set(true)>{t!(i18n, recipe_planner_settings)}</button>
+                <button type="button" class="btn-secondary text-sm" on:click=move |_|refresh.update(|n|*n=n.wrapping_add(1))>"Refresh prices"</button>
+                <button type="button" class="btn-secondary text-sm" aria-label=move ||t_string!(i18n, recipe_planner_settings).to_string() on:click=move |_|show_settings.set(true)>{t!(i18n, recipe_planner_settings)}</button>
             </section>
             <Show when=move ||!buy_output.get()><div class="flex flex-wrap items-center gap-3 text-sm text-[color:var(--color-text-muted)]">
                 <label class="flex items-center gap-2">"Or set crafts"<input aria-label="Number of crafts" class="input w-24" type="number" min="1" max=9999_i64.div_euclid(i64::from(recipe.amount_result.max(1))).max(1) value=move ||(quantity.get()+i64::from(recipe.amount_result.max(1))-1)/i64::from(recipe.amount_result.max(1)) prop:value=move ||(quantity.get()+i64::from(recipe.amount_result.max(1))-1)/i64::from(recipe.amount_result.max(1)) on:change=move |e|{ if let Ok(n)=event_target_value(&e).parse::<i64>() {set_qty.set(Some(n.max(1).saturating_mul(i64::from(recipe.amount_result.max(1))).clamp(1,9999)));} } /></label>
@@ -837,9 +837,9 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             <Show when=move ||loaded.get().is_some_and(|d| !d.failed.is_empty())><p role="alert" class="panel rounded-xl p-4 text-amber-300">"Some ingredient markets could not be loaded. Costs may be incomplete. Refresh prices to retry."</p></Show>
             <Show when=move ||selected.get().is_some_and(|p|p.missing>0)><p role="status" class="panel rounded-xl p-4 text-amber-300">"This plan has missing items. The amount shown covers available purchases only; it is not the full cost of your plan."</p></Show>
             <Show when=move ||subcrafts.get().unwrap_or(false) && craft.get().is_none()><p class="text-sm text-[color:var(--color-text-muted)]">"Your analyzer estimate included subcrafts. Choose which ingredients to craft below to price whole batches and their shopping stops."</p></Show>
-            {move ||materials.get().err().map(|error|view!{<p role="alert" class="panel rounded-xl p-4 text-amber-300">{error}<button class="btn-secondary ml-3" on:click=move |_|set_craft.set(None)>"Reset craft choices"</button></p>})}
-            <Show when=move ||planning_pending.get()><p role="status" class="text-sm text-[color:var(--color-text-muted)]">"Updating shopping plans…"</p></Show>
-            <Show when=move ||planning.get().is_some_and(|result| result.is_err())><p role="alert" class="panel rounded-xl p-4 text-amber-300">"The shopping plan could not be updated."<button class="btn-secondary ml-3" on:click=move |_|planning.refetch()>"Retry planning"</button></p></Show>
+            {move ||materials.get().err().map(|error|view!{<p role="alert" class="panel rounded-xl p-4 text-amber-300">{error}<button type="button" class="btn-secondary ml-3" on:click=move |_|set_craft.set(None)>"Reset craft choices"</button></p>})}
+            <Show when=move ||planning_pending.get()><p role="status" class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, recipe_planner_updating)}</p></Show>
+            <Show when=move ||planning.get().is_some_and(|result| result.is_err())><p role="alert" class="panel rounded-xl p-4 text-amber-300">{t!(i18n, recipe_planner_update_failed)}<button type="button" class="btn-secondary ml-3" on:click=move |_|planning.refetch()>{t!(i18n, recipe_planner_retry)}</button></p></Show>
             <section aria-label="World visit comparison" class="space-y-2">
                 <div class="flex flex-wrap justify-between gap-2"><h2 class="font-semibold text-lg">{t!(i18n, recipe_planner_route_heading)}</h2><span class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, recipe_planner_route_subheading)}</span></div>
                 <div class="grid grid-cols-2 xl:grid-cols-5 gap-2">
@@ -862,7 +862,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                             let incomplete=p.missing>0;
                             // Partial plans get a hatched, dashed card so their lower total reads as "not comparable", not as a saving.
                             let card_class=if incomplete { "panel panel-incomplete rounded-xl p-3 text-left space-y-1 hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400" } else { "panel rounded-xl p-3 text-left space-y-1 hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400" };
-                            view!{<button class=card_class title=stops.clone() data-incomplete=incomplete.to_string() class:border-brand-400=move ||selected_index.get()==Some(index) aria-pressed=move ||(selected_index.get()==Some(index)).to_string() on:click=move |_|{ set_route.set(Some(write_route(&worlds))); set_visits.set(None); }>
+                            view!{<button type="button" class=card_class title=stops.clone() data-incomplete=incomplete.to_string() class:border-brand-400=move ||selected_index.get()==Some(index) aria-pressed=move ||(selected_index.get()==Some(index)).to_string() on:click=move |_|{ set_route.set(Some(write_route(&worlds))); set_visits.set(None); }>
                                 <span class="flex flex-wrap items-center justify-between gap-2"><span class="text-sm text-[color:var(--color-text-muted)]">{label}</span>{badge.map(|(text,brand)|{
                                     let badge_class=if brand { "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-brand-500/20 text-brand-300" } else { "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-[color:var(--color-outline)] text-[color:var(--color-text-muted)]" };
                                     view!{<span class=badge_class data-testid="route-badge">{text}</span>}
@@ -940,7 +940,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                     <p class="text-sm font-medium text-brand-300" data-testid="output-savings">{move ||craft_comparison.get().zip(finished.get()).filter(|(p,f)|p.missing==0 && f.missing()==0).map(|(p,f)|if f.cost>=p.cost{format!("Crafting saves {} in purchase spend",gil(f.cost-p.cost))}else{format!("Buying finished saves {}",gil(p.cost-f.cost))})}</p>
                     <p class="text-xs text-[color:var(--color-text-muted)]">"Finished-item purchases use the same buying scope and the selected route's stops."</p>
                     <div class="flex flex-wrap items-center gap-2 text-sm"><span>"Copy shopping plan"</span><Clipboard clipboard_text=copy_plan /></div>
-                    <button class="btn-primary w-full" disabled=move ||selected.get().is_none() || planning_pending.get() on:click=move |_|show_save.set(true)>{move ||if buy_output.get(){"Add finished items to a list"}else{"Add remaining materials to a list"}}</button>
+                    <button type="button" class="btn-primary w-full" disabled=move ||selected.get().is_none() || planning_pending.get() on:click=move |_|show_save.set(true)>{move ||if buy_output.get(){"Add finished items to a list"}else{"Add remaining materials to a list"}}</button>
                     <p class="text-xs text-[color:var(--color-text-muted)]">"No account needed to plan or share. Sign in only to save to a list."</p>
                 </aside>
             </div>
@@ -949,8 +949,8 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 {move || {
                     let reported=pair_set(unavailable.get());
                     (!reported.is_empty()).then(|| view!{<div class="flex flex-wrap items-center gap-2 text-sm" data-testid="unavailable-reports"><span class="text-[color:var(--color-text-muted)]">{t!(i18n, recipe_planner_reported_unavailable)}</span>
-                        {reported.iter().map(|(item,world)|{ let (item,world)=(*item,*world); view!{<button class="btn-secondary text-xs" on:click=move |_|{ let mut set=pair_set(unavailable.get_untracked()); set.remove(&(item,world)); set_unavailable.set(write_pair_set(&set)); }>{format!("{} · {} ×",item_name(item),world_name(world))}</button>} }).collect_view()}
-                        <button class="text-xs text-brand-300 hover:underline" on:click=move |_|set_unavailable.set(None)>{t!(i18n, recipe_planner_clear_unavailable)}</button></div>})
+                        {reported.iter().map(|(item,world)|{ let (item,world)=(*item,*world); view!{<button type="button" class="btn-secondary text-xs" on:click=move |_|{ let mut set=pair_set(unavailable.get_untracked()); set.remove(&(item,world)); set_unavailable.set(write_pair_set(&set)); }>{format!("{} · {} ×",item_name(item),world_name(world))}</button>} }).collect_view()}
+                        <button type="button" class="text-xs text-brand-300 hover:underline" on:click=move |_|set_unavailable.set(None)>{t!(i18n, recipe_planner_clear_unavailable)}</button></div>})
                 }}
                 <Show when=move ||selected.with(Option::is_some) fallback=||view!{<p>"Loading shopping stops…"</p>}>
                     <div class="grid gap-3 lg:grid-cols-2">
@@ -965,7 +965,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                             let snapshot=o.clone();
                             let label=format!("{} × {} · {} each · {}",item_name(id),o.quantity,gil(o.price),gil(o.price*o.quantity));
                             view!{<div class="flex items-start gap-2 text-sm" data-testid=format!("stop-{id}-{world}") data-listing-id=o.id><label class="flex items-start gap-2 flex-1"><input type="checkbox" class="mt-1" prop:checked=move ||locks.with(|s|s.contains_key(&key)) on:change=move |e|locks.update(|s|{if event_target_checked(&e){s.insert(key,snapshot.clone());}else{s.remove(&key);}}) /><span>{label}</span></label>
-                                <button class="btn-secondary text-xs shrink-0" disabled=move ||locks.with(|s|s.contains_key(&key)) on:click=move |_|{ let mut set=pair_set(unavailable.get_untracked()); set.insert((id,world)); set_unavailable.set(write_pair_set(&set)); locks.update(|s|s.retain(|(item,_),o|!(*item==id && o.world==world))); }>{t!(i18n, recipe_planner_not_here)}</button></div>}
+                                <button type="button" class="btn-secondary text-xs shrink-0" disabled=move ||locks.with(|s|s.contains_key(&key)) on:click=move |_|{ let mut set=pair_set(unavailable.get_untracked()); set.insert((id,world)); set_unavailable.set(write_pair_set(&set)); locks.update(|s|s.retain(|(item,_),o|!(*item==id && o.world==world))); }>{t!(i18n, recipe_planner_not_here)}</button></div>}
                         } /></div>}
                     } />
                     {move ||selected.with(|plan|plan.as_ref().map(|plan|plan.purchases.iter().filter(|(_,p)|p.missing()>0).map(|(id,p)|view!{<div class="panel rounded-xl p-4 text-sm"><strong>{item_name(*id)}</strong><p>{format!("Still missing: {}",p.missing())}</p></div>}).collect_view()))}
@@ -1033,7 +1033,7 @@ fn PlannerSettings(
             <label class="text-sm space-y-1"><span class="block text-[color:var(--color-text-muted)]">{t!(i18n, recipe_planner_world_hop_cost)}</span><input class="input w-32" type="number" min="0" max=MAX_HOP_GIL step="100" disabled=set_options.is_none() prop:value=move ||options.get().travel_weights().world_hop on:change=move |e|save(|o,v|o.world_hop_gil=v,event_target_value(&e)) /></label>
             <label class="text-sm space-y-1"><span class="block text-[color:var(--color-text-muted)]">{t!(i18n, recipe_planner_dc_hop_cost)}</span><input class="input w-32" type="number" min="0" max=MAX_HOP_GIL step="100" disabled=set_options.is_none() prop:value=move ||options.get().travel_weights().dc_hop on:change=move |e|save(|o,v|o.dc_hop_gil=v,event_target_value(&e)) /></label>
         </div>
-        <div class="flex flex-wrap gap-2"><button class="btn-secondary" disabled=set_options.is_none() on:click=reset>{t!(i18n, recipe_planner_reset_defaults)}</button><button class="btn-secondary" on:click=move |_|set_visible.set(false)>{t!(i18n, grid_close)}</button></div>
+        <div class="flex flex-wrap gap-2"><button type="button" class="btn-secondary" disabled=set_options.is_none() on:click=reset>{t!(i18n, recipe_planner_reset_defaults)}</button><button type="button" class="btn-secondary" on:click=move |_|set_visible.set(false)>{t!(i18n, grid_close)}</button></div>
     </div></crate::components::modal::Modal>}
 }
 
@@ -1080,11 +1080,11 @@ fn SavePlan(
     });
     view! {<crate::components::modal::Modal set_visible=SignalSetter::map(move |v|set_visible.set(v))><div class="space-y-4"><h2 class="text-xl font-semibold">{move ||if buy_output.get(){"Save finished items"}else{"Save remaining materials"}}</h2>
         <Suspense fallback=move ||view!{<p>"Loading your lists…"</p>}>{move ||lists.get().map(|result| match result {
-            Ok(lists)=>view!{<div class="space-y-2">{lists.into_iter().map(|list|view!{<button class="btn-secondary w-full" disabled=move ||action.pending().get() on:click=move |_|{action.dispatch(list.id);}>{list.name}</button>}).collect_view()}<a href="/list" class="block text-brand-300">"Manage or create lists"</a></div>}.into_any(),
+            Ok(lists)=>view!{<div class="space-y-2">{lists.into_iter().map(|list|view!{<button type="button" class="btn-secondary w-full" disabled=move ||action.pending().get() on:click=move |_|{action.dispatch(list.id);}>{list.name}</button>}).collect_view()}<a href="/list" class="block text-brand-300">"Manage or create lists"</a></div>}.into_any(),
             Err(_)=>view!{<p>"Sign in to save this plan to a list. Your plan is preserved in its link."</p><a href="/login" rel="external" class="btn-primary">"Sign in"</a>}.into_any(),
         })}</Suspense>
         {move ||action.value().get().map(|result|view!{<p role="status">{if result.is_ok(){"Items added to your list."}else{"Could not save items. Please try again."}}</p>})}
-        <button class="btn-secondary" on:click=move |_|set_visible.set(false)>"Close"</button>
+        <button type="button" class="btn-secondary" on:click=move |_|set_visible.set(false)>"Close"</button>
     </div></crate::components::modal::Modal>}
 }
 
