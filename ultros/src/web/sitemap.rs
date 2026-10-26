@@ -10,6 +10,7 @@ use chrono::Utc;
 use futures::future::try_join_all;
 use hyper::header;
 use itertools::Itertools;
+use jiff::{Timestamp, tz::TimeZone};
 use mime_guess::mime;
 use sitemap_rs::{
     image::Image,
@@ -310,7 +311,14 @@ pub(crate) async fn item_sitemap(
                 // crawl budget on never-traded gear.
                 if let Some((last_modified, change)) = frequency_map.get(&id) {
                     if let Some(modified) = last_modified {
-                        builder.last_modified(modified.and_utc().fixed_offset());
+                        // Sale dates are naive UTC out of the database; jiff
+                        // rejects timestamps outside its range, so a bad row
+                        // just drops <lastmod> instead of failing the sitemap.
+                        if let Ok(timestamp) =
+                            Timestamp::from_second(modified.and_utc().timestamp())
+                        {
+                            builder.last_modified(timestamp.to_zoned(TimeZone::UTC));
+                        }
                     }
                     builder.change_frequency(*change);
                     let priority = match change {

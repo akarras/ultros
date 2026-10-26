@@ -16,10 +16,10 @@ chrono = { workspace = true }
 itertools.workspace = true
 ultros-xiv-icons = { path = "../ultros-xiv-icons", optional = true }
 image = { workspace = true, optional = true }
-base64 = { version = "0.22", optional = true }
+base64 = { version = "0.23", optional = true }
 leptos = { workspace = true, optional = true }
 
 [dev-dependencies]
-resvg = "0.48.1"
+resvg = "0.49.0"
 image = { workspace = true }
 leptos = { workspace = true, features = ["ssr"] }

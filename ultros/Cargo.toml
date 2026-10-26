@@ -49,11 +49,15 @@ metrics = "0.24.5"
 envy = "0.4.2"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 tower = { version = "0.5.3", features = ["util"] }
-tower-http = { version = "0.6.10", features = ["full"] }
+tower-http = { version = "0.7.1", features = ["full"] }
 sha2 = "0.11.0"
-base64 = "0.22.1"
+base64 = "0.23.1"
 itertools = "0.15.0"
-sitemap-rs = "0.4.0"
+# sitemap-rs 0.7 dropped chrono for jiff: `UrlBuilder::last_modified` now takes
+# a `jiff::Zoned`. We keep chrono everywhere else (sea-orm rows are chrono) and
+# convert at this one call site, so jiff is a direct dep of exactly this crate.
+sitemap-rs = "0.7.0"
+jiff = "0.2.38"
 ultros-api-types = { path = "../ultros-api-types", features = ["rkyv"] }
 # The `history` feature (on by default) is what makes the full changelog
 # available to `/api/v1/changelog`; the wasm client builds without it.
@@ -82,7 +86,7 @@ ultros-character = { path = "../ultros-character" }
 ultros-discord = { path = "../ultros-discord" }
 ultros-group-sync = { path = "../ultros-group-sync" }
 ultros-lists = { path = "../ultros-lists" }
-resvg = "0.48.1"
+resvg = "0.49.0"
 isocountry = "0.3.2"
 http-body = "1.0.1"
 http-body-util = "0.1.3"

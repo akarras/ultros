@@ -65,7 +65,7 @@ axum-extra = { version = "0.12.6", features = [
     "typed-header",
 ] }
 axum-macros = "0.5.1"
-tokio = { version = "1.53", features = ["full"] }
+tokio = { version = "1.54", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 futures = "0.3.32"
@@ -125,7 +125,7 @@ sea-orm-migration = { version = "^2.0.4", features = [
     "runtime-tokio-rustls",
 ] }
 sea-query = "^1.0.2"
-yoke = "0.8.3"
+yoke = "0.8.4"
 xiv-gen = { path = "./xiv-gen", features = [
     "item",
     "item_ui_category",
@@ -165,7 +165,6 @@ xiv-gen = { path = "./xiv-gen", features = [
 ] }
 icondata = "0.7"
 icondata_core = "0.1"
-leptos_icons = "0.7.1"
 leptos_i18n = { version = "0.6.2", features = ["cookie"] }
 leptos_i18n_build = "0.6.2"
 cfg-if = "1.0.5"

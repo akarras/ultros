@@ -29,6 +29,14 @@ readme = false
 license = "MIT"
 repository = "https://github.com/loro-dev/loro/"
 
+# Standalone: this vendored copy is consumed through the root workspace's
+# `[patch.crates-io]`, never as a member. Lets `cargo test` run here directly
+# — without it, a checkout nested inside another cargo workspace (a
+# `git worktree` under the main clone) walks past our root's `exclude` and
+# binds to the outer manifest, failing `scripts/check_tests.sh`.
+# Mirrors the same stanza in vendor/reactive_graph/Cargo.toml.
+[workspace]
+
 [lib]
 name = "loro_kv_store"
 path = "src/lib.rs"
