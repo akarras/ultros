@@ -20,8 +20,13 @@ pub fn EndpointsPanel() -> impl IntoView {
     let endpoints = Resource::new(move || version.get(), move |_| list_endpoints());
     let toasts = use_toast();
     let (show_form, set_show_form) = signal(false);
+    let deleting = RwSignal::new(None::<i32>);
 
     let on_delete = move |id: i32| {
+        if deleting.get_untracked().is_some() {
+            return;
+        }
+        deleting.set(Some(id));
         spawn_local(async move {
             match delete_endpoint(id).await {
                 Ok(resp) => {
@@ -45,6 +50,7 @@ pub fn EndpointsPanel() -> impl IntoView {
                     }
                 }
             }
+            deleting.set(None);
         });
     };
 
@@ -97,9 +103,9 @@ pub fn EndpointsPanel() -> impl IntoView {
 
     view! {
         <div class="space-y-4">
-            <div class="flex justify-between items-center">
+            <div class="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center">
                 <h2 class="text-lg font-semibold">{t!(i18n, endpoints_heading)}</h2>
-                <div class="flex gap-2">
+                <div class="flex flex-wrap gap-2">
                     <button class="btn" on:click=on_enable_push
                             title=t_string!(i18n, endpoints_enable_browser_push_title)>
                         {t!(i18n, endpoints_enable_browser_push)}
@@ -176,14 +182,16 @@ pub fn EndpointsPanel() -> impl IntoView {
                                         EndpointMethod::WebPush { .. } => {
                                             t_string!(i18n, endpoints_method_web_push).to_string()
                                         }
-                                        EndpointMethod::InGame { .. } => "In game · approved device".into(),
+                                        EndpointMethod::InGame { .. } => t_string!(i18n, endpoints_method_in_game).to_string(),
                                         EndpointMethod::InApp {} => {
                                             t_string!(i18n, endpoints_method_in_app).to_string()
                                         }
                                     };
                                     let id = e.id;
                                     let game=matches!(e.method,EndpointMethod::InGame { .. });
-                                    let can_delete=!matches!(e.method,EndpointMethod::InApp {}|EndpointMethod::InGame { .. });
+                                    let can_delete=!matches!(e.method,EndpointMethod::InApp {});
+                                    let confirming=RwSignal::new(false);
+                                    let disconnected=game&&e.disabled_reason.as_deref()==Some("Game client disconnected");
                                     // Delivery disabled this endpoint after Discord
                                     // rejected it permanently (channel deleted, bot
                                     // removed). Without this the endpoint just looks
@@ -191,32 +199,46 @@ pub fn EndpointsPanel() -> impl IntoView {
                                     // and point at Test as the way back.
                                     let disabled_reason = e.disabled_reason.clone();
                                     view! {
-                                        <li class="flex items-center justify-between py-2">
-                                            <div>
-                                                <div class="font-medium">{e.name.clone()}</div>
+                                        <li class="flex flex-wrap items-center justify-between gap-3 py-4" data-endpoint-id=id>
+                                            <div class="min-w-0 flex-1 basis-64">
+                                                <div class="font-medium break-words">{e.name.clone()}</div>
                                                 <div class="text-xs opacity-70">{label}</div>
-                                                <Show when=move||game><a class="link text-xs" href="/plugin/devices">"Manage connected game clients"</a></Show>
+                                                <Show when=move||game><a class="link text-xs" href="/plugin/devices">{t!(i18n, endpoints_manage_game_clients)}</a></Show>
                                                 {disabled_reason.map(|reason| view! {
                                                     <div class="text-xs text-amber-400 mt-1">
-                                                        {t!(i18n, endpoints_disabled_notice)}
-                                                        " "
-                                                        <span class="opacity-80">{reason}</span>
+                                                        {if disconnected {
+                                                            t_string!(i18n, endpoints_game_disconnected).to_string()
+                                                        } else {
+                                                            format!("{} {reason}",t_string!(i18n, endpoints_disabled_notice))
+                                                        }}
                                                     </div>
                                                 })}
                                             </div>
-                                            <div class="flex gap-1">
-                                                <button class="btn-ghost" on:click=move |_| on_test(id)>
+                                            <div class="flex flex-wrap gap-2">
+                                                <Show when=move||!disconnected><button class="btn-ghost" disabled=move||deleting.get().is_some() on:click=move |_| on_test(id)>
                                                     <Icon icon=i::BsSend />
                                                     <span class="ml-1">{t!(i18n, endpoints_test_button)}</span>
-                                                </button>
+                                                </button></Show>
                                                 <Show when=move||can_delete><button
                                                     class="btn-ghost text-negative"
-                                                    aria-label=t_string!(i18n, endpoints_delete_aria)
-                                                    on:click=move |_| on_delete(id)
+                                                    data-action="remove-endpoint"
+                                                    aria-label=if game { t_string!(i18n, endpoints_remove_game_client).to_string() } else { t_string!(i18n, endpoints_delete_aria).to_string() }
+                                                    disabled=move||deleting.get().is_some()
+                                                    on:click=move |_| if game { confirming.set(true); } else { on_delete(id); }
                                                 >
                                                     <Icon icon=i::BiTrashSolid />
+                                                    <Show when=move||game><span class="ml-1">{t!(i18n, endpoints_remove_game_client)}</span></Show>
                                                 </button></Show>
                                             </div>
+                                            <Show when=move||confirming.get()>
+                                                <div class="w-full rounded-lg border border-amber-400/30 bg-amber-400/5 p-3 space-y-3" role="group" aria-label=t_string!(i18n, endpoints_remove_game_client)>
+                                                    <p class="text-sm">{t!(i18n, endpoints_remove_game_confirm)}</p>
+                                                    <div class="flex gap-2">
+                                                        <button class="btn text-negative" disabled=move||deleting.get().is_some() on:click=move |_| on_delete(id)>{t!(i18n, endpoints_remove_game_client)}</button>
+                                                        <button class="btn-ghost" disabled=move||deleting.get().is_some() on:click=move |_| confirming.set(false)>{t!(i18n, cancel)}</button>
+                                                    </div>
+                                                </div>
+                                            </Show>
                                         </li>
                                     }
                             }).collect_view()}

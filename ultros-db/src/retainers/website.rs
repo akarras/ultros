@@ -36,6 +36,10 @@ fn listing_view(
                     && listing.hq == row.hq
                     && listing.quantity == row.quantity
                     && i64::from(listing.price_per_unit) == row.unit_price
+                    // Older public rows cannot confirm a newer game capture.
+                    // Repricing can temporarily withdraw those public rows;
+                    // retiring the private slot on that basis loses listings.
+                    && listing.timestamp >= snapshot.observed_at.naive_utc()
             })
         });
         if let Some(listing) = matched.and_then(Option::take) {
@@ -261,6 +265,96 @@ mod tests {
             )
             .len(),
             1
+        );
+    }
+
+    #[test]
+    fn older_public_rows_cannot_retire_a_fresh_complete_game_capture() {
+        let time = Utc::now();
+        let retainer = Retainer {
+            id: 1,
+            world_id: 1,
+            name: "Retainer".into(),
+            retainer_city_id: 1,
+        };
+        let mut snapshot = Snapshot {
+            id: 1,
+            revision: 1,
+            observed_at: time,
+            listings: vec![
+                PrivateListing {
+                    slot: 0,
+                    item_id: 8,
+                    hq: false,
+                    quantity: 1,
+                    unit_price: 50,
+                },
+                PrivateListing {
+                    slot: 1,
+                    item_id: 8,
+                    hq: false,
+                    quantity: 1,
+                    unit_price: 50,
+                },
+                PrivateListing {
+                    slot: 2,
+                    item_id: 8,
+                    hq: false,
+                    quantity: 2,
+                    unit_price: 60,
+                },
+            ],
+            confirmed_slots: vec![],
+        };
+        let before = time - chrono::Duration::seconds(10);
+        let old_public = vec![
+            row(10, 1, 50, before),
+            row(11, 1, 50, before),
+            row(12, 2, 60, before),
+        ];
+        let initial = listing_view(&retainer, old_public.clone(), &mut snapshot);
+        assert_eq!(initial.len(), 3);
+        assert!(
+            initial
+                .iter()
+                .all(|l| matches!(l.id, RetainerListingId::InGame { .. }))
+        );
+        assert!(
+            snapshot.confirmed_slots.is_empty(),
+            "stale matches must not confirm a new upload"
+        );
+
+        // Adjusting prices withdraws public stacks one at a time. An older
+        // public observation is not evidence that a freshly captured stack sold.
+        for remaining in (0..=3).rev() {
+            let current = listing_view(&retainer, old_public[..remaining].to_vec(), &mut snapshot);
+            assert_eq!(current.len(), 3, "repricing lost an uploaded stack");
+        }
+
+        // A complete second game response changes one price, retaining the
+        // identical pair and the untouched rows without duplication.
+        snapshot.revision = 2;
+        snapshot.observed_at = time + chrono::Duration::seconds(1);
+        snapshot.listings[2].unit_price = 55;
+        let repriced = listing_view(&retainer, old_public, &mut snapshot);
+        assert_eq!(
+            repriced
+                .iter()
+                .map(|l| l.price_per_unit)
+                .collect::<Vec<_>>(),
+            vec![50, 50, 55]
+        );
+        let confirmed = listing_view(
+            &retainer,
+            vec![row(13, 2, 55, time + chrono::Duration::seconds(2))],
+            &mut snapshot,
+        );
+        assert_eq!(confirmed.len(), 3);
+        assert_eq!(snapshot.confirmed_slots, vec![2]);
+        assert_eq!(
+            listing_view(&retainer, vec![], &mut snapshot).len(),
+            2,
+            "a subsequently confirmed sale must still disappear"
         );
     }
 }

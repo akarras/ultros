@@ -36,6 +36,7 @@
     "test:dalamud-releases": "node ./dalamud-releases.cjs",
     "test:dalamud-guide": "node ./dalamud-guide.cjs",
     "test:dalamud": "node ./dalamud-device-flow.cjs",
+    "test:dalamud-endpoints": "node ./dalamud-endpoint-removal.cjs",
     "test:dalamud-retainers": "cross-env DALAMUD_RETAINER_ONLY=1 node ./dalamud-device-flow.cjs",
     "test:plugin-link-bootstrap": "node --test ./plugin-link-bootstrap.test.cjs",
     "test:push": "node ./push.cjs",

@@ -164,8 +164,24 @@ async function main() {
     assert.equal(pendingRows.length,2);assert(pendingRows.every(row=>row.id.source==="in_game"));
     assert.equal(await page.$$eval('[data-listing-source="in-game"]',rows=>rows.length),2,"identical uploaded stacks must stay separate in the open page");
     const repriced={...capture,capture_id:crypto.randomUUID().replaceAll("-",""),base_revision:uploaded.data.revision,observed_at:new Date().toISOString(),listings:capture.listings.map(row=>row.slot===0?{...row,unit_price:90}:row)};
-    assert.equal((await api("POST","/api/v1/plugin/retainers/"+retainer.id+"/listings",repriced,access)).status,200);
+    let priceReceipt=await api("POST","/api/v1/plugin/retainers/"+retainer.id+"/listings",repriced,access);
+    assert.equal(priceReceipt.status,200);
     await page.waitForFunction(()=>Array.from(document.querySelectorAll('[data-listing-source="in-game"]')).some(source=>source.closest("tr").querySelectorAll("td")[2]?.textContent.trim()==="90"),{timeout:15000});
+    // Reprice one slot at a time, then confirm an unchanged price. Every
+    // complete capture must retain the other stack in the already-open page.
+    let latestCapture=repriced;
+    for(const [slot,price] of [[1,85],[0,90],[1,80]]) {
+      latestCapture={...latestCapture,capture_id:crypto.randomUUID().replaceAll("-",""),base_revision:priceReceipt.data.revision,observed_at:new Date().toISOString(),
+        listings:latestCapture.listings.map(row=>row.slot===slot?{...row,unit_price:price}:row)};
+      priceReceipt=await api("POST","/api/v1/plugin/retainers/"+retainer.id+"/listings",latestCapture,access);
+      assert.equal(priceReceipt.status,200);
+      const expected=latestCapture.listings.map(row=>String(row.unit_price)).sort();
+      await page.waitForFunction(expected=>{
+        const rows=Array.from(document.querySelectorAll('[data-listing-source="in-game"]'));
+        const prices=rows.map(source=>source.closest("tr").querySelectorAll("td")[2]?.textContent.trim()).sort();
+        return rows.length===2&&JSON.stringify(prices)===JSON.stringify(expected);
+      },{timeout:15000},expected);
+    }
     const legacyRoster=await api("GET","/api/v1/user/retainer",undefined,undefined,{Cookie:cookies});
     assert.equal(legacyRoster.status,200);
     assert(legacyRoster.data.retainers.every(([group])=>group===null||("id" in group&&!('kind' in group))),"v1 characters must keep their flat legacy shape");

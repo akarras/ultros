@@ -21,6 +21,7 @@ internal sealed unsafe class RetainerCapture : IDisposable
     private DateTimeOffset nextRead;
     private DateTimeOffset nextRegistration;
     private string? registrationContext;
+    private string? editorVisit;
     internal ObservedCharacter? Character { get; private set; }
     private string status = "Uploader is off.";
     internal string Status
@@ -78,6 +79,13 @@ internal sealed unsafe class RetainerCapture : IDisposable
         Plugin.GameGui.AgentUpdate+=OnAgentUpdate;
         Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostSetup,"RetainerSellList",OnSellingListUpdate);
         Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostRequestedUpdate,"RetainerSellList",OnSellingListUpdate);
+        // A price editor can close without changing inventory quantities, or
+        // with the same price. Re-read the complete inventory after it closes;
+        // never send the editor's unconfirmed numeric input.
+        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostSetup,"RetainerSell",OnPriceEditorOpened);
+        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostOpen,"RetainerSell",OnPriceEditorOpened);
+        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PreFinalize,"RetainerSell",OnPriceEditorClosed);
+        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostClose,"RetainerSell",OnPriceEditorClosed);
         Plugin.Framework.Update+=Update;
     }
     private void OnAgentUpdate(AgentUpdateFlag flag)
@@ -85,16 +93,25 @@ internal sealed unsafe class RetainerCapture : IDisposable
         if((flag&AgentUpdateFlag.RetainerMarketInventoryUpdate)!=0)SignalFreshness();
     }
     private void OnSellingListUpdate(AddonEvent type,AddonArgs args)=>SignalFreshness();
-    private void SignalFreshness()
+    private string? CurrentVisit()
     {
-        if(!Compatible||!config.CaptureEnabled||!Plugin.Player.IsLoaded||!Plugin.Condition[ConditionFlag.OccupiedSummoningBell])return;
+        if(!Compatible||!config.CaptureEnabled||!Plugin.Player.IsLoaded||Plugin.Player.ContentId==0||!Plugin.Condition[ConditionFlag.OccupiedSummoningBell])return null;
         var manager=RetainerManager.Instance();
-        if(manager==null||!manager->IsReady)return;
+        if(manager==null||!manager->IsReady)return null;
         var active=manager->GetActiveRetainer();
-        if(active==null||active->RetainerId==0||active->RetainerId!=manager->LastSelectedRetainerId||manager->RetainerObjectId==0)return;
-        freshness.Signal($"{Plugin.Player.ContentId}/{active->RetainerId}/{manager->RetainerObjectId}",DateTimeOffset.UtcNow);
+        if(active==null||active->RetainerId==0||active->RetainerId!=manager->LastSelectedRetainerId||manager->RetainerObjectId==0)return null;
+        return $"{Plugin.Player.ContentId}/{active->RetainerId}/{manager->RetainerObjectId}";
     }
-    private void Reset(string status,bool awaitingWindow=false){gate.Reset();upload=null;if(!awaitingWindow)freshness.Reset();worker.CancelQueuedCaptures();Status=status;}
+    private void SignalFreshness(){if(CurrentVisit() is { } visit)freshness.Signal(visit,DateTimeOffset.UtcNow);}
+    private void OnPriceEditorOpened(AddonEvent type,AddonArgs args)=>editorVisit=CurrentVisit();
+    private void OnPriceEditorClosed(AddonEvent type,AddonArgs args)
+    {
+        var visit=editorVisit;editorVisit=null;
+        // An old editor closing during a retainer switch must not authorize a
+        // capture from the next retainer's not-yet-refreshed inventory.
+        if(visit is not null&&visit==CurrentVisit())freshness.Signal(visit,DateTimeOffset.UtcNow);
+    }
+    private void Reset(string status,bool awaitingWindow=false){gate.Reset();upload=null;if(!awaitingWindow){freshness.Reset();editorVisit=null;}worker.CancelQueuedCaptures();Status=status;}
     private void Update(IFramework framework)
     {
         if(DateTimeOffset.UtcNow<nextRead)return;
@@ -128,7 +145,7 @@ internal sealed unsafe class RetainerCapture : IDisposable
             if(config.CaptureGameBuild!=GameBuild){Reset("Game build changed. Enable the uploader for the current build in Settings.");return;}
             if(!view.Connected||!view.Scopes.Contains("retainers:upload")){Reset("Connect and approve retainer uploads first.");return;}
             var matches=view.Characters.Where(c=>c.Name==Character.Name&&c.HomeWorld==Character.HomeWorld&&c.Registered&&c.UploadEnabled).ToArray();
-            if(matches.Length!=1){Reset(view.Registering?"Saving this character's retainers…":"Check this character's registration and paused uploads in Characters & retainers.",true);return;}
+            if(matches.Length!=1){Reset(view.Registering?"Saving this character's retainers…":"Check this character's registration and paused uploads in Retainers.",true);return;}
             if(!Plugin.Condition[ConditionFlag.OccupiedSummoningBell]){Reset("Visit a summoning bell and open a retainer's selling list.");return;}
             var addon=Plugin.GameGui.GetAddonByName("RetainerSellList",1);
             if(addon.IsNull||!addon.IsReady||!addon.IsVisible){Reset("Open a retainer's selling list.",true);return;}
@@ -174,5 +191,5 @@ internal sealed unsafe class RetainerCapture : IDisposable
         }
         catch {Character=null;Reset("Capture stopped because the game data was inconsistent. Revisit the retainer.");}
     }
-    public void Dispose(){Plugin.Framework.Update-=Update;Plugin.GameGui.AgentUpdate-=OnAgentUpdate;Plugin.AddonLifecycle.UnregisterListener(OnSellingListUpdate);Character=null;gate.Reset();freshness.Reset();worker.CancelQueuedCaptures();}
+    public void Dispose(){Plugin.Framework.Update-=Update;Plugin.GameGui.AgentUpdate-=OnAgentUpdate;Plugin.AddonLifecycle.UnregisterListener(OnSellingListUpdate);Plugin.AddonLifecycle.UnregisterListener(OnPriceEditorOpened);Plugin.AddonLifecycle.UnregisterListener(OnPriceEditorClosed);Character=null;editorVisit=null;gate.Reset();freshness.Reset();worker.CancelQueuedCaptures();}
 }

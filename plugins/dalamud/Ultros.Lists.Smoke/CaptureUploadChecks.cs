@@ -30,7 +30,11 @@ internal static class CaptureUploadChecks
         Require(gate.Observe("visit",false,true,1,rows,now.AddSeconds(1)) is not null,"Capture skipped readiness.");
         Require(gate.Observe("visit",false,true,1,rows,now.AddSeconds(2)) is not null,"Queue acceptance incorrectly suppressed unconfirmed rows.");
         gate.Acknowledged(upload.Capture.Listings);
-        Require(gate.Observe("visit",true,true,1,rows,now.AddSeconds(24)) is null,"Confirmed rows were submitted twice.");
+        Require(gate.Observe("visit",false,true,1,rows,now.AddSeconds(24)) is null,"Polling unchanged memory submitted twice.");
+        Require(gate.Observe("visit",true,true,1,rows,now.AddSeconds(25)) is null,"A new response skipped stability debounce.");
+        Require(gate.Observe("visit",false,true,1,rows,now.AddMilliseconds(25500)) is not null,"Confirming an unchanged price failed to refresh the complete snapshot.");
+        gate.Acknowledged(rows);
+        Require(gate.Observe("visit",false,true,1,rows,now.AddSeconds(26)) is null,"A fresh observation was submitted more than once.");
 
         var denied=new CaptureUpload("visit",capture);
         denied.Advance(now,_=>Task.FromResult(new CaptureUploadResult(false)));

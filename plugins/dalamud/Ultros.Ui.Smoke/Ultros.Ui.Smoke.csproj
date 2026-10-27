@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Ultros.Lists/Ultros.Lists.csproj" />
+    <Reference Include="Dalamud.Bindings.ImGui"><HintPath>$(DALAMUD_HOME)/Dalamud.Bindings.ImGui.dll</HintPath></Reference>
+    <None Include="$(DALAMUD_HOME)/cimgui.dll" Link="cimgui.dll" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="../Ultros/Ui/*.cs" Link="Ui/%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>
