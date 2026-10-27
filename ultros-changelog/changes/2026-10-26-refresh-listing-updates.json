@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Newer prices survive market refreshes",
+  "blurb": "Refreshing an item now keeps newer listing updates that arrive while its market data is being fetched."
+}

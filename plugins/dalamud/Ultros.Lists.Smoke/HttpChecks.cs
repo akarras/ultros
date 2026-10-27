@@ -59,9 +59,7 @@ internal static class HttpChecks
             var roster=await connection.Send<UnverifiedCharacter[]>(HttpMethod.Post,"/api/v1/plugin/retainers/register",
                 new{operation_id=Guid.NewGuid().ToString("N"),character=observed},cancellation.Token);
             var registered=roster.Where(c=>c.Name==observed.Name&&c.HomeWorld==63).MaxBy(c=>c.ObservedAt)!;
-            roster=await connection.Send<UnverifiedCharacter[]>(HttpMethod.Post,$"/api/v1/plugin/characters/{registered.Id}/uploads",
-                new{enabled=true},cancellation.Token);
-            registered=roster.Single(c=>c.Id==registered.Id);
+            Require(registered.UploadEnabled,"New retainer registrations still require a separate upload opt-in.");
             var retainer=registered.Retainers.Single(r=>r.Name=="ManagedPriceFixture");
             var capture=new ListingCapture(Guid.NewGuid().ToString("N"),retainer.Revision,registered.CaptureEpoch,
                 DateTimeOffset.UtcNow,true,[new PrivateListing(0,8,false,5,100)]);

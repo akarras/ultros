@@ -7,24 +7,7 @@ use serde_json::json;
 use ultros_api_types::{list::ListPermission, plugin::*};
 use ultros_list_doc::{ListDocument, RowKey};
 
-fn disposable_plugin_database(url: &str) -> bool {
-    // Match a deliberately narrow URL grammar: no password, alternate host,
-    // escaped names, query options or fragment can redirect a destructive fixture.
-    let Some(address) = url.strip_prefix("postgres://ultros_plugin@127.0.0.1:") else {
-        return false;
-    };
-    let Some((port, database)) = address.split_once('/') else {
-        return false;
-    };
-    let Some(name) = database.strip_prefix("ultros_plugin_") else {
-        return false;
-    };
-    !port.is_empty()
-        && port.bytes().all(|c| c.is_ascii_digit())
-        && port.parse::<u16>().is_ok_and(|port| port > 0)
-        && !name.is_empty()
-        && name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
-}
+use crate::common::test_db::disposable_plugin_database;
 
 #[test]
 fn disposable_plugin_database_guard_is_strict() {
@@ -69,6 +52,16 @@ fn market_listing(name: &str, city: u32, price: u32, hq: bool) -> universalis::L
         total: price,
         tax: 0,
     }
+}
+
+async fn apply_market_board(
+    db: &UltrosDb,
+    listings: Vec<universalis::ListingView>,
+    item: universalis::ItemId,
+    world: universalis::WorldId,
+) -> anyhow::Result<crate::listings::ListingWrite> {
+    let version = db.capture_listing_board(world, item).await?;
+    db.update_listings(listings, item, world, version).await
 }
 
 async fn pair(
@@ -366,6 +359,10 @@ async fn plugin_connected_flows_postgres() {
         .unwrap();
     assert_eq!(registered[0].id, again[0].id);
     assert_eq!(registered[0].retainers.len(), 1);
+    assert!(
+        registered[0].upload_enabled,
+        "new registrations allow uploads by default"
+    );
     let website = db.registered_game_characters(owner).await.unwrap();
     assert_eq!(website[0].id, registered[0].id);
     assert_eq!(website[0].retainers[0].name, "FixtureRetainer");
@@ -405,10 +402,42 @@ async fn plugin_connected_flows_postgres() {
     ));
     let character = registered[0].id.parse::<i64>().unwrap();
     let retainer = registered[0].retainers[0].id.parse::<i64>().unwrap();
-    let mut capture = ListingCapture {
+    // Emulate a character saved by the old client before any upload preference
+    // was chosen. The new client's automatic registration adopts the new default.
+    exec(
+        &db.db,
+        "UPDATE plugin_character SET upload_enabled=false,capture_epoch=0 WHERE id=$1",
+        vec![character.into()],
+    )
+    .await
+    .unwrap();
+    let upgraded = db
+        .register_plugin_retainers(
+            &principal,
+            &keys,
+            &RegisterRetainers {
+                operation_id: format!("register-default-upgrade-{suffix}"),
+                character: observation.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    let upgraded_character = upgraded
+        .iter()
+        .find(|c| c.id == character.to_string())
+        .unwrap();
+    assert!(
+        upgraded_character.upload_enabled,
+        "untouched old defaults adopt automatic uploads"
+    );
+    assert_eq!(
+        upgraded_character.capture_epoch,
+        registered[0].capture_epoch
+    );
+    let capture = ListingCapture {
         capture_id: format!("capture-one-{suffix}"),
         base_revision: 0,
-        capture_epoch: 0,
+        capture_epoch: registered[0].capture_epoch,
         observed_at: chrono::Utc::now(),
         complete: true,
         listings: vec![PrivateListing {
@@ -419,23 +448,27 @@ async fn plugin_connected_flows_postgres() {
             unit_price: 100,
         }],
     };
-    assert!(
-        db.upload_plugin_listings(&principal, retainer, &capture)
-            .await
-            .is_err()
-    );
-    let consent = db
-        .set_plugin_upload_consent(
-            &principal,
-            character,
-            &UploadConsent {
-                enabled: true,
-                delete_snapshots: false,
-            },
-        )
+    let registration_tokens = pair(
+        &db,
+        &keys,
+        owner,
+        vec!["retainers:read".into(), "retainers:register".into()],
+        &format!("fixture/{suffix}/registration-only"),
+    )
+    .await;
+    let registration_only = db
+        .authenticate_plugin(&registration_tokens.access_token)
         .await
         .unwrap();
-    capture.capture_epoch = consent[0].capture_epoch;
+    assert!(
+        matches!(
+            db.upload_plugin_listings(&registration_only, retainer, &capture)
+                .await,
+            Err(PluginError::Forbidden)
+        ),
+        "default upload preferences must still require an approved upload scope"
+    );
+    // The first snapshot needs no second, per-character opt-in.
     let receipt = db
         .upload_plugin_listings(&principal, retainer, &capture)
         .await
@@ -562,7 +595,8 @@ async fn plugin_connected_flows_postgres() {
             .status,
         "unknown_age"
     );
-    db.update_listings(
+    apply_market_board(
+        &db,
         board.clone(),
         universalis::ItemId(1),
         universalis::WorldId(30000),
@@ -644,13 +678,13 @@ async fn plugin_connected_flows_postgres() {
         CREATE TRIGGER ultros_plugin_review_fail BEFORE INSERT OR UPDATE ON listing_board_review
         FOR EACH ROW WHEN (NEW.world_id=30000 AND NEW.item_id=1) EXECUTE FUNCTION ultros_plugin_review_fail()")
         .await.unwrap();
-    let failed_review = db
-        .update_listings(
-            board.clone(),
-            universalis::ItemId(1),
-            universalis::WorldId(30000),
-        )
-        .await;
+    let failed_review = apply_market_board(
+        &db,
+        board.clone(),
+        universalis::ItemId(1),
+        universalis::WorldId(30000),
+    )
+    .await;
     db.db
         .execute_unprepared(
             "DROP TRIGGER ultros_plugin_review_fail ON listing_board_review;
@@ -679,9 +713,14 @@ async fn plugin_connected_flows_postgres() {
             .status,
         "stale"
     );
-    db.update_listings(board, universalis::ItemId(1), universalis::WorldId(30000))
-        .await
-        .unwrap();
+    apply_market_board(
+        &db,
+        board,
+        universalis::ItemId(1),
+        universalis::WorldId(30000),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         db.plugin_retainer_prices(&principal, retainer)
             .await
@@ -817,6 +856,32 @@ async fn plugin_connected_flows_postgres() {
     )
     .await
     .unwrap();
+    let paused = db.plugin_characters(&principal).await.unwrap();
+    let paused_epoch = paused
+        .iter()
+        .find(|c| c.id == character.to_string())
+        .unwrap()
+        .capture_epoch;
+    let registered_again = db
+        .register_plugin_retainers(
+            &principal,
+            &keys,
+            &RegisterRetainers {
+                operation_id: format!("register-paused-{suffix}"),
+                character: observation.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    let paused_again = registered_again
+        .iter()
+        .find(|c| c.id == character.to_string())
+        .unwrap();
+    assert!(
+        !paused_again.upload_enabled,
+        "automatic registration must preserve an explicit pause"
+    );
+    assert_eq!(paused_again.capture_epoch, paused_epoch);
     assert!(
         db.plugin_retainer_snapshots(&principal)
             .await
@@ -1343,6 +1408,91 @@ async fn plugin_connected_flows_postgres() {
     db.revoke_plugin_credential(&tokens.refresh_token)
         .await
         .unwrap();
+    // Old authorization attempts can be removed directly from Alerts.
+    db.delete_game_endpoint_for_browser(owner, session.endpoint_id.unwrap())
+        .await
+        .unwrap();
+    assert!(
+        db.get_endpoint_owned_by(owner, session.endpoint_id.unwrap())
+            .await
+            .is_err()
+    );
+    let removable = pair(
+        &db,
+        &keys,
+        owner,
+        all.clone(),
+        &format!("fixture/{suffix}/remove"),
+    )
+    .await;
+    let survivor = pair(&db, &keys, owner, all, &format!("fixture/{suffix}/keep")).await;
+    let removable_principal = db
+        .authenticate_plugin(&removable.access_token)
+        .await
+        .unwrap();
+    let removable_session = db.plugin_session(&removable_principal).await.unwrap();
+    let endpoint = removable_session.endpoint_id.unwrap();
+    db.test_plugin_delivery(&removable_principal, "remove-endpoint-test")
+        .await
+        .unwrap();
+    assert!(
+        !db.pending_plugin_deliveries(&removable_principal)
+            .await
+            .unwrap()
+            .deliveries
+            .is_empty()
+    );
+    exec(
+        &db.db,
+        "INSERT INTO alert_notification_rule(alert_id,endpoint_id) VALUES($1,$2)",
+        vec![alert.into(), endpoint.into()],
+    )
+    .await
+    .unwrap();
+    assert!(
+        db.delete_game_endpoint_for_browser(other, endpoint)
+            .await
+            .is_err()
+    );
+    assert!(
+        db.delete_game_endpoint_for_browser(owner, webhook)
+            .await
+            .is_err()
+    );
+    assert!(
+        db.authenticate_plugin(&removable.access_token)
+            .await
+            .is_ok()
+    );
+    db.delete_game_endpoint_for_browser(owner, endpoint)
+        .await
+        .unwrap();
+    assert!(
+        db.authenticate_plugin(&removable.access_token)
+            .await
+            .is_err()
+    );
+    assert!(
+        db.refresh_plugin_session(&removable.refresh_token)
+            .await
+            .is_err()
+    );
+    assert!(db.plugin_session(&removable_principal).await.is_err());
+    assert!(db.get_endpoint_owned_by(owner, endpoint).await.is_err());
+    for table in ["plugin_delivery", "alert_notification_rule"] {
+        assert!(
+            query(
+                &db.db,
+                &format!("SELECT endpoint_id FROM {table} WHERE endpoint_id=$1"),
+                vec![endpoint.into()]
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+    }
+    assert!(db.authenticate_plugin(&survivor.access_token).await.is_ok());
+    assert!(db.get_endpoint_owned_by(owner, webhook).await.is_ok());
     println!(
         "Device pairing, scope isolation, private registration/upload, durable notification rollback/fencing, CRDT authorization and refresh reuse passed."
     );

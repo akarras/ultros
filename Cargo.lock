@@ -10649,6 +10649,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "chrono",
+ "clickhouse",
  "flate2",
  "futures",
  "itertools 0.15.0",
@@ -10763,6 +10764,8 @@ name = "ultros-calc"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "serde",
+ "serde_json",
  "ultros-api-types",
 ]
 

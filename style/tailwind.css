@@ -1965,7 +1965,7 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     .plugin-feature-list { grid-template-columns: 10rem minmax(0, 1fr); }
 }
 @media (max-width: 639.98px) {
-    .plugin-page > div > header, .plugin-page .plugin-tabs { padding-left: 1rem; padding-right: 1rem; }
+    .plugin-page > div > header, .plugin-page > div > ul, .plugin-page .plugin-tabs { padding-left: 1rem; padding-right: 1rem; }
 }
 .app-shell {
     display: grid;

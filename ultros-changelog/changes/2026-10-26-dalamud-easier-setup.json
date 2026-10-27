@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Connect once to sync your retainers",
+  "blurb": "The game plugin now selects list editing and retainer syncing when you connect. Visit a summoning bell to save your retainers automatically, then open Markets to upload private listings and price changes. You can pause uploads at any time.",
+  "link": "/plugin",
+  "labs": true
+}

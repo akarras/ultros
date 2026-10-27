@@ -7,6 +7,7 @@ pub mod entity;
 mod ffxiv_character;
 pub mod group_roles;
 pub mod guest_list_adoption;
+mod ingest_budget;
 pub mod list_doc;
 pub mod list_projection_check;
 pub mod listings;
@@ -14,6 +15,7 @@ pub mod lists;
 pub mod market_sweep;
 pub mod notification_outbox;
 pub mod plugin;
+pub mod recent_sales;
 pub mod recently_updated;
 pub mod retainers;
 pub mod sales;
@@ -91,6 +93,7 @@ fn min_connections_for(max_connections: u32, requested: Option<u32>) -> u32 {
 pub struct UltrosDb {
     // Connections here
     db: DatabaseConnection,
+    ingest_budget: ingest_budget::IngestBudget,
 }
 
 impl UltrosDb {
@@ -117,7 +120,7 @@ impl UltrosDb {
         let db: DatabaseConnection = Database::connect(opt).await?;
         Migrator::up(&db, None).await?;
 
-        Ok(Self { db })
+        Ok(Self::from_connection(db))
     }
 
     /// Wrap an already-open connection **without** running migrations.
@@ -127,7 +130,19 @@ impl UltrosDb {
     /// build doesn't know about (a shared dev Postgres that a newer branch has
     /// migrated), and a tool that only reads must not be blocked by that.
     pub fn from_connection(db: DatabaseConnection) -> Self {
-        Self { db }
+        let pool_max = match db.get_database_backend() {
+            sea_orm::DbBackend::Postgres => db
+                .get_postgres_connection_pool()
+                .options()
+                .get_max_connections(),
+            // SQLite fixtures and single-connection callers have no pool
+            // headroom to reserve, but must retain their supported behavior.
+            _ => 1,
+        };
+        Self {
+            db,
+            ingest_budget: ingest_budget::IngestBudget::new(pool_max),
+        }
     }
 
     #[instrument(skip(self))]
@@ -369,31 +384,14 @@ impl UltrosDb {
         Ok(model)
     }
 
-    #[instrument(skip(self))]
-    pub async fn create_listing(
-        &self,
+    fn listing_model(
         listing: &ListingView,
         item_id: ItemId,
         world_id: WorldId,
-        retainer_id: Option<i32>,
-    ) -> Result<active_listing::Model> {
+        retainer_id: i32,
+    ) -> active_listing::ActiveModel {
         let price_per_unit = listing.price_per_unit.unwrap_or(listing.total) as i32;
         let quantity = listing.quantity.unwrap_or(1) as i32;
-        let retainer_id = if let Some(retainer_id) = retainer_id {
-            retainer_id
-        } else {
-            let retainer = self
-                .store_retainer(
-                    listing.retainer_id.as_deref().unwrap_or_default(),
-                    &listing.retainer_name,
-                    world_id,
-                    listing.retainer_city as i32,
-                )
-                .await?;
-            retainer.id
-        };
-        use active_listing::{Column, Entity};
-        use sea_orm::ExprTrait;
         let materia = (!listing.materia.is_empty()).then(|| {
             active_listing::MateriaList(
                 listing
@@ -406,7 +404,7 @@ impl UltrosDb {
                     .collect(),
             )
         });
-        let m = active_listing::ActiveModel {
+        active_listing::ActiveModel {
             world_id: Set(world_id.0),
             item_id: Set(item_id.0),
             retainer_id: Set(retainer_id),
@@ -421,40 +419,7 @@ impl UltrosDb {
             is_crafted: Set(listing.is_crafted),
             on_mannequin: Set(listing.on_mannequin),
             ..Default::default()
-        };
-        // Upsert on the listing's Universalis identity. This is what makes
-        // concurrent writers safe: any two tasks racing to store the same
-        // listing — duplicate websocket events, catch-up vs. socket, the manual
-        // refresh route — collapse into one row at the database instead of each
-        // trusting its own pre-insert read. The `WHERE` mirrors the partial
-        // unique index `idx_active_listing_identity`; a listing with no
-        // `listing_id` can't conflict and inserts plainly (legacy diff paths
-        // are responsible for not calling us with duplicates of those).
-        let m = Entity::insert(m)
-            .on_conflict(
-                sea_query::OnConflict::columns([
-                    Column::WorldId,
-                    Column::ItemId,
-                    Column::ListingId,
-                ])
-                .target_and_where(sea_query::Expr::col(Column::ListingId).is_not_null())
-                .update_columns([
-                    Column::RetainerId,
-                    Column::PricePerUnit,
-                    Column::Quantity,
-                    Column::Hq,
-                    Column::Timestamp,
-                    Column::Materia,
-                    Column::StainId,
-                    Column::CreatorName,
-                    Column::IsCrafted,
-                    Column::OnMannequin,
-                ])
-                .to_owned(),
-            )
-            .exec_with_returning(&self.db)
-            .await?;
-        Ok(m)
+        }
     }
 
     #[instrument(skip(self, names))]

@@ -56,6 +56,7 @@ pub(crate) struct WebState {
     /// Same contract for `/api/v1/listing_stats`, as its own instance so a
     /// listing snapshot never evicts a sale snapshot (or the reverse).
     pub(crate) listing_stats_cache: crate::web::stats_cache::ListingStatsCache,
+    pub(crate) refresh_jobs: crate::web::refresh_jobs::RefreshJobs,
     /// The local-first list document's server side: merge path, activity
     /// classification, and the legacy-event/relay fanout.
     pub(crate) list_sync: crate::lists::ListSync,
@@ -174,6 +175,12 @@ impl FromRef<WebState> for crate::web::stats_cache::SaleStatsCache {
 impl FromRef<WebState> for crate::web::stats_cache::ListingStatsCache {
     fn from_ref(input: &WebState) -> Self {
         input.listing_stats_cache.clone()
+    }
+}
+
+impl FromRef<WebState> for crate::web::refresh_jobs::RefreshJobs {
+    fn from_ref(input: &WebState) -> Self {
+        input.refresh_jobs.clone()
     }
 }
 

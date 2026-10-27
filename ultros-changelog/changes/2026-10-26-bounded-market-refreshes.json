@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "More reliable item refreshes",
+  "blurb": "Failed or stalled item refreshes now show an error instead of reporting success, and repeated clicks share the same refresh."
+}

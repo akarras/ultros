@@ -36,6 +36,7 @@
     "test:dalamud-releases": "node ./dalamud-releases.cjs",
     "test:dalamud-guide": "node ./dalamud-guide.cjs",
     "test:dalamud": "node ./dalamud-device-flow.cjs",
+    "test:dalamud-endpoints": "node ./dalamud-endpoint-removal.cjs",
     "test:dalamud-retainers": "cross-env DALAMUD_RETAINER_ONLY=1 node ./dalamud-device-flow.cjs",
     "test:plugin-link-bootstrap": "node --test ./plugin-link-bootstrap.test.cjs",
     "test:push": "node ./push.cjs",
@@ -93,7 +94,8 @@
     "test:recipe-root-source": "node ./recipe-root-source.cjs",
     "test:lists-default": "node ./lists-default.cjs",
     "test:lists-readonly": "node ./lists-readonly.cjs",
-    "test:lists-help": "node ./lists-help.cjs"
+    "test:lists-help": "node ./lists-help.cjs",
+    "test:recipe-worker": "node ./recipe-worker.cjs"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",

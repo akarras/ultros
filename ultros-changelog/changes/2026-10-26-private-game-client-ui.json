@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "A clearer, more private game client",
+  "blurb": "Your account name stays masked and your account ID stays hidden until you choose to reveal them. The redesigned in-game window also lets you delete notifications or clear its history without changing your alerts.",
+  "link": "/plugin",
+  "labs": true
+}

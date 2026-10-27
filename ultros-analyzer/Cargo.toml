@@ -28,5 +28,6 @@ xiv-gen = { workspace = true }
 xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }
 
 [dev-dependencies]
+clickhouse = { workspace = true }
 tempfile = "3.6.0"
 tokio = { workspace = true, features = ["test-util"] }

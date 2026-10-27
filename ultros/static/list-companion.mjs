@@ -343,4 +343,4 @@ export function closeCompanion() {
   if (opened && !opened.closed) opened.close();
 }
 
-window.addEventListener('pagehide', closeCompanion);
+if (typeof window !== 'undefined') window.addEventListener('pagehide', closeCompanion);

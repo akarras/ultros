@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "More reliable live price recovery",
+  "blurb": "Fixed a recovery issue that could bring back outdated market prices."
+}

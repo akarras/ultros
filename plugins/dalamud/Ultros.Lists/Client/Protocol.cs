@@ -10,7 +10,7 @@ internal static class Protocol
         MaxDepth = 64,
     };
     internal static readonly string[] NotificationScopes = ["notifications:read", "notifications:ack", "notifications:mark-read"];
-    internal static readonly string[] DefaultScopes = [.. NotificationScopes, "lists:read"];
+    internal static readonly string[] DefaultScopes = [.. NotificationScopes, "lists:read", "lists:write", "retainers:read", "retainers:register", "retainers:upload"];
 }
 
 internal sealed class PairingChallenge
