@@ -98,6 +98,10 @@ const FROZEN_CHROME_112 =
 const CURRENT_CHROME =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/999.0.0.0 Safari/537.36";
+// iOS Safari UA from GlitchTip issue #8023's request payload.
+const IOS_SAFARI =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 " +
+  "(KHTML, like Gecko) Version/26.6.1 Mobile/15E148 Safari/604.1";
 
 const HYDRATION_LOC =
   "/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/" +
@@ -822,6 +826,82 @@ const cases = [
             stacktrace: {
               frames: [{ filename: "https://ultros.app/api/v1/listings" }],
             },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  {
+    name: 'WebKit frameless unhandled "Load failed" (wasm bundle fetch) is dropped',
+    ua: IOS_SAFARI,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Load failed",
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: 'WebKit frameless unhandled "Importing a module script failed." is dropped',
+    ua: IOS_SAFARI,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Importing a module script failed.",
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: 'WebKit "Load failed" with an app stack frame is preserved',
+    ua: IOS_SAFARI,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Load failed",
+            stacktrace: {
+              frames: [{ filename: "https://ultros.app/api/v1/listings" }],
+            },
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  {
+    name: 'a manually captured (handled) frameless "Load failed" is preserved',
+    ua: IOS_SAFARI,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Load failed",
+            mechanism: { type: "generic", handled: true },
           },
         ],
       },
