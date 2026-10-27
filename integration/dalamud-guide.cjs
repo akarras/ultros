@@ -63,12 +63,16 @@ async function main(){
         await page.screenshot({path:path.join(folder,`setup-${name}.png`),fullPage:true});
         continue;
       }
-      assert.equal(await page.$$eval('[data-testid="plugin-install-guide"] > li',rows=>rows.length),4);
+      assert.equal(await page.$eval('.plugin-page h1',element=>element.textContent),"Ultros for Dalamud");
+      assert.equal(await page.$$eval('[data-testid="plugin-install-guide"] > li',rows=>rows.length),2);
+      const features=await page.$eval('[data-testid="plugin-features"]',element=>element.textContent);
+      for(const feature of ["Check prices in game","Sync shopping lists","Sync retainer prices","Get alerts in chat"])assert(features.includes(feature),feature);
+      assert.equal(await page.$eval('[data-testid="plugin-setup-help"]',element=>element.open),false);
       assert.equal(await page.$eval('[data-testid="plugin-repository-url"]',element=>element.textContent),info.repository_url);
       assert.equal(await page.$eval('a[href="/login?next=/plugin"]',element=>element.textContent),"Sign in with Discord");
       assert(await page.$('a[href="/plugin/verify"]'));assert(await page.$('a[href="/plugin/devices"]'));
       const text=await page.$eval('[data-testid="plugin-install-guide"]',element=>element.textContent);
-      for(const phrase of ["/xlsettings","/xlplugins","/ultros","Register all observed retainers","Awaiting confirmation","five minutes"])assert(text.includes(phrase),phrase);
+      for(const phrase of ["/xlsettings","/xlplugins","/ultros","Approve once"])assert(text.includes(phrase),phrase);
       if(info.download_url){
         await page.$eval('[data-testid="plugin-manual-install"]',element=>element.open=true);
         const download=await page.$eval('[data-testid="plugin-manual-install"] a',element=>element.getAttribute("href"));

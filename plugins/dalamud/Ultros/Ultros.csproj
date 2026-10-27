@@ -4,8 +4,8 @@
     <RepoUrl>https://github.com/akarras/ultros/tree/main/plugins/dalamud</RepoUrl>
     <Name>Ultros</Name>
     <IconUrl>https://ultros.app/static/android-chrome-512x512.png</IconUrl>
-    <Punchline>Ultros item search, lists, chat alerts and optional private retainer uploads.</Punchline>
-    <Description>Connect using browser approval, view item markets and lists, receive chat alerts, and optionally upload retainer listings. Open with /ultros. Purchases and game actions remain manual.</Description>
+    <Punchline>Ultros item search, lists, chat alerts and private retainer syncing.</Punchline>
+    <Description>Connect once using browser approval to sync lists, receive chat alerts, and save your retainers and private selling prices. Open with /ultros. Purchases and game actions remain manual.</Description>
     <Tags>market;shopping;lists;retainers;alerts</Tags>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

@@ -27,7 +27,10 @@
 //      module" / "... reached end while decoding ..." (a truncated
 //      download). GlitchTip issues #21, #2374, #2404,
 //      #6755, #6762–#6767, and the count=1 flood of #62xx "Failed to fetch
-//      dynamically imported module: .../pkg/<hash>/ultros.js".
+//      dynamically imported module: .../pkg/<hash>/ultros.js". WebKit's
+//      frameless, URL-less twins "Load failed" and "Importing a module
+//      script failed." (#8023, #8049) when they arrive as unhandled
+//      rejections of the hydration bootstrap.
 //   2. A "Cannot read properties of undefined (reading 'document')"
 //      TypeError thrown by an injected third-party script (Tencent QQ
 //      Browser / UC / WeChat in-app WebViews on frozen Chrome 112).
@@ -257,6 +260,24 @@
       if (
         ex.value.indexOf("Failed to fetch dynamically imported module") === 0 &&
         ULTROS_PKG_BUNDLE_RE.test(ex.value)
+      ) {
+        return true;
+      }
+
+      // WebKit (iOS Safari / WKWebView) words the same two failures without
+      // the URL or any stack: "Load failed" is its "Failed to fetch", and
+      // "Importing a module script failed." its failed dynamic import. Both
+      // reach us as an unhandled rejection of the hydration bootstrap's
+      // `import(ultros.js).then(m => m.default(ultros.wasm))`, which has no
+      // catch. With nothing to scope on, require the exact frameless,
+      // unhandled shape: an app fetch that fails inside our code carries
+      // frames, and a handled capture is preserved. GlitchTip #8023, #8049.
+      if (
+        (ex.value === "Load failed" ||
+          ex.value === "Importing a module script failed.") &&
+        !(ex.stacktrace && ex.stacktrace.frames && ex.stacktrace.frames.length) &&
+        ex.mechanism &&
+        ex.mechanism.handled === false
       ) {
         return true;
       }

@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-toml = "0.8"
+toml = "1.1"
 # `IconSize` is shared with the consumer so the packed entry names cannot drift
 # from `ultros-xiv-icons`' runtime parser.
 ultros-api-types = { path = "../ultros-api-types" }
@@ -24,7 +24,7 @@ rkyv = { version = "0.7.42", features = [
 # Pure-Rust brotli encoder for the packs; `xiv-gen-db` decodes them with the
 # matching `brotli-decompressor`.
 brotli = "9"
-zstd = "0.13"
+zstd = "0.14"
 tar = "0.4"
 image = { workspace = true, features = ["webp", "png"] }
 webp = "0.3"

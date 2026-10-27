@@ -243,9 +243,14 @@ impl UltrosDb {
             return serde_json::from_value(response).map_err(|_| PluginError::Storage);
         }
         let character = observe(&txn, keys, principal.owner, &request.character, true).await?;
+        // Epoch zero also identifies the old, untouched default-off preference.
+        // An explicit pause advances the epoch and must never be undone here.
         exec(
             &txn,
-            "UPDATE plugin_character SET registered=true WHERE owner=$1 AND id=$2",
+            "UPDATE plugin_character SET registered=true,
+             upload_enabled=CASE WHEN NOT registered OR capture_epoch=0 THEN true ELSE upload_enabled END,
+             capture_epoch=capture_epoch+CASE WHEN NOT registered OR capture_epoch=0 THEN 1 ELSE 0 END
+             WHERE owner=$1 AND id=$2",
             vec![principal.owner.into(), character.into()],
         )
         .await?;

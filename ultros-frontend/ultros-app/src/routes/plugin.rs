@@ -48,10 +48,8 @@ pub fn PluginLayout() -> impl IntoView {
                     {move || {
                         if dalamud_labs.get() && info.get().flatten().as_ref().is_some_and(setup_available) {
                             view! {
-                                <header class="space-y-3">
-                                    <p class="text-sm font-semibold text-[color:var(--color-text-muted)]">{t!(i18n, plugin_brand)}</p>
+                                <header>
                                     <h1 class="text-3xl sm:text-4xl font-bold">{t!(i18n, plugin_heading)}</h1>
-                                    <p class="text-[color:var(--color-text-muted)] max-w-prose">{t!(i18n, plugin_intro)}</p>
                                 </header>
                                 <nav class="plugin-tabs" aria-label=move || t_string!(i18n, plugin_nav)>
                                     <a href="/plugin" aria-current=move || matches!(location.pathname.get().as_str(), "/plugin" | "/plugin/").then_some("page")>{t!(i18n, plugin_nav_guide)}</a>
@@ -243,10 +241,10 @@ fn permission_description(scope: &str) -> &'static str {
         "lists:write" => "Add, edit, and remove items in your lists. Includes list reading.",
         "retainers:read" => "View your private characters, retainer roster, and saved listings.",
         "retainers:register" => {
-            "Save observed characters and retainers to your account. Includes retainer reading."
+            "Automatically save characters and retainers you visit to your account. Includes retainer reading."
         }
         "retainers:upload" => {
-            "Upload observed sale listings for characters you opt in separately. Includes retainer reading."
+            "Upload private selling lists and confirmed price changes for registered characters. Uploads start by default and can be paused per character in game. Includes retainer reading."
         }
         _ => "",
     }
@@ -341,7 +339,7 @@ fn ReviewPairing(selection: BrowserSelection) -> impl IntoView {
                                 }
                             }).collect_view()}
                         </fieldset>
-                        <p class="text-sm text-[color:var(--color-text-muted)]">"You can disconnect this client at any time. Private retainer uploads also need a separate opt-in in game."</p>
+                        <p class="text-sm text-[color:var(--color-text-muted)]">"After approval, private retainer uploads start by default for newly registered characters. You can pause uploads in game or disconnect this client at any time."</p>
                         <div class="flex flex-wrap gap-3">
                             <button class="btn-primary" type="button" value="approve" data-testid="plugin-approve" disabled=move || decide.pending().get() || permissions.with(Vec::is_empty) on:click=move |_| { decide.dispatch(false); }>{move || if decide.pending().get() { "Saving…" } else { "Approve connection" }}</button>
                             <button class="btn-secondary" type="button" value="deny" data-testid="plugin-deny" disabled=move || decide.pending().get() on:click=move |_| { decide.dispatch(true); }>"Decline"</button>

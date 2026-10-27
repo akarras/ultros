@@ -236,7 +236,11 @@ async fn run_socket_listener(
         max_in_flight = max_in_flight.get(),
         "starting bounded websocket ingest"
     );
-    ultros_ingest::bounded::run(socket.get_receiver(), max_in_flight, token, |msg| {
+    ultros_ingest::bounded::run_ordered(socket.get_receiver(), max_in_flight, token,
+        |msg| match msg {
+            SocketRx::Event(Ok(event)) => Some((WorldId::from(event), universalis::ItemId::from(event))),
+            SocketRx::Event(Err(_)) => None,
+        }, |msg| {
             let db = db.clone();
             let listings_tx = listings_tx.clone();
             let sales_tx = sales_tx.clone();
@@ -890,6 +894,7 @@ async fn main() -> Result<()> {
         home_feed_cache: Default::default(),
         sale_stats_cache: Default::default(),
         listing_stats_cache: Default::default(),
+        refresh_jobs: Default::default(),
         list_sync,
     };
     let mut web_task = tokio::spawn(web::start_web(web_state, prometheus_handle));

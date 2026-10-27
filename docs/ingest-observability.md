@@ -76,6 +76,23 @@ populated. Before this change these lookups panicked instead, which killed live
 sale ingestion and the ClickHouse dual-write outright while the process kept
 serving.
 
+## Database budget for market ingest
+
+Websocket writes, catch-up/manual board reconciliation, sale acceptance, and
+pre-fetch revision reads share one budget on the cloned `UltrosDb`. It admits
+`min(16, max(1, pool_max / 2))` operations. Each operation resolves metadata
+before opening its board transaction and issues batches sequentially, holding at
+most one connection. A pool larger than one therefore reserves at least half its
+ceiling for other work; a one-connection pool cannot reserve headroom. This is a
+per-process limit, not a replacement for budgeting Postgres across replicas.
+
+`ultros_ingest_database_budget_wait_seconds` measures time waiting for admission.
+Rising waits with healthy web latency mean the budget is absorbing ingest load.
+Listings, changed retainers, and missing buyers are written in chunks of at most
+500 rows. Do not add nested budget acquisitions inside an admitted operation or
+perform metadata lookups through the pool while holding its transaction.
+
+
 ## Tuning
 
 | Env var | Default | Effect |
@@ -87,3 +104,46 @@ Compile-time constants worth knowing about, all documented at their definitions:
 `LISTINGS_BUS_SIZE` / `HISTORY_BUS_SIZE` (`ultros-server-core/src/event.rs`),
 `MAX_SNAPSHOT_AGE` (`ultros-analyzer/src/analyzer_service.rs`), and `REFRESH_INTERVAL`
 (`ultros-ingest/src/ingest_health.rs`).
+
+## Repairing missing ClickHouse sales
+
+Postgres `sale_history` is the repair source after a history-bus lag, writer
+queue overflow, failed shutdown drain, or process crash. Resuming the normal
+backfill skips sealed months, so use **replay** for a gap in an already backfilled
+month. Bound the work to the affected sale months and worlds when known:
+
+```bash
+cargo run --release -p ultros-clickhouse --bin clickhouse_backfill -- \
+  --replay --from 2026-08 --through 2026-09 --world 40
+```
+
+The endpoints are inclusive months; omit `--world` to repair all known worlds,
+or repeat it for several. Use the same `DATABASE_URL` and `CLICKHOUSE_*`
+configuration as the server. This streams Postgres in one world/month chunk at a
+time, uses the original Postgres IDs, and never deletes ClickHouse rows. Queries
+against `sales FINAL` deduplicate replayed rows, including overlap with live
+writes. A failed chunk is safe to retry; completed replay chunks are not skipped.
+The active month is always revisited even in normal resume mode and is never
+marked complete. Old active-month markers are ignored.
+
+Choose the range by **sale date**, not the time an alert fired: a delayed upstream
+payload can contain old sales. If the affected dates are unknown, replay the full
+retained history. This is an operator repair tool, not a durable delivery queue;
+monitor the loss counters and run it after incidents. Normal rollup refreshes
+pick up repaired raw sales; derived tables may remain stale until then. Use
+`clickhouse_parity_check` to check counts and quantities against Postgres.
+
+This cannot reconstruct `listing_events`, `floor_changes`, or original receipt
+times from current Postgres state. Their lost transitions require a durable
+outbox upstream of the broadcast bus; sale replay must not be described as
+repairing those tables or the analyzer's in-memory recent-sale cache.
+
+The replay regression uses only explicitly named disposable databases (it does
+not read `.env`):
+
+```bash
+ULTROS_PLUGIN_TEST_DATABASE_URL=postgres://ultros_plugin@127.0.0.1:5432/ultros_plugin_test \
+CLICKHOUSE_URL=http://127.0.0.1:8123 CLICKHOUSE_DATABASE=ultros_audit \
+CLICKHOUSE_USER=ultros_audit CLICKHOUSE_PASSWORD=local-test \
+cargo test -p ultros-clickhouse --lib replay_repairs_sealed_months_and_resume_revisits_active_months -- --ignored --nocapture
+```

@@ -12,5 +12,5 @@ tar = "0.4.45"
 # zstd: better compression than gzip for the icon tarball; this crate is only
 # pulled into the server (via `ultros-charts/image` feature → `ultros` → here),
 # never into the WASM client, so the zstd-sys C dep is safe.
-zstd = "0.13"
+zstd = "0.14"
 once_cell = "1.21"

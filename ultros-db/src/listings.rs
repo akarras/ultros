@@ -21,66 +21,8 @@ use crate::{
     entity::{active_listing, retainer},
 };
 
-/// Ceiling on how many per-listing writes one board update may have in flight.
-///
-/// `add_listings` and `update_listings` issue one *insert* per listing —
-/// `create_listing` is an
-/// `INSERT INTO active_listing … ON CONFLICT … RETURNING`, which has no
-/// batched equivalent that still hands each row back. Running them under
-/// `join_all` polls every future immediately, so each one holds its own pooled
-/// connection: a full market board is up to 100 listings, i.e. up to 100
-/// simultaneous connections for a single item.
-///
-/// The delete side needs no fan-out at all: both `update_listings` and
-/// `remove_listings` clear their rows with a single statement. The websocket
-/// removal also guards the observed state — see [`delete_unchanged_listings`].
-///
-/// That multiplies with the catch-up sweep, which drives items through
-/// `buffer_unordered(50)` (`item_update_service::check_items`). Unbounded, one
-/// sweep can therefore demand thousands of connections against a
-/// `POSTGRES_MAX_CONNECTIONS` of 300 — and the symptoms are all over production:
-/// `catch-up listing update failed: Failed to acquire connection from pool:
-/// Connection pool timed out` (GlitchTip #6869/#6868), `acquired connection, but
-/// time to acquire exceeded slow threshold`, and 1.5–2.0s
-/// `INSERT INTO "active_listing" …` slow-statement breadcrumbs sitting directly
-/// next to the 10s SSR loopback timeouts filed as #2209/#2210. Those timeouts
-/// are what leave the SSR render owner disposed, which is where the panic family
-/// #7150/#7157/#7158/#7164 comes from.
-///
-/// #1172 bounded the per-world *sale* fan-out for the same reason; this is the
-/// write side it left behind. At 4, the catch-up sweep's peak demand is
-/// 50 × 4 = 200 connections, leaving headroom for websocket ingest and web
-/// requests. Buffering changes nothing observable: `buffered` preserves output
-/// order, so the call sites still zip results back against their input by
-/// position.
-const MAX_CONCURRENT_LISTING_WRITES: usize = 4;
-
-/// Run per-listing writes with at most [`MAX_CONCURRENT_LISTING_WRITES`] in
-/// flight, collecting successful rows in the order the writes were supplied.
-///
-/// Drain every write before propagating any error. Dropping the remaining
-/// futures on the first failure would leave an arbitrary part of the batch
-/// unattempted. An error must reach the caller before it stamps the board fresh.
-///
-/// Deliberately a plain `fn` returning `impl Future`, mirroring `join_all`'s own
-/// shape rather than being an `async fn`. `buffered` is stricter than `join_all`
-/// about higher-ranked lifetimes: an `async fn` wrapper pins the supplied
-/// futures to one lifetime, and every `tokio::spawn` that transitively reaches
-/// this call then fails to compile with "implementation of `FnOnce`/`Send` is
-/// not general enough". For the same reason the call sites hand over futures
-/// that *own* their `ListingView` instead of borrowing one out of the diff.
-fn fan_out_listing_writes<I, T>(writes: I) -> impl std::future::Future<Output = Result<Vec<T>>>
-where
-    I: IntoIterator,
-    I::Item: std::future::Future<Output = Result<T>>,
-{
-    use futures::{FutureExt, stream::StreamExt};
-
-    futures::stream::iter(writes)
-        .buffered(MAX_CONCURRENT_LISTING_WRITES)
-        .collect::<Vec<_>>()
-        .map(|results| results.into_iter().collect())
-}
+mod board_version;
+pub use board_version::{BoardVersion, StaleBoardSnapshot};
 
 /// Delete the selected rows only if their state still matches the earlier
 /// read. An add task can reprice a row after `listings_to_remove_with_identity`
@@ -216,7 +158,7 @@ fn remove_diff_key_model<'a>(
 
 /// Same key, computed from the incoming websocket view.
 ///
-/// Every `Option` here must resolve exactly like the insert path (`create_listing`
+/// Every `Option` here must resolve exactly like the insert path (`write_listing_batch`
 /// in lib.rs stores `price_per_unit.unwrap_or(total)` and `quantity.unwrap_or(1)`),
 /// otherwise a listing that arrived with a `None` field could never be matched for
 /// removal and would linger as a phantom row.
@@ -438,13 +380,31 @@ fn split_rows_by_identity(rows: RowsWithRetainers) -> (RowsWithRetainers, RowsWi
     rows.into_iter().partition(|(m, _)| m.listing_id.is_some())
 }
 
+/// One stable upstream identity has one final state in a payload. Normalize
+/// before diffing so a final unchanged occurrence can supersede an earlier
+/// reprice. Id-less identical stacks remain separate occurrences.
+fn deduplicate_listing_ids(listings: Vec<ListingView>) -> Vec<ListingView> {
+    let mut ids = HashSet::new();
+    let mut unique: Vec<_> = listings
+        .into_iter()
+        .rev()
+        .filter(|view| {
+            view.listing_id
+                .as_ref()
+                .is_none_or(|id| ids.insert(id.clone()))
+        })
+        .collect();
+    unique.reverse();
+    unique
+}
+
 /// Selects the listings from a `listings/add` delta that need writing, keyed on
 /// `listing_id` where available.
 ///
 /// Per incoming view:
 /// - id matches a stored row with identical state → already have it, skip;
 /// - id matches a stored row with different state → a reprice; the upsert in
-///   `create_listing` updates the row in place;
+///   `write_listing_batch` updates the row in place;
 /// - id matches nothing → fall back to the legacy content diff against rows
 ///   that have **no** stored id. This is the pre-migration bridge: a re-sent
 ///   listing we stored before ids existed must not be inserted a second time
@@ -458,6 +418,7 @@ fn listings_to_upsert(
     listings: Vec<ListingView>,
     existing: RowsWithRetainers,
 ) -> Vec<(ListingView, Option<active_listing::Model>)> {
+    let listings = deduplicate_listing_ids(listings);
     let (id_rows, legacy_rows) = split_rows_by_identity(existing);
     let by_id: HashMap<&str, &active_listing::Model> = id_rows
         .iter()
@@ -537,6 +498,7 @@ fn listings_to_remove_with_identity(
 /// makes any full-board pass (catch-up, manual refresh, sweep) a one-shot
 /// id-backfill for the item.
 fn diff_board_with_identity(listings: Vec<ListingView>, existing: RowsWithRetainers) -> BoardDiff {
+    let listings = deduplicate_listing_ids(listings);
     let (id_rows, legacy_rows) = split_rows_by_identity(existing);
     let (id_views, legacy_views): (Vec<_>, Vec<_>) =
         listings.into_iter().partition(|v| v.listing_id.is_some());
@@ -573,47 +535,119 @@ impl UltrosDb {
     ///
     /// Shared by the full-board and incremental ingest paths so both create
     /// retainers on exactly the same terms — a listing whose retainer we failed to
-    /// store can't be inserted at all, since `create_listing` needs the id.
+    /// store can't be inserted at all, since `write_listing_batch` needs the id.
     async fn resolve_retainers(
         &self,
         listings: &[ListingView],
         world_id: WorldId,
     ) -> Result<HashMap<String, retainer::Model>> {
-        let queried_retainers: HashSet<(String, String, i32)> = listings
-            .iter()
-            .map(|listing| {
-                (
-                    listing.retainer_name.to_string(),
-                    listing.retainer_id.clone().unwrap_or_default(),
-                    listing.retainer_city as i32,
-                )
-            })
-            .collect();
-
+        // Match store_retainer's (name, world) identity, not upstream ID.
+        // Several listings can supply one name; the last known city wins.
+        let mut desired = std::collections::BTreeMap::new();
+        for listing in listings {
+            let city = listing.retainer_city as i32;
+            let known = desired.entry(listing.retainer_name.clone()).or_insert(city);
+            if city > 0 {
+                *known = city;
+            }
+        }
         let mut retainers: HashMap<String, _> = self
-            .get_retainer_ids_from_name(
-                queried_retainers.iter().map(|(name, _, _)| name.as_str()),
-                world_id.0,
-            )
+            .get_retainer_ids_from_name(desired.keys().map(String::as_str), world_id.0)
             .await?
             .into_iter()
             .map(|r| (r.name.clone(), r))
             .collect();
-        // Public Universalis metadata is authoritative, including when a private
-        // registration created this identity first. Avoid writing unchanged rows.
-        // store_retainer's upsert also handles a concurrent first insertion.
-        for (name, id, retainer_city) in queried_retainers {
-            if retainers
-                .get(&name)
-                .is_none_or(|r| retainer_city > 0 && r.retainer_city_id != retainer_city)
-            {
-                let retainer = self
-                    .store_retainer(&id, &name, world_id, retainer_city)
-                    .await?;
-                retainers.insert(name, retainer);
-            }
+        let changed: Vec<_> = desired
+            .into_iter()
+            .filter(|(name, city)| {
+                retainers
+                    .get(name)
+                    .is_none_or(|r| *city > 0 && r.retainer_city_id != *city)
+            })
+            .map(|(name, city)| retainer::ActiveModel {
+                name: sea_orm::Set(name),
+                world_id: sea_orm::Set(world_id.0),
+                retainer_city_id: sea_orm::Set(city),
+                ..Default::default()
+            })
+            .collect();
+        // Sorted names keep overlapping metadata batches in the same lock order.
+        for chunk in changed.chunks(500) {
+            let rows = retainer::Entity::insert_many(chunk.iter().cloned())
+                .on_conflict(sea_orm::sea_query::OnConflict::columns([
+                    retainer::Column::Name, retainer::Column::WorldId,
+                ]).value(retainer::Column::RetainerCityId, sea_orm::sea_query::Expr::cust(
+                    "CASE WHEN excluded.retainer_city_id > 0 THEN excluded.retainer_city_id ELSE retainer.retainer_city_id END"
+                )).to_owned()).exec_with_returning(&self.db).await?;
+            retainers.extend(rows.into_iter().map(|r| (r.name.clone(), r)));
         }
         Ok(retainers)
+    }
+
+    /// Batched INSERT RETURNING. Associate previous state by stable identity;
+    /// PostgreSQL does not promise RETURNING rows in input order. Legacy rows
+    /// have no previous identity and retain their incoming multiplicity.
+    async fn write_listing_batch<C: ConnectionTrait>(
+        &self,
+        incoming: Vec<(ListingView, Option<active_listing::Model>)>,
+        item_id: ItemId,
+        world_id: WorldId,
+        retainers: &HashMap<String, retainer::Model>,
+        connection: &C,
+    ) -> Result<Vec<(active_listing::Model, Option<active_listing::Model>)>> {
+        use active_listing::{Column, Entity};
+        let previous: HashMap<_, _> = incoming
+            .iter()
+            .filter_map(|(view, row)| view.listing_id.as_ref().map(|id| (id.clone(), row.clone())))
+            .collect();
+        let models: Vec<_> = incoming
+            .iter()
+            .map(|(view, _)| {
+                let retainer = retainers
+                    .get(&view.retainer_name)
+                    .ok_or_else(|| anyhow::anyhow!("listing retainer was not resolved"))?;
+                Ok(Self::listing_model(view, item_id, world_id, retainer.id))
+            })
+            .collect::<Result<_>>()?;
+        let mut written = Vec::with_capacity(models.len());
+        for chunk in models.chunks(500) {
+            let rows = Entity::insert_many(chunk.iter().cloned())
+                .on_conflict(
+                    sea_orm::sea_query::OnConflict::columns([
+                        Column::WorldId,
+                        Column::ItemId,
+                        Column::ListingId,
+                    ])
+                    .target_and_where(
+                        sea_orm::sea_query::Expr::col(Column::ListingId).is_not_null(),
+                    )
+                    .update_columns([
+                        Column::RetainerId,
+                        Column::PricePerUnit,
+                        Column::Quantity,
+                        Column::Hq,
+                        Column::Timestamp,
+                        Column::Materia,
+                        Column::StainId,
+                        Column::CreatorName,
+                        Column::IsCrafted,
+                        Column::OnMannequin,
+                    ])
+                    .to_owned(),
+                )
+                .exec_with_returning(connection)
+                .await?;
+            written.extend(rows.into_iter().map(|row| {
+                let before = row
+                    .listing_id
+                    .as_ref()
+                    .and_then(|id| previous.get(id))
+                    .cloned()
+                    .flatten();
+                (row, before)
+            }));
+        }
+        Ok(written)
     }
 
     /// Applies an incremental `listings/add` event: **insert-only**.
@@ -636,9 +670,11 @@ impl UltrosDb {
         item_id: ItemId,
         world_id: WorldId,
     ) -> Result<ListingWrite> {
+        let _budget = self.ingest_budget.acquire().await?;
         use active_listing::*;
         let instant = Instant::now();
         let retainers = self.resolve_retainers(&listings, world_id).await?;
+        let transaction = self.lock_listing_board(world_id, item_id, None).await?;
 
         let existing_items = Entity::find()
             .filter(
@@ -647,27 +683,13 @@ impl UltrosDb {
                     .and(Column::ItemId.eq(item_id.0)),
             )
             .find_also_related(retainer::Entity)
-            .all(&self.db)
+            .all(&transaction)
             .await?;
 
         let to_add = listings_to_upsert(listings, existing_items);
-        let written = fan_out_listing_writes(to_add.into_iter().map(|(m, previous)| {
-            let retainer_id = retainers
-                .get(&m.retainer_name)
-                .expect("Should always have a retainer at this point.")
-                .id;
-            // Each future owns its `ListingView`. Holding a borrow into `to_add`
-            // across the buffered stream instead makes rustc give up on the
-            // higher-ranked lifetime and fail every `tokio::spawn` that reaches
-            // this call with "implementation of `Send` is not general enough".
-            async move {
-                let row = self
-                    .create_listing(&m, item_id, world_id, Some(retainer_id))
-                    .await?;
-                Ok((row, previous))
-            }
-        }))
-        .await?;
+        let written = self
+            .write_listing_batch(to_add, item_id, world_id, &retainers, &transaction)
+            .await?;
 
         let observed_at = chrono::Utc::now();
         let changes: Vec<ListingChange> = written
@@ -695,7 +717,8 @@ impl UltrosDb {
         // marker is compared against their upload time, so *not* stamping would
         // make every uploaded item read as permanently behind and drag the
         // catch-up sweep into refetching the whole market.
-        self.set_last_updated(world_id, item_id).await?;
+        self.commit_listing_board(transaction, world_id, item_id, true)
+            .await?;
         counter!("ultros_db_inserted_items", "world_id" => world_id.0.to_string())
             .increment(added.len() as u64);
         histogram!("ultros_db_add_listings_duration_seconds").record(instant.elapsed());
@@ -712,8 +735,13 @@ impl UltrosDb {
         item_id: ItemId,
         world_id: WorldId,
     ) -> Result<ListingWrite> {
-        let listings = self
-            .get_all_listings_in_worlds_with_retainers(&[world_id.0], item_id)
+        let _budget = self.ingest_budget.acquire().await?;
+        let transaction = self.lock_listing_board(world_id, item_id, None).await?;
+        let listings = active_listing::Entity::find()
+            .filter(active_listing::Column::WorldId.eq(world_id.0))
+            .filter(active_listing::Column::ItemId.eq(item_id.0))
+            .find_also_related(retainer::Entity)
+            .all(&transaction)
             .await?;
         let db_listings: Vec<(active_listing::Model, retainer::Model)> = listings
             .into_iter()
@@ -722,19 +750,23 @@ impl UltrosDb {
 
         let candidates = listings_to_remove_with_identity(db_listings, remove_listings);
         let Some(delete) = delete_unchanged_listings(&candidates) else {
+            self.commit_listing_board(transaction, world_id, item_id, false)
+                .await?;
             return Ok(ListingWrite::default());
         };
         // Only publish rows actually deleted. A concurrent reprice can make a
         // candidate fail the predicate; reporting it as removed would still
         // evict the live listing from the analyzer even though the DB kept it.
-        let items = delete.exec_with_returning(&self.db).await?;
+        let items = delete.exec_with_returning(&transaction).await?;
         if items.is_empty() {
+            self.commit_listing_board(transaction, world_id, item_id, false)
+                .await?;
             return Ok(ListingWrite::default());
         }
         let retainers = items.iter().map(|i| i.retainer_id).unique();
         let retainers: HashMap<i32, Retainer> = retainer::Entity::find()
             .filter(retainer::Column::Id.is_in(retainers))
-            .all(&self.db)
+            .all(&transaction)
             .await?
             .into_iter()
             .map(|r| (r.id, r.into()))
@@ -744,9 +776,8 @@ impl UltrosDb {
         // not record "this item was ingested" — if a concurrent update_listings
         // failed, an unconditional stamp would hide the gap from catch-up forever
         // (the PR #986 bug class).
-        if !items.is_empty() {
-            self.set_last_updated(world_id, item_id).await?;
-        }
+        self.commit_listing_board(transaction, world_id, item_id, true)
+            .await?;
         let observed_at = chrono::Utc::now();
         let changes = items
             .iter()
@@ -910,20 +941,27 @@ impl UltrosDb {
         Ok(listings)
     }
 
-    /// Updates listings assuming a pure view of the listing board
+    /// Reconcile a complete board using a token captured before its HTTP fetch.
+    /// The board, review evidence, and ingest marker commit atomically; a newer
+    /// committed write rejects the fetched snapshot without changing the board.
     #[instrument(skip(self, listings), level = "trace")]
     pub async fn update_listings(
         &self,
         listings: Vec<ListingView>,
         item_id: ItemId,
         world_id: WorldId,
+        version: BoardVersion,
     ) -> Result<ListingWrite> {
+        let _budget = self.ingest_budget.acquire().await?;
         use active_listing::*;
         let instant = Instant::now();
         // Assumes that we are being given a full list of all the listings for the item and world.
         // First, query the db to see what listings it has
         // Then diff against the listings that we have (diff_update_listings sorts both sides)
         let retainers = self.resolve_retainers(&listings, world_id).await?;
+        let transaction = self
+            .lock_listing_board(world_id, item_id, Some(version))
+            .await?;
         let existing_items = Entity::find()
             .filter(
                 Column::WorldId
@@ -931,40 +969,20 @@ impl UltrosDb {
                     .and(Column::ItemId.eq(item_id.0)),
             )
             .find_also_related(retainer::Entity)
-            .all(&self.db)
+            .all(&transaction)
             .await?;
-        let BoardDiff { added, removed } = diff_board_with_identity(listings, existing_items);
-        let remove_iter = removed.iter();
-        // Each future owns its `ListingView` — see the note in `add_listings`.
-        let added = added.into_iter().map(|(m, previous)| {
-            let retainer_id = retainers
-                .get(&m.retainer_name)
-                .expect("Should always have a retainer at this point.")
-                .id;
-            async move {
-                let row = self
-                    .create_listing(&m, item_id, world_id, Some(retainer_id))
-                    .await?;
-                Ok((row, previous))
-            }
-        });
-        let (written, removed_result) =
-            futures::future::join(fan_out_listing_writes(added), async move {
-                let ids_to_remove: Vec<i64> = remove_iter.map(|(l, _)| l.id).collect();
-                if ids_to_remove.is_empty() {
-                    return Result::<usize>::Ok(0);
-                }
-                let res = active_listing::Entity::delete_many()
-                    .filter(active_listing::Column::Id.is_in(ids_to_remove))
-                    .exec(&self.db)
-                    .await?;
-                Result::<usize>::Ok(res.rows_affected as usize)
-            })
-            .await;
-        // Writes may have partially succeeded, but a failed insert or delete
-        // must not report a successful reconciliation or advance its marker.
-        let written = written?;
-        removed_result?;
+        let BoardDiff { added, mut removed } = diff_board_with_identity(listings, existing_items);
+        let written = self
+            .write_listing_batch(added, item_id, world_id, &retainers, &transaction)
+            .await?;
+        let candidates: Vec<_> = removed.iter().map(|(row, _)| row.clone()).collect();
+        let deleted = if let Some(delete) = delete_unchanged_listings(&candidates) {
+            delete.exec_with_returning(&transaction).await?
+        } else {
+            vec![]
+        };
+        let deleted_ids: HashSet<_> = deleted.into_iter().map(|row| row.id).collect();
+        removed.retain(|(row, _)| deleted_ids.contains(&row.id));
 
         let observed_at = chrono::Utc::now();
         // Every deleted row is a change even when its retainer is unknown and
@@ -995,7 +1013,7 @@ impl UltrosDb {
         // Only a successful full-board reconciliation reviews every competitor.
         // Sales and incremental add/remove events retain their existing catch-up
         // marker semantics but must not renew this evidence for untouched rows.
-        self.db
+        transaction
             .execute_raw(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "INSERT INTO listing_board_review(world_id,item_id,date_time) VALUES($1,$2,$3)
@@ -1007,9 +1025,9 @@ impl UltrosDb {
                 ],
             ))
             .await?;
-        // Keep failed review writes eligible for catch-up. A later catch-up
-        // marker failure can leave a truthful completed-board review in place.
-        self.set_last_updated(world_id, item_id).await?;
+        // Publish board state, review evidence, and the catch-up marker together.
+        self.commit_listing_board(transaction, world_id, item_id, true)
+            .await?;
         counter!("ultros_db_inserted_items", "world_id" => world_id.0.to_string())
             .increment(added.len() as u64);
         counter!("ultros_db_removed_items", "world_id" => world_id.0.to_string())
@@ -1107,77 +1125,6 @@ pub struct ListingSummary {
     pub hq: bool,
     pub price_per_unit: i32,
     pub world_id: i32,
-}
-
-#[cfg(test)]
-mod fan_out_tests {
-    //! The point of [`fan_out_listing_writes`] is that a single board update
-    //! never has more than [`MAX_CONCURRENT_LISTING_WRITES`] queries holding a
-    //! pooled connection at once. Each task bumps a counter on entry and yields
-    //! before dropping it, so the observed peak is a real concurrency reading
-    //! rather than a scheduling artifact.
-
-    use super::*;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    /// Build 100 tracked writes — a full FFXIV market board, the widest fan-out
-    /// a single item can produce.
-    fn tracked_writes(
-        in_flight: Arc<AtomicUsize>,
-        peak: Arc<AtomicUsize>,
-    ) -> impl Iterator<Item = impl std::future::Future<Output = Result<usize>>> {
-        (0..100usize).map(move |i| {
-            let in_flight = in_flight.clone();
-            let peak = peak.clone();
-            async move {
-                let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
-                peak.fetch_max(now, Ordering::SeqCst);
-                tokio::task::yield_now().await;
-                in_flight.fetch_sub(1, Ordering::SeqCst);
-                Ok(i)
-            }
-        })
-    }
-
-    #[tokio::test]
-    async fn fan_out_caps_in_flight_writes() {
-        let in_flight = Arc::new(AtomicUsize::new(0));
-        let peak = Arc::new(AtomicUsize::new(0));
-
-        let results = fan_out_listing_writes(tracked_writes(in_flight, peak.clone()))
-            .await
-            .unwrap();
-
-        assert!(
-            peak.load(Ordering::SeqCst) <= MAX_CONCURRENT_LISTING_WRITES,
-            "peak in-flight writes {} exceeded the cap {MAX_CONCURRENT_LISTING_WRITES}",
-            peak.load(Ordering::SeqCst)
-        );
-        // Every write still runs, and `buffered` keeps them in supplied order —
-        // callers zip these results back against their input by position.
-        assert_eq!(results, (0..100).collect::<Vec<_>>());
-    }
-
-    #[tokio::test]
-    async fn failed_insert_is_reported_after_every_write_finishes() {
-        let completed = Arc::new(AtomicUsize::new(0));
-        let writes = (0..100usize).map(|i| {
-            let completed = completed.clone();
-            async move {
-                tokio::task::yield_now().await;
-                completed.fetch_add(1, Ordering::SeqCst);
-                if i == 1 {
-                    anyhow::bail!("injected pool timeout");
-                }
-                Ok(i)
-            }
-        });
-
-        let error = fan_out_listing_writes(writes).await.unwrap_err();
-        assert_eq!(error.to_string(), "injected pool timeout");
-        assert_eq!(completed.load(Ordering::SeqCst), 100);
-    }
 }
 
 #[cfg(test)]
@@ -2214,7 +2161,7 @@ mod diff_tests {
     #[test]
     fn remove_listings_matches_rows_stored_from_none_price_views() {
         // A listing that arrived with `price_per_unit: None` was stored by
-        // `create_listing` with price = total and quantity = 1. When the
+        // `write_listing_batch` with price = total and quantity = 1. When the
         // websocket later removes it (again with None price/quantity), the
         // remove key must resolve those Nones the same way, or the row can never
         // match and lingers as a permanent phantom. The old key used
@@ -2317,5 +2264,140 @@ mod bigint_id_tests {
             .unwrap();
         assert_eq!(removed.rows_affected, 2);
         tx.rollback().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod batched_ingest_tests {
+    use super::*;
+    use crate::common::test_db::{connect, listing, seed_market};
+
+    #[test]
+    fn payload_identity_dedup_keeps_the_last_state_and_legacy_multiplicity() {
+        let a = listing("same", 100);
+        let b = listing("same", 200);
+        let mut legacy = listing("legacy", 300);
+        legacy.listing_id = None;
+        let rows = deduplicate_listing_ids(vec![a, legacy.clone(), b, legacy]);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.iter().filter(|r| r.listing_id.is_none()).count(), 2);
+        assert_eq!(
+            rows.iter()
+                .find(|r| r.listing_id.is_some())
+                .unwrap()
+                .price_per_unit,
+            Some(200)
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an explicitly opted-in disposable PostgreSQL database"]
+    async fn batched_ingest_preserves_identities_multiplicity_and_metadata() {
+        let db = connect().await;
+        seed_market(&db).await;
+        let world = WorldId(30001);
+        let item = ItemId(9010);
+        let mut input: Vec<_> = (0..600)
+            .map(|i| {
+                let mut row = listing(&format!("batch{i}"), 100);
+                row.hq = i % 2 == 0;
+                row
+            })
+            .collect();
+        input[0].materia = vec![universalis::MateriaView {
+            slot_id: Some(0),
+            materia_id: 10,
+        }];
+        input[0].stain_id = Some(5);
+        input[0].creator_name = Some("Batch Crafter".into());
+        input[0].is_crafted = true;
+        let mut legacy = listing("legacy-batch", 100);
+        legacy.listing_id = None;
+        input.extend([legacy.clone(), legacy]);
+        let first = db.add_listings(input.clone(), item, world).await.unwrap();
+        assert_eq!(first.added.len(), 602);
+        let stored = db.get_listings_for_world(world, item).await.unwrap();
+        assert_eq!(stored.iter().filter(|r| r.listing_id.is_none()).count(), 2);
+        let crafted = stored
+            .iter()
+            .find(|r| r.listing_id.as_deref() == Some("batch0"))
+            .unwrap();
+        assert_eq!(crafted.materia.as_ref().unwrap().0[0].materia_id, 10);
+        assert_eq!(crafted.stain_id, Some(5));
+        assert_eq!(crafted.creator_name.as_deref(), Some("Batch Crafter"));
+        assert!(crafted.is_crafted);
+        // The final occurrence matches the stored row: it must cancel the
+        // earlier reprice before diffing, not after it was filtered out.
+        let mut early = input[0].clone();
+        early.price_per_unit = Some(200);
+        let no_change = db
+            .add_listings(vec![early.clone(), input[0].clone()], item, world)
+            .await
+            .unwrap();
+        assert!(no_change.added.is_empty());
+        let mut last = input[599].clone();
+        last.price_per_unit = Some(300);
+        let repriced = db
+            .add_listings(vec![last, early], item, world)
+            .await
+            .unwrap();
+        assert_eq!(repriced.changes.len(), 2);
+        for change in &repriced.changes {
+            assert_eq!(change.kind, ListingChangeKind::Updated);
+            assert_eq!(change.prev_price_per_unit, Some(100));
+            assert_eq!(
+                change.row.price_per_unit,
+                if change.row.listing_id.as_deref() == Some("batch0") {
+                    200
+                } else {
+                    300
+                }
+            );
+        }
+        let version = db.capture_listing_board(world, item).await.unwrap();
+        let reconciled = db
+            .update_listings(input[..100].to_vec(), item, world, version)
+            .await
+            .unwrap();
+        assert_eq!(reconciled.removed.len(), 502);
+        assert_eq!(
+            db.get_listings_for_world(world, item).await.unwrap().len(),
+            100
+        );
+        assert_eq!(
+            reconciled
+                .changes
+                .iter()
+                .filter(|c| c.kind == ListingChangeKind::Updated)
+                .count(),
+            1
+        );
+
+        // Distinct boards share this budget. Block every writer permit, then
+        // verify a queued writer has not claimed a pool connection and a
+        // normal read remains available. Cancellation releases its queue slot.
+        let one = db.ingest_budget.acquire().await.unwrap();
+        let two = db.ingest_budget.acquire().await.unwrap();
+        let queued: Vec<_> = (0..10)
+            .map(|i| {
+                let clone = db.clone();
+                let row = input[0].clone();
+                async move { clone.add_listings(vec![row], ItemId(9020 + i), world).await }
+            })
+            .collect();
+        let mut waiting = Box::pin(futures::future::join_all(queued));
+        assert!(futures::poll!(&mut waiting).is_pending());
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            db.get_world("AuditWorld"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        drop(waiting);
+        drop((one, two));
+        db.add_listings(vec![input[0].clone()], ItemId(9011), world)
+            .await
+            .unwrap();
     }
 }

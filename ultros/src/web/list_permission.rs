@@ -17,7 +17,6 @@ use crate::web::oauth::{AuthDiscordUser, AuthUserCache};
 pub struct RequireListPermission<const MIN: u8> {
     pub list_id: i32,
     pub user_id: i64,
-    pub permission: ListPermission,
 }
 
 /// Map `u8` const-generic argument to a `ListPermission` value.
@@ -28,6 +27,7 @@ fn min_to_permission(min: u8) -> ListPermission {
     ListPermission::from(min as i16)
 }
 
+#[cfg(test)]
 pub const READ: u8 = 1;
 pub const WRITE: u8 = 2;
 pub const OWNER: u8 = 3;
@@ -60,7 +60,6 @@ where
         Ok(Self {
             list_id,
             user_id: user.id as i64,
-            permission,
         })
     }
 }

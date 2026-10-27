@@ -9,7 +9,8 @@ public sealed record EstimateLine(int ItemId, bool? Hq, int Remaining, int Price
 public sealed record ClientView(bool Connected, string Status, string StorageMode, string? HumanCode, string VerificationUrl,
     DeviceSession? Session, ListAccess[] Lists, int? SelectedList, CartView? Cart, bool CanEdit, UnverifiedCharacter[] Characters,
     GameDelivery[] Inbox, MarketView? Market, SaleRow[] Sales, CartEstimate? Estimate, string[] Scopes, string PriceRegion = "", string NotificationTransport = "Polling", string RosterStatus = "", bool Registering = false, string? ApprovalUrl = null,
-    RetainerPriceLookup? RetainerPrices = null, string RetainerPriceStatus = "", Guid? CartInstance = null, long RecoveryRevision = 0)
+    RetainerPriceLookup? RetainerPrices = null, string RetainerPriceStatus = "", Guid? CartInstance = null, long RecoveryRevision = 0, string[]? ReadNotificationIds = null,
+    RetainerSnapshot[]? RetainerSnapshots = null, bool RefreshingRetainers = false)
 {
     public override string ToString() => $"ClientView {{ Connected = {Connected}, pairing credentials redacted }}";
 }
@@ -28,8 +29,9 @@ public sealed class ClientWorker : IDisposable
     private ConnectedCart? cart;
     private ListAccess[] lists = [];
     private UnverifiedCharacter[] characters = [];
-    private readonly List<GameDelivery> inbox = [];
-    private readonly HashSet<string> shown = [];
+    private RetainerSnapshot[]? retainerSnapshots;
+    private bool refreshingRetainers;
+    private NotificationHistory? history;
     private readonly HashSet<string> queuedToasts = [];
     private MarketView? market;
     private SaleRow[] sales = [];
@@ -47,7 +49,6 @@ public sealed class ClientWorker : IDisposable
     private bool registering;
     private DateTimeOffset nextNotifications, nextLists, nextCart;
     private string? loadedDevice;
-    private string? inboxPath;
     private int queuedCaptures;
     private int captureGeneration;
     public void CancelQueuedCaptures()=>Interlocked.Increment(ref captureGeneration);
@@ -60,7 +61,6 @@ public sealed class ClientWorker : IDisposable
     public void CancelQueuedInventory()=>Interlocked.Increment(ref inventoryGeneration);
     private ClientView view;
     public ClientView View => Volatile.Read(ref view);
-    private sealed record SavedInbox(GameDelivery[] Entries, string[] Shown);
     public ClientWorker(string root, UltrosEndpoint endpoint, string profile)
     {
         this.root=root;this.endpoint=endpoint;this.profile=profile;
@@ -68,15 +68,15 @@ public sealed class ClientWorker : IDisposable
         running=Task.Run(Run);
     }
     private bool Offer(Func<Task> action) => commands.Writer.TryWrite(action);
-    public bool Pair(string label, bool editLists, bool register, bool upload, bool readRetainers=false)
+    public bool Pair(string label, bool editLists=true, bool register=true, bool upload=true, bool readRetainers=true)
     {
         CancelQueuedInventory();
         return Offer(async () => {
         var scopes=new List<string>(Protocol.DefaultScopes);
-        if(editLists)scopes.Add("lists:write");
-        if(readRetainers||register||upload)scopes.Add("retainers:read");
-        if(register)scopes.Add("retainers:register");
-        if(upload)scopes.Add("retainers:upload");
+        if(!editLists)scopes.Remove("lists:write");
+        if(!readRetainers&&!register&&!upload)scopes.Remove("retainers:read");
+        if(!register)scopes.Remove("retainers:register");
+        if(!upload)scopes.Remove("retainers:upload");
         await connection!.BeginPairing(label,scopes.ToArray(),stop.Token);
         });
     }
@@ -85,7 +85,7 @@ public sealed class ClientWorker : IDisposable
         try{CloseCart();}
         catch(Exception){status="Disconnect paused: unsaved list edits could not be saved. Retry saving, then disconnect. Your connection and edits are still available.";return;}
         await StopFeed();
-        await connection!.Disconnect();lists=[];characters=[];inbox.Clear();shown.Clear();loadedDevice=null;estimate=null;rosterStatus="";
+        await connection!.Disconnect();lists=[];characters=[];history=null;loadedDevice=null;estimate=null;rosterStatus="";
         ClearRetainerPrices();
         while(toasts.TryDequeue(out _)){}queuedToasts.Clear();CancelQueuedCaptures();
         status="Disconnected. Saved cart work remains bound to its original account and server.";
@@ -217,22 +217,37 @@ public sealed class ClientWorker : IDisposable
     internal static UnverifiedCharacter? LatestObservation(IEnumerable<UnverifiedCharacter> roster,ObservedCharacter observation)=>
         roster.Where(c=>c.Name==observation.Name&&c.HomeWorld==observation.HomeWorld)
             .OrderByDescending(c=>c.ObservedAt).FirstOrDefault();
-    public bool Register(ObservedCharacter observation)=>Offer(async()=>{
-        registering=true;rosterStatus="Saving retainers to your Ultros account…";Publish();
-        try {
-            var request=new {operation_id=Guid.NewGuid().ToString("N"),character=observation};
-            characters=await connection!.Send<UnverifiedCharacter[]>(HttpMethod.Post,"/api/v1/plugin/retainers/register",request,stop.Token);
-            var saved=LatestObservation(characters,observation);
-            var count=observation.Retainers.Count(observed=>saved?.Retainers.Any(r=>r.Registered&&r.Name==observed.Name)==true);
-            rosterStatus=status=$"Saved {count} of {observation.Retainers.Length} retainers for {observation.Name}. Available on the website and in game."
-                +(count<observation.Retainers.Length?" Some retainers already belong to another saved character; their assignments were kept.":"");
-        }
-        catch(ApiFailure e){rosterStatus="Retainers were not confirmed saved. "+e.Message;throw;}
-        catch(Exception e){rosterStatus="Retainers were not confirmed saved. "+SafeError(e);throw;}
-        finally{registering=false;}
-    });
+    public static bool NeedsRegistration(IEnumerable<UnverifiedCharacter> roster,ObservedCharacter observation)
+    {
+        var saved=LatestObservation(roster,observation);
+        return observation.Retainers.Length>0&&(saved?.Registered!=true||!saved.UploadEnabled&&saved.CaptureEpoch==0||observation.Retainers.Any(observed=>
+            !saved.Retainers.Any(retainer=>retainer.Name==observed.Name&&(retainer.Registered||retainer.GroupingConflict))));
+    }
+    public bool Register(ObservedCharacter observation)
+    {
+        // A queued observation belongs to the account/device that saw it.
+        var session=View.Session;
+        if(!View.Connected||session is null||!session.Scopes.Contains("retainers:register"))return false;
+        return Offer(async()=>{
+            if(connection?.Connected!=true||connection.Session?.Id!=session.Id
+                ||connection.Session.AccountId!=session.AccountId||!connection.HasScope("retainers:register"))return;
+            registering=true;rosterStatus="Saving retainers to your Ultros account…";Publish();
+            try {
+                var request=new {operation_id=Guid.NewGuid().ToString("N"),character=observation};
+                characters=await connection!.Send<UnverifiedCharacter[]>(HttpMethod.Post,"/api/v1/plugin/retainers/register",request,stop.Token);
+                var saved=LatestObservation(characters,observation);
+                var count=observation.Retainers.Count(observed=>saved?.Retainers.Any(r=>r.Registered&&r.Name==observed.Name)==true);
+                rosterStatus=status=$"Saved {count} of {observation.Retainers.Length} retainers for {observation.Name}. Available on the website and in game."
+                    +(count<observation.Retainers.Length?" Some retainers already belong to another saved character; their assignments were kept.":"");
+            }
+            catch(ApiFailure e){rosterStatus="Retainers were not confirmed saved. "+e.Message;throw;}
+            catch(Exception e){rosterStatus="Retainers were not confirmed saved. "+SafeError(e);throw;}
+            finally{registering=false;}
+        });
+    }
     public bool UploadConsent(string character,bool enabled,bool delete=false)=>Offer(async()=>{
         characters=await connection!.Send<UnverifiedCharacter[]>(HttpMethod.Post,$"/api/v1/plugin/characters/{PositiveId(character)}/uploads",new{enabled,delete_snapshots=delete},stop.Token);
+        if(delete){var ids=characters.Where(c=>c.Id==character).SelectMany(c=>c.Retainers).Select(r=>r.Id).ToHashSet();retainerSnapshots=retainerSnapshots?.Where(s=>!ids.Contains(s.RetainerId)).ToArray();}
         status=enabled?"Uploads enabled for this character. Revisit a retainer's selling list.":"Uploads paused. Queued captures from the previous consent epoch are invalid.";
     });
     public Task<CaptureUploadResult>? Upload(string retainer,ListingCapture capture)
@@ -249,6 +264,8 @@ public sealed class ClientWorker : IDisposable
             // The POST is acknowledged even if the following roster read fails.
             // Publish its revision before the game thread can queue the next capture.
             characters=characters.Select(c=>c with{Retainers=c.Retainers.Select(r=>r.Id==retainer?r with{Revision=Math.Max(r.Revision,receipt.Revision)}:r).ToArray()}).ToArray();
+            if(retainerSnapshots?.FirstOrDefault(s=>s.RetainerId==retainer) is not { } known||known.Revision<=receipt.Revision)
+                retainerSnapshots=[..(retainerSnapshots??[]).Where(s=>s.RetainerId!=retainer),new(retainer,receipt.Revision,DateTimeOffset.UtcNow,capture.ObservedAt,capture.Listings)];
             status="Private retainer listing snapshot uploaded.";
             try{characters=await connection.Send<UnverifiedCharacter[]>(HttpMethod.Get,"/api/v1/plugin/characters",null,stop.Token);}
             catch(Exception)when(!stop.IsCancellationRequested){nextLists=DateTimeOffset.MinValue;}
@@ -268,16 +285,58 @@ public sealed class ClientWorker : IDisposable
         _=await connection!.Send<bool>(HttpMethod.Post,"/api/v1/plugin/notifications/test",new{operation_id=Guid.NewGuid().ToString("N")},stop.Token);
         nextNotifications=DateTimeOffset.MinValue;
     });
-    public bool MarkRead(string id)=>Offer(async()=>{
-        _=await connection!.Send<bool>(HttpMethod.Post,"/api/v1/plugin/notifications/read",new{ids=new[]{PositiveId(id)}},stop.Token);
-        status="Marked read on Ultros.";
+    private bool SameNotificationSession(DeviceSession? expected)=>expected is not null&&SessionReady()
+        &&connection!.Session?.Id==expected.Id&&connection.Session.AccountId==expected.AccountId;
+    public bool MarkRead(string id)
+    {
+        var expected=View.Session;
+        return Offer(async()=>{
+            if(!SameNotificationSession(expected)||history is null)return;
+            var entry=history.Entries.FirstOrDefault(d=>d.Id==id);
+            if(entry is null)return;
+            // Test deliveries have no website notification to mark read.
+            if(entry.EventId is not null)
+                _=await connection!.Send<bool>(HttpMethod.Post,"/api/v1/plugin/notifications/read",new{ids=new[]{PositiveId(id)}},stop.Token);
+            history.MarkRead(id);status="Notification marked read.";
+        });
+    }
+    public bool DeleteNotifications(DeviceSession? expected,string[] ids)=>Offer(()=>{
+        if(SameNotificationSession(expected)&&history is not null){history.Delete(ids,DateTimeOffset.UtcNow);nextNotifications=DateTimeOffset.MinValue;status="Removed from this client's history.";}
+        return Task.CompletedTask;
     });
-    public bool ToastShown(string id)=>Offer(async()=>{
-        shown.Add(id);SaveInbox();
-        _=await connection!.Send<bool>(HttpMethod.Post,"/api/v1/plugin/notifications/ack",new{ids=new[]{id}},stop.Token);
-    });
-    public bool TryToast(out GameDelivery? delivery)=>toasts.TryDequeue(out delivery);
-    private void ClearRetainerPrices(){retainerPrices=null;retainerPriceStatus="";pricesDevice=pricesAccount=null;}
+    public bool ToastShown(string id)
+    {
+        var expected=View.Session;
+        return Offer(async()=>{
+            if(!SameNotificationSession(expected)||history is null)return;
+            history.MarkShown(id);
+            _=await connection!.Send<bool>(HttpMethod.Post,"/api/v1/plugin/notifications/ack",new{ids=new[]{id}},stop.Token);
+        });
+    }
+    public bool TryToast(out GameDelivery? delivery)
+    {
+        while(toasts.TryDequeue(out delivery))
+            if(Volatile.Read(ref history) is { } current&&!current.IsDeleted(delivery.Id))return true;
+        delivery=null;return false;
+    }
+    private void ClearRetainerPrices(){retainerPrices=null;retainerPriceStatus="";pricesDevice=pricesAccount=null;retainerSnapshots=null;}
+    public bool RefreshRetainers()
+    {
+        var expected=View.Session;
+        return Offer(async()=>{
+            if(expected is null||!SessionReady()||connection!.Session?.Id!=expected.Id||connection.Session.AccountId!=expected.AccountId||!connection.HasScope("retainers:read"))return;
+            refreshingRetainers=true;Publish();
+            try{await ReadRetainers();status="Retainer listings refreshed.";}
+            finally{refreshingRetainers=false;}
+        });
+    }
+    private async Task ReadRetainers()
+    {
+        characters=await connection!.Send<UnverifiedCharacter[]>(HttpMethod.Get,"/api/v1/plugin/characters",null,stop.Token);
+        // Preserve the existing rows while refreshing; the table never clears
+        // or changes columns as each retainer loads.
+        retainerSnapshots=await connection.Send<RetainerSnapshot[]>(HttpMethod.Get,"/api/v1/plugin/retainers/snapshots",null,stop.Token);
+    }
     public bool LookupRetainer(string retainer)
     {
         var session=View.Session;
@@ -337,48 +396,33 @@ public sealed class ClientWorker : IDisposable
             try{var path=SelectionPath();if(File.Exists(path)&&new FileInfo(path).Length<=32)remembered=JsonSerializer.Deserialize<int>(File.ReadAllBytes(path));}catch(JsonException){}catch(IOException){}
             if(ListSelection.Default(lists,remembered,connection.Session!.AccountId) is { } initial)await OpenList(initial);
         }
-        if(connection.HasScope("retainers:read"))characters=await connection.Send<UnverifiedCharacter[]>(HttpMethod.Get,"/api/v1/plugin/characters",null,stop.Token);
+        if(connection.HasScope("retainers:read"))await ReadRetainers();
         nextLists=DateTimeOffset.UtcNow.AddSeconds(60);
     }
     private void LoadInbox()
     {
-        inbox.Clear();shown.Clear();queuedToasts.Clear();
+        history=null;queuedToasts.Clear();
         while(toasts.TryDequeue(out _)){}
         var session=connection!.Session!;
         loadedDevice=session.Id;
         var dir=Path.Combine(connection.Directory,"accounts",session.AccountId,"notifications");
-        Directory.CreateDirectory(dir);inboxPath=Path.Combine(dir,session.Id+".json");
-        if(File.Exists(inboxPath)&&new FileInfo(inboxPath).Length<=512*1024)
-        {
-            try {
-                var saved=JsonSerializer.Deserialize<SavedInbox>(File.ReadAllBytes(inboxPath),Protocol.Json);
-                if(saved is not null) {inbox.AddRange(saved.Entries.Take(100));shown.UnionWith(saved.Shown.Take(1000));}
-            }catch(JsonException){status="Local notification history could not be read.";}
-        }
-        foreach(var item in inbox.Where(d=>d.ExpiresAt>DateTimeOffset.UtcNow&&!shown.Contains(d.Id))){toasts.Enqueue(item);queuedToasts.Add(item.Id);}
-    }
-    private void SaveInbox()
-    {
-        if(inboxPath is null)return;
-        while(inbox.Count>100)inbox.RemoveAt(0);
-        shown.IntersectWith(inbox.Select(i=>i.Id));
-        AtomicFile.Write(inboxPath,JsonSerializer.SerializeToUtf8Bytes(new SavedInbox(inbox.ToArray(),shown.ToArray()),Protocol.Json));
+        Directory.CreateDirectory(dir);
+        var path=Path.Combine(dir,session.Id+".json");
+        try{history=new NotificationHistory(path);}
+        catch(JsonException){status="Local notification history could not be read. The original file has been preserved.";return;}
+        foreach(var item in history.Entries.Where(d=>d.ExpiresAt>DateTimeOffset.UtcNow&&!history.WasShown(d.Id))){toasts.Enqueue(item);queuedToasts.Add(item.Id);}
     }
     private async Task PollNotifications()
     {
+        if(history is null){nextNotifications=DateTimeOffset.UtcNow.AddMinutes(1);return;}
         var batch=await connection!.Send<DeliveryBatch>(HttpMethod.Get,"/api/v1/plugin/notifications",null,stop.Token);
+        history.Receive(batch.Deliveries,DateTimeOffset.UtcNow);
         foreach(var item in batch.Deliveries)
         {
-            if(item.ExpiresAt<=DateTimeOffset.UtcNow)continue;
-            if(!inbox.Any(i=>i.Id==item.Id))inbox.Add(item);
-        }
-        SaveInbox();
-        foreach(var item in batch.Deliveries)
-        {
-            if(item.ExpiresAt<=DateTimeOffset.UtcNow||shown.Contains(item.Id)||!queuedToasts.Add(item.Id))continue;
+            if(item.ExpiresAt<=DateTimeOffset.UtcNow||history.WasShown(item.Id)||history.IsDeleted(item.Id)||!queuedToasts.Add(item.Id))continue;
             toasts.Enqueue(item);
         }
-        var retry=batch.Deliveries.Where(i=>shown.Contains(i.Id)).Select(i=>i.Id).ToArray();
+        var retry=batch.Deliveries.Where(i=>history.WasShown(i.Id)||history.IsDeleted(i.Id)).Select(i=>i.Id).ToArray();
         if(retry.Length>0)_=await connection.Send<bool>(HttpMethod.Post,"/api/v1/plugin/notifications/ack",new{ids=retry},stop.Token);
         nextNotifications=DateTimeOffset.UtcNow.AddMilliseconds(Math.Clamp(batch.PollAfterMs,1000,60_000));
     }
@@ -416,8 +460,9 @@ public sealed class ClientWorker : IDisposable
             ? $"Inventory progress paused after {pending.Batch.Applied:N0} units; retry saving to finish the retained batch."
             : status;
         Volatile.Write(ref view,new ClientView(connected,visibleStatus,connection?.StorageMode??"",connection?.HumanCode,connection?.VerificationUrl??endpoint.At("/plugin/verify").AbsoluteUri,
-            connection?.Session,ready?lists:[],visibleCart?.Id,visibleCart?.Document.View,CanEdit(),ready?characters:[],ready?inbox.ToArray():[],market,sales,ready?estimate:null,connection?.Session?.Scopes??[],priceRegion,Volatile.Read(ref feedReady)!=0?"Live notifications (SSE)":"Polling fallback",ready?rosterStatus:"",registering,connection?.ApprovalUrl,
-            showPrices?retainerPrices:null,showPrices?retainerPriceStatus:"",visibleCart?.InstanceId,visibleCart?.RecoveryRevision??0));
+            connection?.Session,ready?lists:[],visibleCart?.Id,visibleCart?.Document.View,CanEdit(),ready?characters:[],ready?history?.Entries??[]:[],market,sales,ready?estimate:null,connection?.Session?.Scopes??[],priceRegion,Volatile.Read(ref feedReady)!=0?"Live notifications (SSE)":"Polling fallback",ready?rosterStatus:"",registering,connection?.ApprovalUrl,
+            showPrices?retainerPrices:null,showPrices?retainerPriceStatus:"",visibleCart?.InstanceId,visibleCart?.RecoveryRevision??0,ready?history?.ReadIds:[],
+            ready&&connection!.HasScope("retainers:read")?retainerSnapshots:null,ready&&refreshingRetainers));
     }
     private async Task<Connection> AcquireConnection()
     {

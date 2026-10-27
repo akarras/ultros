@@ -475,6 +475,14 @@ if [ "${RUN_DALAMUD:-0}" = "1" ]; then
     if [ "$dalamud_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then test_exit="$dalamud_exit"; fi
 fi
 
+# Run independently on a fresh test server when loopback forwarding collapses
+# the QA processes' distinct source addresses into one shared pairing quota.
+if [ "${RUN_DALAMUD_ENDPOINTS:-0}" = "1" ]; then
+    endpoint_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:dalamud-endpoints ) || endpoint_exit=$?
+    if [ "$endpoint_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then test_exit="$endpoint_exit"; fi
+fi
+
 # Optional focused dashboard screenshots — covers the new home-page
 # MarketPulse + Trends ConfidenceBadge + item view surfaces. Captured into
 # integration/artifacts/dashboard/ regardless of the broader suite outcome.

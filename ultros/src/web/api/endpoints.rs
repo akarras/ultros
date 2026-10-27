@@ -1,6 +1,7 @@
 use axum::{
     Json,
     extract::{Path, State},
+    http::HeaderMap,
 };
 use serde_json::Value as JsonValue;
 use ultros_api_types::alert::{
@@ -326,6 +327,7 @@ pub(crate) async fn delete_endpoint(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
+    headers: HeaderMap,
 ) -> Result<Json<DeleteEndpointResponse>, ApiError> {
     // Look the endpoint up before deleting it: a WebPush endpoint references
     // its push_subscription row only through the JSON config (there's no FK),
@@ -338,14 +340,27 @@ pub(crate) async fn delete_endpoint(
     // every fetch — deleting it would just resurrect an identical row on the
     // caller's next GET, so reject the delete outright instead of silently
     // no-op-ing.
-    if matches!(endpoint.method.as_str(), "InApp" | "InGame") {
+    if endpoint.method == "InApp" {
         return Err(ApiError::BadRequest(
             "the in-app inbox endpoint cannot be deleted",
         ));
     }
-    db.delete_endpoint(user.id as i64, id)
-        .await
-        .map_err(ApiError::from)?;
+    if endpoint.method == "InGame" {
+        let site = std::env::var("HOSTNAME").unwrap_or_else(|_| "https://ultros.app".into());
+        if !crate::web::plugin::browser_mutation_allowed(&headers, &site) {
+            return Err(ApiError::Forbidden(
+                "Game client removal requires a same-origin browser request",
+            ));
+        }
+        db.delete_game_endpoint_for_browser(user.id as i64, id)
+            .await
+            .map_err(|e| ApiError::from(anyhow::Error::from(e)))?;
+        crate::web::plugin::wake_notifications(user.id as i64);
+    } else {
+        db.delete_endpoint(user.id as i64, id)
+            .await
+            .map_err(ApiError::from)?;
+    }
 
     let mut push_endpoint = None;
     if let Ok(EndpointMethod::WebPush { subscription_id }) =

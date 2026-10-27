@@ -622,6 +622,38 @@ impl UltrosDb {
         Ok(())
     }
 
+    /// Removing an alert destination must also revoke every grant bound to it.
+    /// Browser callers authenticate and enforce same-origin mutations before this call.
+    pub async fn delete_game_endpoint_for_browser(&self, owner: i64, endpoint: i32) -> Result<()> {
+        let txn = self.db.begin().await?;
+        lock_account(&txn, owner).await?;
+        one(&txn, "SELECT id FROM notification_endpoint WHERE id=$1 AND user_id=$2 AND method='InGame' FOR UPDATE", vec![endpoint.into(), owner.into()]).await?;
+        let grants = query(
+            &txn,
+            "SELECT id FROM plugin_grant WHERE endpoint_id=$1 AND owner=$2 ORDER BY id FOR UPDATE",
+            vec![endpoint.into(), owner.into()],
+        )
+        .await?;
+        for grant in grants {
+            revoke(
+                &txn,
+                &grant.try_get::<String>("", "id")?,
+                owner,
+                "endpoint_removed",
+            )
+            .await?;
+        }
+        // Foreign keys remove delivery queues and rule links and clear grant.endpoint_id.
+        exec(
+            &txn,
+            "DELETE FROM notification_endpoint WHERE id=$1 AND user_id=$2 AND method='InGame'",
+            vec![endpoint.into(), owner.into()],
+        )
+        .await?;
+        txn.commit().await?;
+        Ok(())
+    }
+
     pub async fn cleanup_plugin_data(&self) -> Result<()> {
         for sql in [
             "DELETE FROM plugin_approval WHERE expires_at<now()",

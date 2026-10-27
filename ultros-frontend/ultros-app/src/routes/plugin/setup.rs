@@ -1,4 +1,4 @@
-use super::{PluginContext, PluginLabsNotice, SignInNotice, setup_available};
+use super::{PluginContext, PluginLabsNotice, setup_available};
 use crate::global_state::labs::use_dalamud_labs;
 use crate::{components::clipboard::Clipboard, i18n::*};
 use leptos::prelude::*;
@@ -31,20 +31,27 @@ fn PluginSetupGuide() -> impl IntoView {
     let i18n = use_i18n();
     let PluginContext { info, account } = expect_context::<PluginContext>();
     view! {
-        <p class="text-[color:var(--color-text-muted)]">{t!(i18n, plugin_guide_intro)}</p>
+        <ul class="grid gap-5 sm:grid-cols-2" aria-label=move || t_string!(i18n, plugin_features) data-testid="plugin-features">
+            <li class="space-y-1">
+                <h2 class="font-semibold">{t!(i18n, plugin_guide_prices)}</h2>
+                <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, plugin_guide_prices_body)}</p>
+            </li>
+            <li class="space-y-1">
+                <h2 class="font-semibold">{t!(i18n, plugin_guide_lists)}</h2>
+                <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, plugin_guide_lists_body)}</p>
+            </li>
+            <li class="space-y-1">
+                <h2 class="font-semibold">{t!(i18n, plugin_guide_retainers)}</h2>
+                <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, plugin_guide_retainers_body)}</p>
+            </li>
+            <li class="space-y-1">
+                <h2 class="font-semibold">{t!(i18n, plugin_guide_alerts)}</h2>
+                <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, plugin_guide_alerts_body)}</p>
+            </li>
+        </ul>
         <ol class="space-y-6 list-none" data-testid="plugin-install-guide">
             <li class="panel p-5 sm:p-7 space-y-4">
-                <h2 class="text-xl font-bold"><span class="text-[color:var(--brand-fg)] mr-3">"1"</span>{t!(i18n, plugin_guide_account)}</h2>
-                <p>{t!(i18n, plugin_guide_account_body)}</p>
-                <Suspense fallback=|| ()>
-                    {move || match account.get().flatten() {
-                        Some(name) => view! { <p class="font-semibold">{t!(i18n, plugin_guide_signed_in, name=name.clone())}</p> }.into_any(),
-                        None => view! { <SignInNotice next="/plugin" /> }.into_any(),
-                    }}
-                </Suspense>
-            </li>
-            <li class="panel p-5 sm:p-7 space-y-4">
-                <h2 class="text-xl font-bold"><span class="text-[color:var(--brand-fg)] mr-3">"2"</span>{t!(i18n, plugin_guide_install)}</h2>
+                <h2 class="text-xl font-bold"><span class="text-[color:var(--brand-fg)] mr-3">"1"</span>{t!(i18n, plugin_guide_install)}</h2>
                 <p>{t!(i18n, plugin_guide_prerequisite)}" "<a class="underline" href="https://goatcorp.github.io/faq/" rel="noreferrer">{t!(i18n, plugin_guide_launcher)}</a></p>
                 <Suspense fallback=|| ()>
                     {move || match info.get().flatten() {
@@ -73,30 +80,23 @@ fn PluginSetupGuide() -> impl IntoView {
                 </Suspense>
             </li>
             <li class="panel p-5 sm:p-7 space-y-4">
-                <h2 class="text-xl font-bold"><span class="text-[color:var(--brand-fg)] mr-3">"3"</span>{t!(i18n, plugin_guide_connect)}</h2>
+                <h2 class="text-xl font-bold"><span class="text-[color:var(--brand-fg)] mr-3">"2"</span>{t!(i18n, plugin_guide_connect)}</h2>
+                <Suspense fallback=|| ()>
+                    {move || match account.get().flatten() {
+                        Some(name) => view! { <p class="text-sm">{t!(i18n, plugin_guide_signed_in, name=name.clone())}</p> }.into_any(),
+                        None => view! { <a class="btn-secondary inline-flex" href="/login?next=/plugin" rel="external">{t!(i18n, plugin_signin_button)}</a> }.into_any(),
+                    }}
+                </Suspense>
                 <p>{t!(i18n, plugin_guide_connect_steps)}</p>
-                <p>{t!(i18n, plugin_guide_approval)}</p>
-                <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, plugin_guide_phone)}</p>
-                <div class="flex flex-wrap gap-3">
-                    <a class="btn-primary" href="/plugin/verify">{t!(i18n, plugin_guide_connect_link)}</a>
-                    <a class="btn-secondary" href="/plugin/devices">{t!(i18n, plugin_guide_devices_link)}</a>
-                </div>
-            </li>
-            <li class="panel p-5 sm:p-7 space-y-4">
-                <h2 class="text-xl font-bold"><span class="text-[color:var(--brand-fg)] mr-3">"4"</span>{t!(i18n, plugin_guide_first_use)}</h2>
-                <h3 class="font-semibold">{t!(i18n, plugin_guide_lists)}</h3>
-                <p>{t!(i18n, plugin_guide_lists_body)}</p>
-                <a class="underline inline-block" href="/list">{t!(i18n, plugin_guide_lists_link)}</a>
-                <h3 class="font-semibold">{t!(i18n, plugin_guide_retainers)}</h3>
-                <p>{t!(i18n, plugin_guide_retainers_body)}</p>
-                <p>{t!(i18n, plugin_guide_uploads)}</p>
-                <a class="underline inline-block" href="/retainers">{t!(i18n, plugin_guide_retainers_link)}</a>
-                <h3 class="font-semibold">{t!(i18n, plugin_guide_alerts)}</h3>
-                <p>{t!(i18n, plugin_guide_alerts_body)}</p>
+                <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, plugin_guide_approval)}</p>
+                <a class="underline inline-block" href="/plugin/verify">{t!(i18n, plugin_guide_connect_link)}</a>
             </li>
         </ol>
-        <section class="space-y-3">
-            <h2 class="text-xl font-bold">{t!(i18n, plugin_guide_troubleshooting)}</h2>
+        <details class="panel p-4" data-testid="plugin-setup-help">
+            <summary>{t!(i18n, plugin_guide_troubleshooting)}</summary>
+            <div class="space-y-3 mt-3">
+            <details class="panel p-4"><summary>{t!(i18n, plugin_guide_code)}</summary><p class="mt-3">{t!(i18n, plugin_guide_phone)}</p><a class="underline" href="/plugin/verify">{t!(i18n, plugin_guide_connect_link)}</a></details>
+            <details class="panel p-4"><summary>{t!(i18n, plugin_guide_retainers)}</summary><p class="mt-3">{t!(i18n, plugin_guide_uploads)}</p></details>
             <details class="panel p-4"><summary class="font-semibold cursor-pointer">{t!(i18n, plugin_guide_old_install)}</summary><p class="mt-3">{t!(i18n, plugin_guide_old_install_body)}</p></details>
             <details class="panel p-4"><summary class="font-semibold cursor-pointer">{t!(i18n, plugin_guide_update)}</summary><p class="mt-3">{t!(i18n, plugin_guide_update_body)}</p></details>
             <details class="panel p-4"><summary class="font-semibold cursor-pointer">{t!(i18n, plugin_guide_capture)}</summary><p class="mt-3">{t!(i18n, plugin_guide_capture_body)}</p></details>
@@ -118,7 +118,8 @@ fn PluginSetupGuide() -> impl IntoView {
                 })}
             </Suspense>
             <a class="underline inline-block text-sm" href="https://github.com/akarras/ultros/tree/main/plugins/dalamud" rel="noreferrer">{t!(i18n, plugin_guide_developer_docs)}</a>
-        </section>
+            </div>
+        </details>
     }
 }
 

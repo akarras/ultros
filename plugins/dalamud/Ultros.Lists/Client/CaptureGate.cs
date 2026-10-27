@@ -14,7 +14,10 @@ public sealed class CaptureGate
     public PrivateListing[]? Observe(string visit, bool marketUpdate, bool loaded, int expectedCount, PrivateListing[] rows, DateTimeOffset now)
     {
         if(context!=visit){context=visit;fresh=marketUpdate;candidate=null;submitted=null;}
-        if(marketUpdate)fresh=true;
+        // A fresh game response is a new observation even when the player
+        // confirms the same price. It must supersede public delist/relist data
+        // and refresh the website's complete private snapshot.
+        if(marketUpdate){fresh=true;candidate=null;submitted=null;}
         if(!fresh){candidate=null;Status="Waiting for the selling window's market update. Close and reopen Markets.";return null;}
         if(!loaded){candidate=null;Status="Waiting for the full retainer market inventory.";return null;}
         if(rows.Length!=expectedCount){candidate=null;Status=$"Waiting for all {expectedCount} listings (read {rows.Length}).";return null;}

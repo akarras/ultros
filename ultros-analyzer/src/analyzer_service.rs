@@ -12,7 +12,7 @@ use std::{
 };
 
 use chrono::{Duration, NaiveDateTime, Utc};
-use futures::StreamExt;
+use futures::TryStreamExt;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
@@ -31,8 +31,9 @@ use tokio_util::sync::CancellationToken;
 use ultros_api_types::trends::{TrendItem, TrendsData};
 use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
-pub const SALE_HISTORY_SIZE: usize = 6;
+pub const SALE_HISTORY_SIZE: usize = ultros_db::recent_sales::RECENT_SALE_LIMIT;
 
+mod rebuild;
 mod snapshot;
 
 #[derive(Debug, Error)]
@@ -490,7 +491,8 @@ fn flip_profit_and_roi(est_sale_price: i32, cost: i32) -> Option<(i32, f32)> {
 /// Three hours keeps a fast restart cheap (the common case: a deploy, a crash
 /// loop, an OOM restart — all far under an hour) while capping how wrong the
 /// served data can be. The fallback costs a full `cheapest_listings` +
-/// `last_n_sales` stream, which is slow but correct.
+/// `last_n_sales` stream. Once its recent-sales projection is seeded, the latter
+/// reads only that compact table; until then it retains the legacy history scan.
 const MAX_SNAPSHOT_AGE: Duration = Duration::hours(3);
 
 /// Whether `file_name` is a finished snapshot, as opposed to the
@@ -552,6 +554,7 @@ pub struct AnalyzerService {
     /// `Lagged` results — and every one of them wants the same full rebuild. This
     /// collapses a burst into a single pass instead of queueing one per drop.
     cheapest_resync_in_flight: Arc<AtomicBool>,
+    cheapest_rebuild: Arc<rebuild::RebuildTracker>,
     /// Dual-writes every observed sale into the ClickHouse `sales` table.
     /// Non-blocking, fire-and-forget — Postgres remains the source of truth so
     /// dropped rows are recoverable via the backfill binary.
@@ -622,6 +625,7 @@ impl AnalyzerService {
             cheapest_items,
             initiated: Arc::default(),
             cheapest_resync_in_flight: Arc::default(),
+            cheapest_rebuild: Arc::default(),
             ch_writer,
             floor_writer,
             ch_client,
@@ -831,17 +835,9 @@ impl AnalyzerService {
                     continue;
                 }
             };
-            // Restoring the cheapest map no longer decides what the analyzer
-            // serves: `run_worker` now rebuilds it from Postgres on every boot and
-            // *replaces* each selector, so whatever is read back here is
-            // overwritten moments later. It is kept as a fallback for when that
-            // rebuild query fails — stale prices beat an empty map — and so the
-            // snapshot round-trip stays self-contained.
-            //
-            // What changed is that the restore is no longer the *only* source.
-            // The DB reload used to run only when no snapshot restored, so a
-            // phantom minimum was written into the snapshot every 15 minutes and
-            // read back on every restart, outliving the lag that created it.
+            // Keep the snapshot round-trip self-contained, but only a successful
+            // Postgres rebuild makes these prices ready to serve. Restoring an
+            // old phantom minimum must not make it survive another deploy.
             for (key, value) in state.cheapest_items {
                 if let Some(lock) = self.cheapest_items.get(&key) {
                     let mut write = lock.write().await;
@@ -887,6 +883,7 @@ impl AnalyzerService {
         ultros_db: &UltrosDb,
         world_cache: &WorldCache,
     ) -> Result<(), anyhow::Error> {
+        let rebuild = self.cheapest_rebuild.begin()?;
         // Pre-seed every selector so one that has lost all of its listings is
         // reset to empty rather than keeping stale entries.
         let mut fresh: BTreeMap<AnySelector, CheapestListings> = self
@@ -896,7 +893,7 @@ impl AnalyzerService {
             .collect();
 
         let mut listings = ultros_db.cheapest_listings().await?;
-        while let Some(Ok(value)) = listings.next().await {
+        while let Some(value) = listings.try_next().await? {
             // The database can hold listings for worlds this process'
             // `WorldCache` never saw — skip them rather than fail the rebuild.
             let Ok(world) = world_cache.lookup_selector(&AnySelector::World(value.world_id)) else {
@@ -958,9 +955,10 @@ impl AnalyzerService {
         .increment(1);
         let mut rows = Vec::new();
         let mut worlds = Vec::new();
-        for (selector, listings) in fresh {
+        for (selector, mut listings) in fresh {
             if let Some(lock) = self.cheapest_items.get(&selector) {
                 let mut current = lock.write().await;
+                rebuild.preserve_live_changes(selector, &current, &mut listings);
                 if let AnySelector::World(world_id) = selector {
                     rows.extend(resync_rows(
                         baseline.as_ref(),
@@ -1072,38 +1070,40 @@ impl AnalyzerService {
         world_cache: Arc<WorldCache>,
         token: CancellationToken,
     ) {
-        if !self.try_restore_from_snapshot().await {
-            info!("worker starting");
-            info!("starting sale data");
-            match ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32).await {
-                Ok(mut history_stream) => {
-                    while let Some(Ok(value)) = history_stream.next().await {
-                        let Some(history) = self.recent_sale_history.get(&value.world_id) else {
-                            skipped_event("db_reload_sale", "unknown_world");
-                            continue;
-                        };
-                        history.write().await.add_sale(&value);
+        let mut history_ready = self.try_restore_from_snapshot().await;
+        loop {
+            let load = async {
+                if !history_ready {
+                    let stream = ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32).await?;
+                    let history =
+                        rebuild::load_history(self.recent_sale_history.keys().copied(), stream)
+                            .await?;
+                    for (world, history) in history {
+                        *self.recent_sale_history[&world].write().await = history;
                     }
+                    history_ready = true;
                 }
-                Err(e) => {
-                    error!("Streaming sale history failed {e:?}");
-                }
+                // Rebuild on every boot, including when a snapshot restored.
+                metrics::counter!("ultros_analyzer_cheapest_resync_total", "trigger" => "boot")
+                    .increment(1);
+                self.rebuild_cheapest_from_db(&ultros_db, &world_cache)
+                    .await
+            };
+            let result = tokio::select! {
+                _ = token.cancelled() => return,
+                result = load => result,
+            };
+            match result {
+                Ok(()) => break,
+                Err(error) => error!(
+                    ?error,
+                    "analyzer initial load failed; retrying before serving data"
+                ),
             }
-        }
-        // The cheapest map is rebuilt from Postgres on every boot, snapshot or
-        // not. The snapshot exists for `recent_sale_history`, which can only be
-        // reassembled by replaying sales; the cheapest map is one aggregate query.
-        // Restoring it instead used to make phantom minimums immortal — they were
-        // serialized every 15 minutes and read back on each deploy, so a price
-        // stranded by a lag burst days earlier survived indefinitely.
-        info!("rebuilding cheapest listings from the database");
-        metrics::counter!("ultros_analyzer_cheapest_resync_total", "trigger" => "boot")
-            .increment(1);
-        if let Err(e) = self
-            .rebuild_cheapest_from_db(&ultros_db, &world_cache)
-            .await
-        {
-            error!(error = ?e, "Streaming item listings failed");
+            tokio::select! {
+                _ = token.cancelled() => return,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+            }
         }
         self.initiated.store(true, Ordering::Relaxed);
         info!("worker primed, now using live data");
@@ -1489,6 +1489,21 @@ impl AnalyzerService {
         // ingestion needs this lock to write, and a deep scan is slow.
         drop(sale_history);
 
+        // Retain only the selected prices, not the world's read guard. A
+        // slow analytical query must not stop the listing consumer updating
+        // prices (and, in turn, every other selector it feeds).
+        let prices: BTreeMap<ItemKey, i32> = candidates
+            .iter()
+            .filter_map(|candidate| {
+                let key = ItemKey {
+                    item_id: candidate.item_id,
+                    hq: candidate.hq,
+                };
+                cheapest.item_map.get(&key).map(|value| (key, value.price))
+            })
+            .collect();
+        drop(cheapest);
+
         let mut requests: Vec<(i32, u8, i32)> = candidates
             .into_iter()
             .map(|c| (c.item_id, c.hq as u8, world_id))
@@ -1556,7 +1571,7 @@ impl AnalyzerService {
                     item_id: d.item_id,
                     hq: d.hq != 0,
                 };
-                let cheapest_price = cheapest.item_map.get(&key)?.price;
+                let cheapest_price = *prices.get(&key)?;
                 let window_days_f32 = (window_days as f32).max(1.0);
                 let sales_per_day = d.cleaned_sample_size as f32 / window_days_f32;
                 let pct_change_window = if d.vwap > 0 {
@@ -1796,6 +1811,9 @@ impl AnalyzerService {
             })
             .collect();
 
+        drop(sale_world_listings);
+        drop(region);
+
         // === Phase 2 deep-scan enrichment ===
         //
         // Sort by raw profit, take the top N, batch-fetch ClickHouse stats,
@@ -1918,14 +1936,26 @@ impl AnalyzerService {
                 skipped_event("add_listings", "unknown_selector");
                 continue;
             };
-            region_entry.write().await.add_listing(listing);
+            {
+                let mut region = region_entry.write().await;
+                self.cheapest_rebuild
+                    .record(region_selector, listing.into());
+                region.add_listing(listing);
+            }
             if let Some(dc_selector) = dc_selector {
                 #[allow(clippy::collapsible_if)]
                 if let Some(entry) = self.cheapest_items.get(&dc_selector) {
-                    entry.write().await.add_listing(listing);
+                    let mut dc = entry.write().await;
+                    self.cheapest_rebuild.record(dc_selector, listing.into());
+                    dc.add_listing(listing);
                 }
             }
-            if let Some(floor) = world_entry.write().await.add_listing(listing) {
+            let floor = {
+                let mut world = world_entry.write().await;
+                self.cheapest_rebuild.record(world_selector, listing.into());
+                world.add_listing(listing)
+            };
+            if let Some(floor) = floor {
                 self.floor_writer
                     .send(ultros_clickhouse::rows::FloorChangeRow::new(
                         Utc::now(),
@@ -2028,6 +2058,9 @@ impl AnalyzerService {
         // move from a refill that landed on the same price.
         let dropped: BTreeMap<ItemKey, i32> = {
             let mut map = lock.write().await;
+            for listing in listings {
+                self.cheapest_rebuild.record(selector, (*listing).into());
+            }
             listings
                 .iter()
                 .filter_map(|listing| {
@@ -2074,6 +2107,7 @@ impl AnalyzerService {
         let mut map = lock.write().await;
         for summary in &refill {
             let key = ItemKey::from(summary);
+            self.cheapest_rebuild.record(selector, key);
             if let (Some(floor), AnySelector::World(world_id)) =
                 (map.add_listing(summary), selector)
                 && dropped.get(&key) != Some(&floor.price)
@@ -2402,6 +2436,72 @@ mod test {
             hq,
             timestamp: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
         }
+    }
+
+    fn analyzer_with_client(
+        ch_client: ultros_clickhouse::ClickHouseClient,
+    ) -> super::AnalyzerService {
+        use std::sync::{Arc, atomic::AtomicBool};
+        use tokio::sync::RwLock;
+        use ultros_db::world_data::world_cache::AnySelector;
+
+        let mut cheapest = CheapestListings::default();
+        cheapest.add_listing(&active_listing(1, 100, false));
+        super::AnalyzerService {
+            recent_sale_history: Arc::new(BTreeMap::from([(54, RwLock::default())])),
+            cheapest_items: Arc::new(BTreeMap::from([
+                (AnySelector::World(54), RwLock::new(cheapest.clone())),
+                (AnySelector::Region(1), RwLock::new(cheapest)),
+            ])),
+            initiated: Arc::new(AtomicBool::new(true)),
+            cheapest_resync_in_flight: Arc::new(AtomicBool::new(false)),
+            cheapest_rebuild: Arc::default(),
+            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
+            floor_writer: ultros_clickhouse::writer::Writer::disabled(),
+            ch_client,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stalled_trends_query_does_not_block_live_cache_writes() {
+        use tokio::io::AsyncReadExt;
+        use ultros_db::world_data::world_cache::AnySelector;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            assert!(socket.read(&mut buffer).await.unwrap() > 0);
+            started_tx.send(()).unwrap();
+            release_rx.await.unwrap();
+        });
+        let analyzer = analyzer_with_client(ultros_clickhouse::ClickHouseClient::from_client(
+            clickhouse::Client::default().with_url(url),
+        ));
+        let reader = analyzer.clone();
+        let query = tokio::spawn(async move { reader.get_trends_v2(54, 30, false).await });
+        tokio::time::timeout(std::time::Duration::from_secs(5), started_rx)
+            .await
+            .expect("the query must reach the local HTTP endpoint")
+            .unwrap();
+
+        assert!(!query.is_finished(), "the HTTP response is still stalled");
+        assert!(
+            analyzer.cheapest_items[&AnySelector::World(54)]
+                .try_write()
+                .is_ok(),
+            "a ClickHouse round trip must not hold the world's listing lock"
+        );
+        assert!(analyzer.recent_sale_history[&54].try_write().is_ok());
+        release_tx.send(()).unwrap();
+        server.await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), query)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     /// `remove_if_cheapest` decides, without touching the database, whether a
@@ -3221,6 +3321,7 @@ mod tests {
             cheapest_items: Arc::new(cheapest_items),
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
+            cheapest_rebuild: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
@@ -3275,6 +3376,7 @@ mod tests {
             cheapest_items: new_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
+            cheapest_rebuild: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
@@ -3312,6 +3414,7 @@ mod tests {
             cheapest_items: dc_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(true)),
             cheapest_resync_in_flight: Arc::default(),
+            cheapest_rebuild: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
@@ -3333,6 +3436,7 @@ mod tests {
             cheapest_items: restore_dc_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
+            cheapest_rebuild: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
@@ -3389,6 +3493,7 @@ mod tests {
             ),
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
+            cheapest_rebuild: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),

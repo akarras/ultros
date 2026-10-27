@@ -11,6 +11,7 @@ pub struct Recipe {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
 pub struct Material {
     pub item: i32,
     pub needed: i64,
@@ -133,6 +134,7 @@ pub fn expand(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
 pub struct Offer {
     pub id: i64,
     pub world: i32,
@@ -141,6 +143,7 @@ pub struct Offer {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
 pub struct Purchase {
     pub needed: i64,
     pub quantity: i64,
@@ -280,6 +283,7 @@ pub fn purchase_with_budget(
 /// aetheryte; a datacenter hop goes through the main menu and several loading
 /// screens. Zero weights reproduce pure gil ranking.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
 pub struct TravelWeights {
     pub world_hop: i64,
     pub dc_hop: i64,
@@ -307,6 +311,7 @@ impl TravelWeights {
 /// Hops beyond the worlds already on the itinerary. Entering a datacenter
 /// lands on one of its worlds, so that first world is part of the DC hop.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
 pub struct Travel {
     pub dc_hops: usize,
     pub world_hops: usize,
@@ -315,6 +320,7 @@ pub struct Travel {
 /// Everything route scoring needs besides market data. No UI or network
 /// dependencies, and fully value-comparable so it can live in a memo.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
 pub struct RouteContext {
     pub home: i32,
     /// World id to datacenter id. An unmapped world is treated as its own
@@ -361,6 +367,7 @@ impl RouteContext {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
 pub struct ShoppingPlan {
     pub purchases: BTreeMap<i32, Purchase>,
     /// Every non-home world with a purchase, locked stops included.
@@ -645,6 +652,7 @@ pub fn compare_routes(
 /// cheapest — it is not necessarily cheaper in gil than an earlier,
 /// incomplete card.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
 pub struct RouteComparison {
     pub cards: Vec<ShoppingPlan>,
 }

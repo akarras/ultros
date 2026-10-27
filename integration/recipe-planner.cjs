@@ -9,7 +9,11 @@ const OUT = path.join(__dirname, 'artifacts', 'recipe-planner');
 
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+  const args = ['--no-sandbox'];
+  if (process.env.E2E_BLOCK_EXTERNAL === '1') {
+    args.push('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost');
+  }
+  const browser = await puppeteer.launch({ headless: true, args });
   let page;
   try {
     page = await browser.newPage();
@@ -53,14 +57,17 @@ async function main() {
     assert.equal(await page.$eval('[aria-label="Buy from"]', e => e.value), 'datacenter');
     assert.equal(await page.$eval('[aria-label="Include NPC vendors"]', e => e.checked), true, 'NPC purchases remain enabled by default before hydration');
     await page.setJavaScriptEnabled(true);
-    await page.setRequestInterception(true);
+    // Intercept only the fixture API. Broad page interception can stall
+    // dynamic module imports in dedicated workers in Chromium/Puppeteer.
+    const network = await page.createCDPSession();
+    await network.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/v1/listings/*' }] });
     let homeUnavailable = false;
     let denseMarket = false;
     let vendorMarket = false;
     let marginalMarket = false;
-    page.on('request', request => {
-      const match = new URL(request.url()).pathname.match(/^\/api\/v1\/listings\/[^/]+\/(\d+)$/);
-      if (!match) return request.continue();
+    network.on('Fetch.requestPaused', async ({ requestId, request }) => {
+      const match = new URL(request.url).pathname.match(/^\/api\/v1\/listings\/[^/]+\/(\d+)$/);
+      if (!match) return network.send('Fetch.continueRequest', { requestId });
       const item = Number(match[1]);
       const marketRows = marginalMarket
         ? [
@@ -84,7 +91,11 @@ async function main() {
       ];
       const listings = marketRows.filter(l => !homeUnavailable || l.world_id !== 63).map(l => [{ ...l, item_id: item, retainer_id: l.id, hq: false, timestamp: '2026-09-05T12:00:00' },
         { id: l.id, world_id: l.world_id, name: 'Recipe fixture', retainer_city_id: 1 }]);
-      return request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ listings, sales: [], last_updated: [{ world_id: 63, updated_at: '2026-09-05T12:00:00' }, { world_id: 79, updated_at: '2026-09-05T12:00:00' }] }) });
+      return network.send('Fetch.fulfillRequest', {
+        requestId, responseCode: 200,
+        responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+        body: Buffer.from(JSON.stringify({ listings, sales: [], last_updated: [{ world_id: 63, updated_at: '2026-09-05T12:00:00' }, { world_id: 79, updated_at: '2026-09-05T12:00:00' }] })).toString('base64'),
+      });
     });
     await page.reload({ waitUntil: 'networkidle2' });
     await page.waitForFunction(() => window.__recipeHydrated);

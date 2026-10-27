@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap},
     time::Instant,
 };
 
@@ -11,7 +11,7 @@ use crate::{
 use anyhow::Result;
 use chrono::{Duration, NaiveDateTime, Utc};
 
-use futures::{Stream, future::try_join_all};
+use futures::Stream;
 use itertools::Itertools;
 use metrics::histogram;
 use migration::{
@@ -19,7 +19,7 @@ use migration::{
     sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set},
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, DbBackend, FromQueryResult, QueryOrder, QuerySelect, Statement,
+    ActiveValue, Condition, DatabaseTransaction, FromQueryResult, QueryOrder, QuerySelect,
 };
 use tracing::{instrument, warn};
 use ultros_api_types::{SaleHistory, UnknownCharacter};
@@ -48,6 +48,39 @@ use universalis::{ItemId, SaleView, WorldId};
 /// batches are individually fast.
 const MAX_CONCURRENT_WORLD_QUERIES: usize = 8;
 
+/// Universalis identifies a sale at second precision. Price is part of that
+/// identity: two purchases by the same buyer at different prices are distinct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct SaleIdentity {
+    hq: bool,
+    buyer: i32,
+    quantity: i32,
+    price: i32,
+    second: i64,
+}
+
+impl SaleIdentity {
+    fn incoming(sale: &SaleView, buyer: i32) -> Self {
+        Self {
+            hq: sale.hq,
+            buyer,
+            quantity: sale.quantity,
+            price: sale.price_per_unit,
+            second: sale.timestamp.timestamp(),
+        }
+    }
+
+    fn recorded(sale: &sale_history::Model) -> Self {
+        Self {
+            hq: sale.hq,
+            buyer: sale.buying_character_id,
+            quantity: sale.quantity,
+            price: sale.price_per_item,
+            second: sale.sold_date.and_utc().timestamp(),
+        }
+    }
+}
+
 /// Run per-world queries with at most [`MAX_CONCURRENT_WORLD_QUERIES`] in
 /// flight, collecting results in the order the worlds were supplied.
 async fn fan_out_per_world<F, T>(queries: impl Iterator<Item = F>) -> Result<Vec<T>, anyhow::Error>
@@ -73,15 +106,24 @@ impl UltrosDb {
         world_id: WorldId,
     ) -> Result<Vec<(SaleHistory, UnknownCharacter)>> {
         let instant = Instant::now();
+        // Resolve names before claiming a transaction connection. This avoids
+        // waiting for a second pooled connection while holding the board lock.
+        let _budget = self.ingest_budget.acquire().await?;
+        let buyers = self.lookup_buyer_names(&sales).await?;
+        let transaction = self.lock_listing_board(world_id, item_id, None).await?;
         let recorded_sales = self
-            .insert_unrecorded_sales(sales, item_id, world_id)
+            .insert_unrecorded_sales(sales, item_id, world_id, buyers, &transaction)
             .await?;
         // Only claim the item as ingested once the sales have actually landed.
         // `listing_last_updated` is the marker the catch-up service diffs against
         // Universalis' recently-updated feed, so bumping it ahead of a write that
         // then fails makes the resulting gap invisible to every later catch-up
         // pass -- the item looks fresher than their upload and is never retried.
-        self.set_last_updated(world_id, item_id).await?;
+        self.set_last_updated_on(&transaction, world_id, item_id)
+            .await?;
+        // Sales share the board's writer lock but do not replace listings, so
+        // leave its snapshot revision unchanged.
+        transaction.commit().await?;
         histogram!("ultrso_db_update_sales_duration_seconds").record(instant.elapsed());
         Ok(recorded_sales)
     }
@@ -91,6 +133,8 @@ impl UltrosDb {
         mut sales: Vec<SaleView>,
         item_id: ItemId,
         world_id: WorldId,
+        buyers: HashMap<String, unknown_final_fantasy_character::Model>,
+        transaction: &DatabaseTransaction,
     ) -> Result<Vec<(SaleHistory, UnknownCharacter)>> {
         use sale_history::*;
         // check if the sales have already been logged
@@ -98,22 +142,54 @@ impl UltrosDb {
             return Ok(vec![]);
         }
 
-        // check for any sales that have already been posted
-        let limit = sales.len() as u64;
-        let already_recorded_sales = self
-            .get_sale_history_for_item(world_id.0, item_id.0, limit)
+        // Query the incoming seconds, not the latest N sales. A late replay
+        // can sit arbitrarily far behind the head. Separate one-second ranges
+        // keep the existing (item,world,sold_date) index usable even for a batch
+        // whose timestamps are far apart; do not scan the entire time span.
+        let seconds: BTreeSet<_> = sales
+            .iter()
+            .map(|sale| sale.timestamp.timestamp())
+            .collect();
+        let mut times = Condition::any();
+        for second in seconds {
+            let start = chrono::DateTime::from_timestamp(second, 0)
+                .ok_or_else(|| anyhow::anyhow!("sale timestamp out of range"))?
+                .naive_utc();
+            let end = start
+                .checked_add_signed(Duration::seconds(1))
+                .ok_or_else(|| anyhow::anyhow!("sale timestamp out of range"))?;
+            times = times.add(
+                Condition::all()
+                    .add(Column::SoldDate.gte(start))
+                    .add(Column::SoldDate.lt(end)),
+            );
+        }
+        let already_recorded_sales = Entity::find()
+            .filter(Column::WorldId.eq(world_id.0))
+            .filter(Column::SoldItemId.eq(item_id.0))
+            .filter(times)
+            .all(transaction)
             .await?;
-        let buyers = self.lookup_buyer_names(&sales).await?;
+        let mut recorded_counts = HashMap::<SaleIdentity, usize>::new();
+        for sale in &already_recorded_sales {
+            *recorded_counts
+                .entry(SaleIdentity::recorded(sale))
+                .or_default() += 1;
+        }
+        // Match occurrences one by one. A set would incorrectly discard the
+        // second identical sale in a batch after finding just one stored row.
         sales.retain(|sale| {
             let buyer = buyers
                 .get(&sale.buyer_name)
                 .expect("Should always have gotten a buyer model");
-            !already_recorded_sales.iter().any(|recorded| {
-                sale.hq == recorded.hq
-                    && buyer.id == recorded.buying_character_id
-                    && sale.quantity == recorded.quantity
-                    && sale.timestamp.timestamp() == recorded.sold_date.and_utc().timestamp()
-            })
+            if let Some(count) = recorded_counts.get_mut(&SaleIdentity::incoming(sale, buyer.id))
+                && *count > 0
+            {
+                *count -= 1;
+                false
+            } else {
+                true
+            }
         });
         if sales.is_empty() {
             return Ok(vec![]);
@@ -146,8 +222,9 @@ impl UltrosDb {
                 world_id: Set(world_id.0),
             }
         }))
-        .exec_with_returning(&self.db)
+        .exec_with_returning(transaction)
         .await?;
+        crate::recent_sales::project_sales(transaction, &inserted, world_id, item_id).await?;
         let buyers_by_id: HashMap<i32, _> = buyers.into_values().map(|b| (b.id, b)).collect();
         Ok(attach_buyers(inserted, &buyers_by_id))
     }
@@ -197,38 +274,41 @@ impl UltrosDb {
         &self,
         sales: &[SaleView],
     ) -> Result<HashMap<String, unknown_final_fantasy_character::Model>, anyhow::Error> {
-        // get all the unique buyer names
-        let buyers: HashSet<_> = sales.iter().map(|b| &b.buyer_name).collect();
-        Ok(try_join_all(buyers.into_iter().map(|name| async move {
-            let buyer = unknown_final_fantasy_character::Entity::find()
-                .filter(unknown_final_fantasy_character::Column::Name.eq(name))
-                .one(&self.db)
-                .await?;
-            let buyer = match buyer {
-                Some(buyer) => buyer,
-                None => {
-                    let result = unknown_final_fantasy_character::ActiveModel {
-                        name: ActiveValue::Set(name.to_string()),
-                        ..Default::default()
-                    }
-                    .insert(&self.db)
-                    .await;
-                    match result {
-                        Ok(m) => m,
-                        // the most common error here is a duplicate key, in this case we can just look them up now.
-                        Err(e) => unknown_final_fantasy_character::Entity::find()
-                            .filter(unknown_final_fantasy_character::Column::Name.eq(name))
-                            .one(&self.db)
-                            .await?
-                            .ok_or(e)?,
-                    }
-                }
-            };
-            Ok::<_, anyhow::Error>((buyer.name.clone(), buyer))
-        }))
-        .await?
-        .into_iter()
-        .collect())
+        use unknown_final_fantasy_character::{ActiveModel, Column, Entity};
+        let names: std::collections::BTreeSet<_> =
+            sales.iter().map(|s| s.buyer_name.clone()).collect();
+        let names: Vec<_> = names.into_iter().collect();
+        let mut buyers = HashMap::new();
+        for chunk in names.chunks(500) {
+            buyers.extend(
+                Entity::find()
+                    .filter(Column::Name.is_in(chunk.iter().cloned()))
+                    .all(&self.db)
+                    .await?
+                    .into_iter()
+                    .map(|b| (b.name.clone(), b)),
+            );
+            let missing: Vec<_> = chunk
+                .iter()
+                .filter(|name| !buyers.contains_key(*name))
+                .map(|name| ActiveModel {
+                    name: ActiveValue::Set(name.clone()),
+                    ..Default::default()
+                })
+                .collect();
+            if !missing.is_empty() {
+                let inserted = Entity::insert_many(missing)
+                    .on_conflict(
+                        sea_orm::sea_query::OnConflict::column(Column::Name)
+                            .update_column(Column::Name)
+                            .to_owned(),
+                    )
+                    .exec_with_returning(&self.db)
+                    .await?;
+                buyers.extend(inserted.into_iter().map(|b| (b.name.clone(), b)));
+            }
+        }
+        Ok(buyers)
     }
 
     pub async fn get_sale_history_for_item(
@@ -279,15 +359,7 @@ impl UltrosDb {
         &self,
         n_sales: i32,
     ) -> Result<impl Stream<Item = Result<AbbreviatedSaleData, DbErr>> + '_, DbErr> {
-        AbbreviatedSaleData::find_by_statement(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                r#"SELECT filter.* FROM (SELECT h.sold_item_id, h.hq, h.price_per_item, h.sold_date, h.world_id,
-                RANK() OVER (PARTITION BY h.sold_item_id, h.hq, h.world_id ORDER BY h.sold_date DESC) sale_rank
-                FROM sale_history h) filter
-                WHERE filter.sale_rank <= $1
-                "#,
-                vec![n_sales.into()],
-            ))
+        AbbreviatedSaleData::find_by_statement(self.recent_sales_statement(n_sales).await?)
             .stream(&self.db)
             .await
     }
@@ -371,6 +443,190 @@ mod tests {
     use chrono::NaiveDate;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn incoming_sale(buyer: &str, price: i32, second: i64) -> SaleView {
+        SaleView {
+            hq: false,
+            price_per_unit: price,
+            quantity: 1,
+            timestamp: chrono::DateTime::from_timestamp(second, 0).unwrap().into(),
+            on_mannequin: false,
+            world_name: None,
+            world_id: None,
+            buyer_name: buyer.into(),
+            total: price,
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires ULTROS_PLUGIN_TEST_DATABASE_URL pointing at a disposable loopback database"]
+    async fn sale_acceptance_is_idempotent_and_atomic_postgres() {
+        use sea_orm::ConnectionTrait;
+
+        let db = crate::common::test_db::connect().await;
+        crate::common::test_db::seed_market(&db).await;
+        let world = WorldId(30001);
+        let item = ItemId(9003);
+        sale_history::Entity::delete_many()
+            .filter(sale_history::Column::WorldId.eq(world.0))
+            .filter(sale_history::Column::SoldItemId.eq(item.0))
+            .exec(&db.db)
+            .await
+            .unwrap();
+        let second = 1_700_000_000;
+        let first = incoming_sale("AuditSaleBuyer", 100, second);
+        let a = db
+            .update_sales(vec![first.clone()], item, world)
+            .await
+            .unwrap();
+        let b = db
+            .update_sales(
+                vec![incoming_sale("AuditSaleBuyer", 200, second)],
+                item,
+                world,
+            )
+            .await
+            .unwrap();
+        assert_eq!(a.len(), 1);
+        assert_eq!(
+            b.len(),
+            1,
+            "same-second purchases at different prices are distinct"
+        );
+        assert_ne!(a[0].0.id, b[0].0.id);
+
+        let newer = (1..=32)
+            .map(|offset| incoming_sale("AuditSaleBuyer", 300, second + offset))
+            .collect();
+        assert_eq!(db.update_sales(newer, item, world).await.unwrap().len(), 32);
+        assert!(
+            db.update_sales(vec![first], item, world)
+                .await
+                .unwrap()
+                .is_empty(),
+            "replay is detected beyond the newest N rows"
+        );
+
+        let repeated = incoming_sale("AuditRepeatedBuyer", 700, second + 100);
+        assert_eq!(
+            db.update_sales(vec![repeated.clone()], item, world)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            db.update_sales(vec![repeated.clone(), repeated.clone()], item, world)
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "one stored occurrence matches only one incoming occurrence"
+        );
+        assert!(
+            db.update_sales(vec![repeated.clone(), repeated], item, world)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let concurrent = incoming_sale("AuditConcurrentBuyer", 800, second + 200);
+        let batch = vec![concurrent.clone(), concurrent];
+        let (left, right) = tokio::join!(
+            db.update_sales(batch.clone(), item, world),
+            db.update_sales(batch, item, world),
+        );
+        assert_eq!(
+            left.unwrap().len() + right.unwrap().len(),
+            2,
+            "concurrent retries must not multiply a batch"
+        );
+
+        let count = db
+            .get_sale_history_for_item(world.0, item.0, 1000)
+            .await
+            .unwrap()
+            .len();
+        let marker = db
+            .get_listing_last_updated_for_worlds(item, &[world.0])
+            .await
+            .unwrap()[0]
+            .date_time;
+        db.db.execute_unprepared(
+            "CREATE OR REPLACE FUNCTION ultros_audit_sale_marker_fail() RETURNS trigger
+             LANGUAGE plpgsql AS $fixture$ BEGIN RAISE EXCEPTION 'sale marker fixture failure'; END; $fixture$;
+             DROP TRIGGER IF EXISTS ultros_audit_sale_marker_fail ON listing_last_updated;
+             CREATE TRIGGER ultros_audit_sale_marker_fail BEFORE INSERT OR UPDATE ON listing_last_updated
+             FOR EACH ROW WHEN (NEW.world_id=30001 AND NEW.item_id=9003)
+             EXECUTE FUNCTION ultros_audit_sale_marker_fail()"
+        ).await.unwrap();
+        let retry = incoming_sale("AuditRetryBuyer", 900, second + 300);
+        let failed = db.update_sales(vec![retry.clone()], item, world).await;
+        db.db
+            .execute_unprepared(
+                "DROP TRIGGER ultros_audit_sale_marker_fail ON listing_last_updated;
+             DROP FUNCTION ultros_audit_sale_marker_fail()",
+            )
+            .await
+            .unwrap();
+        assert!(failed.is_err());
+        assert_eq!(
+            db.get_sale_history_for_item(world.0, item.0, 1000)
+                .await
+                .unwrap()
+                .len(),
+            count
+        );
+        assert_eq!(
+            db.get_listing_last_updated_for_worlds(item, &[world.0])
+                .await
+                .unwrap()[0]
+                .date_time,
+            marker
+        );
+        assert_eq!(
+            db.update_sales(vec![retry], item, world)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an explicitly opted-in disposable PostgreSQL database"]
+    async fn batched_buyers_handle_concurrent_first_creation() {
+        let db = crate::common::test_db::connect().await;
+        crate::common::test_db::seed_market(&db).await;
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let sales: Vec<_> = (0..600)
+            .map(|i| incoming_sale(&format!("AuditBatch{nonce}_{i}"), 100 + i, 1_700_000_000))
+            .collect();
+        let world = WorldId(30001);
+        let a = db.update_sales(sales.clone(), ItemId(9012), world);
+        let b = db.update_sales(sales.clone(), ItemId(9013), world);
+        let (a, b) = tokio::join!(a, b);
+        let a = a.unwrap();
+        let b = b.unwrap();
+        assert_eq!(a.len(), 600);
+        assert_eq!(b.len(), 600);
+        let ids: HashMap<_, _> = a
+            .iter()
+            .map(|(sale, buyer)| (buyer.name.clone(), sale.buying_character_id))
+            .collect();
+        for (sale, buyer) in &b {
+            assert_eq!(ids[&buyer.name], sale.buying_character_id);
+        }
+        assert!(
+            db.update_sales(sales, ItemId(9012), world)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     /// The whole point of `fan_out_per_world` is that it never has more than
     /// `MAX_CONCURRENT_WORLD_QUERIES` queries holding a pooled connection at

@@ -1,3 +1,6 @@
+mod permissions;
+pub use permissions::AuthorizedList;
+
 use crate::{
     UltrosDb,
     common_type_conversions::{
@@ -77,108 +80,6 @@ impl TryFrom<&list::Model> for AnySelector {
 }
 
 impl UltrosDb {
-    pub async fn get_permission(&self, list_id: i32, user_id: i64) -> Result<ListPermission> {
-        let list = list::Entity::find_by_id(list_id)
-            .one(&self.db)
-            .await?
-            .ok_or(ListError::NotFound)?;
-
-        if list.owner == user_id {
-            return Ok(ListPermission::Owner);
-        }
-
-        // Check shared users
-        let shared_user = list_shared_user::Entity::find()
-            .filter(list_shared_user::Column::ListId.eq(list_id))
-            .filter(list_shared_user::Column::UserId.eq(user_id))
-            .one(&self.db)
-            .await?;
-
-        let mut max_permission = shared_user
-            .map(|s| ListPermission::from(s.permission))
-            .unwrap_or(ListPermission::None);
-
-        if max_permission == ListPermission::Owner {
-            return Ok(ListPermission::Owner);
-        }
-
-        // Check shared groups: single JOIN across list_shared_group and
-        // user_group_member, filtered by (list_id, user_id). Replaces the
-        // previous 1+N pattern of fetching every shared group then probing
-        // membership in a loop.
-        let group_perms: Vec<i16> = list_shared_group::Entity::find()
-            .select_only()
-            .column(list_shared_group::Column::Permission)
-            .join(
-                JoinType::InnerJoin,
-                list_shared_group::Relation::UserGroup.def(),
-            )
-            .join(
-                JoinType::InnerJoin,
-                user_group::Relation::UserGroupMember.def(),
-            )
-            .filter(list_shared_group::Column::ListId.eq(list_id))
-            .filter(user_group_member::Column::UserId.eq(user_id))
-            .into_tuple()
-            .all(&self.db)
-            .await?;
-
-        for perm in group_perms {
-            let p = ListPermission::from(perm);
-            if p > max_permission {
-                max_permission = p;
-            }
-        }
-
-        let owned_group_perms: Vec<i16> = list_shared_group::Entity::find()
-            .select_only()
-            .column(list_shared_group::Column::Permission)
-            .join(
-                JoinType::InnerJoin,
-                list_shared_group::Relation::UserGroup.def(),
-            )
-            .filter(list_shared_group::Column::ListId.eq(list_id))
-            .filter(user_group::Column::OwnerId.eq(user_id))
-            .into_tuple()
-            .all(&self.db)
-            .await?;
-
-        for perm in owned_group_perms {
-            let p = ListPermission::from(perm);
-            if p > max_permission {
-                max_permission = p;
-            }
-        }
-
-        // Role shares: list -> role -> role member. Same shape as the group
-        // join above; a member holding several shared roles gets the max.
-        let role_perms: Vec<i16> = list_shared_role::Entity::find()
-            .select_only()
-            .column(list_shared_role::Column::Permission)
-            .join(
-                JoinType::InnerJoin,
-                list_shared_role::Relation::GroupRole.def(),
-            )
-            .join(
-                JoinType::InnerJoin,
-                group_role::Relation::GroupRoleMember.def(),
-            )
-            .filter(list_shared_role::Column::ListId.eq(list_id))
-            .filter(group_role_member::Column::UserId.eq(user_id))
-            .into_tuple()
-            .all(&self.db)
-            .await?;
-
-        for perm in role_perms {
-            let p = ListPermission::from(perm);
-            if p > max_permission {
-                max_permission = p;
-            }
-        }
-
-        Ok(max_permission)
-    }
-
     /// Creates a list for the given Discord user with the given name
     #[instrument(skip(self))]
     pub async fn create_list(
