@@ -7,7 +7,7 @@ description = "The server's in-process full-text search index over the game data
 
 [dependencies]
 anyhow = { workspace = true }
-tantivy = "0.26.1"
+tantivy = "0.27.0"
 tracing = { workspace = true }
 ultros-api-types = { path = "../ultros-api-types" }
 ultros-game-sources = { path = "../ultros-game-sources" }

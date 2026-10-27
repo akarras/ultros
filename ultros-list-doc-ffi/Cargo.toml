@@ -9,7 +9,7 @@ description = "Experimental C ABI for the Ultros list document; no network or cr
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-base64 = "0.22.1"
+base64 = "0.23.1"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 ultros-list-doc = { path = "../ultros-list-doc" }

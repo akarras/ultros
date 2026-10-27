@@ -14,7 +14,7 @@ anyhow.workspace = true
 rustc-demangle = "0.1"
 # Only the `name` custom-section readers are used; no validation, no
 # component model.
-wasmparser = { version = "0.259", default-features = false, features = ["std"] }
+wasmparser = { version = "0.262", default-features = false, features = ["std"] }
 # Same encoders the rest of the pipeline uses: cargo-leptos `--precompress`
 # writes brotli/gzip siblings, and this tool has to replace them for the files
 # it rewrites.
@@ -22,4 +22,4 @@ brotli = "9"
 flate2 = "1"
 
 [dev-dependencies]
-wasm-encoder = "0.259"
+wasm-encoder = "0.262"
