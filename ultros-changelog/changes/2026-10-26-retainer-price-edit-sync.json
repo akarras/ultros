@@ -1,0 +1,8 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Keep retainer listings together while repricing",
+  "blurb": "Your uploaded retainer listings stay together on Ultros while you update prices in game, including when you confirm a price without changing it.",
+  "link": "/retainers/listings",
+  "labs": true
+}

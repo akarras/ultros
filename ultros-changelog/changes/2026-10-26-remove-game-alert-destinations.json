@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Remove old game clients from Alerts",
+  "blurb": "Clean up game clients you no longer use directly from your alert destinations. Removing one disconnects that client and stops alerts going to it, while keeping your alert rules and other destinations.",
+  "link": "/alerts",
+  "labs": true
+}

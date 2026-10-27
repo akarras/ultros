@@ -116,6 +116,19 @@ fn clean_origin(u: &Url) -> bool {
         && u.host_str().is_some()
 }
 
+pub(crate) fn browser_mutation_allowed(headers: &axum::http::HeaderMap, site: &str) -> bool {
+    let Ok(site) = Url::parse(site) else {
+        return false;
+    };
+    if !clean_origin(&site) || headers.contains_key(header::AUTHORIZATION) {
+        return false;
+    }
+    let expected = site.origin().ascii_serialization();
+    let mut origins = headers.get_all(header::ORIGIN).iter();
+    origins.next().and_then(|h| h.to_str().ok()) == Some(expected.as_str())
+        && origins.next().is_none()
+}
+
 impl PluginConfig {
     fn from_env(cookie_key: &Key) -> anyhow::Result<Option<Arc<Self>>> {
         if !std::env::var("ULTROS_PLUGIN_ENABLED").is_ok_and(|v| matches!(v.as_str(), "1" | "true"))
@@ -272,11 +285,7 @@ async fn protect(
     if browser {
         permitted &= !request.headers().contains_key(header::AUTHORIZATION);
         if request.method() != axum::http::Method::GET {
-            permitted &= request
-                .headers()
-                .get(header::ORIGIN)
-                .and_then(|h| h.to_str().ok())
-                == Some(config.origin.as_str());
+            permitted &= browser_mutation_allowed(request.headers(), &config.origin);
         }
     }
     let peer = request
@@ -527,6 +536,27 @@ mod tests {
         headers.append("x-forwarded-for", "198.51.100.111".parse().unwrap());
         assert_eq!(forwarded_client(peer, &headers, &proxies), peer);
         assert!(parse_trusted_proxy("not-a-network").is_err());
+    }
+    #[test]
+    fn browser_mutations_require_one_exact_origin_and_cookie_authority() {
+        let mut headers = axum::http::HeaderMap::new();
+        assert!(!browser_mutation_allowed(&headers, "https://ultros.app"));
+        for value in [
+            "null",
+            "https://attacker.invalid",
+            "http://ultros.app",
+            "https://ultros.app.attacker.invalid",
+        ] {
+            headers.insert(header::ORIGIN, value.parse().unwrap());
+            assert!(!browser_mutation_allowed(&headers, "https://ultros.app"));
+        }
+        headers.insert(header::ORIGIN, "https://ultros.app".parse().unwrap());
+        assert!(browser_mutation_allowed(&headers, "https://ultros.app/"));
+        headers.append(header::ORIGIN, "https://ultros.app".parse().unwrap());
+        assert!(!browser_mutation_allowed(&headers, "https://ultros.app"));
+        headers.insert(header::ORIGIN, "https://ultros.app".parse().unwrap());
+        headers.insert(header::AUTHORIZATION, "Bearer game-token".parse().unwrap());
+        assert!(!browser_mutation_allowed(&headers, "https://ultros.app"));
     }
     #[test]
     fn origins_and_tokens_are_never_accepted_by_appearance_alone() {

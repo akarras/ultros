@@ -1408,6 +1408,91 @@ async fn plugin_connected_flows_postgres() {
     db.revoke_plugin_credential(&tokens.refresh_token)
         .await
         .unwrap();
+    // Old authorization attempts can be removed directly from Alerts.
+    db.delete_game_endpoint_for_browser(owner, session.endpoint_id.unwrap())
+        .await
+        .unwrap();
+    assert!(
+        db.get_endpoint_owned_by(owner, session.endpoint_id.unwrap())
+            .await
+            .is_err()
+    );
+    let removable = pair(
+        &db,
+        &keys,
+        owner,
+        all.clone(),
+        &format!("fixture/{suffix}/remove"),
+    )
+    .await;
+    let survivor = pair(&db, &keys, owner, all, &format!("fixture/{suffix}/keep")).await;
+    let removable_principal = db
+        .authenticate_plugin(&removable.access_token)
+        .await
+        .unwrap();
+    let removable_session = db.plugin_session(&removable_principal).await.unwrap();
+    let endpoint = removable_session.endpoint_id.unwrap();
+    db.test_plugin_delivery(&removable_principal, "remove-endpoint-test")
+        .await
+        .unwrap();
+    assert!(
+        !db.pending_plugin_deliveries(&removable_principal)
+            .await
+            .unwrap()
+            .deliveries
+            .is_empty()
+    );
+    exec(
+        &db.db,
+        "INSERT INTO alert_notification_rule(alert_id,endpoint_id) VALUES($1,$2)",
+        vec![alert.into(), endpoint.into()],
+    )
+    .await
+    .unwrap();
+    assert!(
+        db.delete_game_endpoint_for_browser(other, endpoint)
+            .await
+            .is_err()
+    );
+    assert!(
+        db.delete_game_endpoint_for_browser(owner, webhook)
+            .await
+            .is_err()
+    );
+    assert!(
+        db.authenticate_plugin(&removable.access_token)
+            .await
+            .is_ok()
+    );
+    db.delete_game_endpoint_for_browser(owner, endpoint)
+        .await
+        .unwrap();
+    assert!(
+        db.authenticate_plugin(&removable.access_token)
+            .await
+            .is_err()
+    );
+    assert!(
+        db.refresh_plugin_session(&removable.refresh_token)
+            .await
+            .is_err()
+    );
+    assert!(db.plugin_session(&removable_principal).await.is_err());
+    assert!(db.get_endpoint_owned_by(owner, endpoint).await.is_err());
+    for table in ["plugin_delivery", "alert_notification_rule"] {
+        assert!(
+            query(
+                &db.db,
+                &format!("SELECT endpoint_id FROM {table} WHERE endpoint_id=$1"),
+                vec![endpoint.into()]
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+    }
+    assert!(db.authenticate_plugin(&survivor.access_token).await.is_ok());
+    assert!(db.get_endpoint_owned_by(owner, webhook).await.is_ok());
     println!(
         "Device pairing, scope isolation, private registration/upload, durable notification rollback/fencing, CRDT authorization and refresh reuse passed."
     );

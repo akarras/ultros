@@ -22,8 +22,11 @@ internal static class ClientChecks
         ListEditTargetChecks.Run();
         InventoryProgressChecks.Run();
         RetainerPriceChecks.Run();
+        HistoryPrivacyChecks.Run();
         CaptureUploadChecks.Run();
         await WorkerChecks.Uploads();
+        await WorkerChecks.RetainerListings();
+        await WorkerChecks.Notifications();
         await WorkerChecks.DefaultSetup();
         var observationTime=DateTimeOffset.UtcNow;
         var observedCharacter=new ObservedCharacter("123456789","Same Name",63,[]);

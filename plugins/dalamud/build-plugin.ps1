@@ -154,6 +154,7 @@ try {
         $smokeArguments = @('run', '--project', 'Ultros.Lists.Smoke/Ultros.Lists.Smoke.csproj', '--configuration', $Configuration)
         if ($EnableLocalhost) { $smokeArguments += '-p:UltrosLocalhostDebug=true' }
         Invoke-Checked 'dotnet' ($smokeArguments + @('--', $staging))
+        Invoke-Checked 'dotnet' @('run', '--project', 'Ultros.Ui.Smoke/Ultros.Ui.Smoke.csproj', '--configuration', $Configuration, "-p:DALAMUD_HOME=$referenceDirectory", '--', (Join-Path $artifactRoot 'ui'))
         Invoke-Checked 'dotnet' ($smokeArguments + @('--', '--native-shadow', $staging, (Join-Path $artifactRoot 'native-shadow-smoke')))
         if ($PublishRelease) {
             & (Join-Path $PSScriptRoot 'publish-release.ps1') -PackageDirectory $staging

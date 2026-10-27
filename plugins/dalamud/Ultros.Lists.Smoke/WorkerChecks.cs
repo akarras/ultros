@@ -19,13 +19,21 @@ internal static class WorkerChecks
     private sealed class Handler : HttpMessageHandler
     {
         internal readonly List<string> Bodies=[];
+        internal readonly List<string> NotificationReads=[];
         internal readonly List<string[]> PairingScopes=[];
         internal readonly List<ObservedCharacter> Registrations=[];
         internal UnverifiedCharacter[] RegisteredCharacters=[];
+        internal RetainerSnapshot[] Snapshots=[];
+        internal bool ReadRoster;
         internal HttpStatusCode? Failure=HttpStatusCode.ServiceUnavailable;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancellation)
         {
             var route=request.RequestUri!.AbsolutePath;
+            if(route=="/api/v1/plugin/notifications/read")
+            {
+                NotificationReads.Add(await request.Content!.ReadAsStringAsync(cancellation));
+                return new(HttpStatusCode.NoContent);
+            }
             if(route=="/api/v1/plugin/capabilities")
                 return new(HttpStatusCode.OK){Content=new StringContent("{\"protocol\":1}")};
             if(route=="/api/v1/plugin/session/reauthorize") {
@@ -43,7 +51,9 @@ internal static class WorkerChecks
             if(request.Method==HttpMethod.Get&&request.RequestUri!.AbsolutePath=="/api/v1/plugin/lists")
                 return new(HttpStatusCode.OK){Content=new StringContent("[]")};
             if(request.Method==HttpMethod.Get&&request.RequestUri!.AbsolutePath=="/api/v1/plugin/characters")
-                return new(HttpStatusCode.ServiceUnavailable){Content=new StringContent("{}")};
+                return ReadRoster?new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(RegisteredCharacters,Protocol.Json))}:new(HttpStatusCode.ServiceUnavailable){Content=new StringContent("{}")};
+            if(request.Method==HttpMethod.Get&&route=="/api/v1/plugin/retainers/snapshots")
+                return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(Snapshots,Protocol.Json))};
             Require(request.RequestUri!.AbsolutePath=="/api/v1/plugin/retainers/1/listings","Unexpected fixture request.");
             Bodies.Add(await request.Content!.ReadAsStringAsync(cancellation));
             return new(Failure??HttpStatusCode.OK){Content=new StringContent(Failure is null?"{\"revision\":1,\"hash\":\"fixture\"}":"{\"error\":\"service_unavailable\"}",Encoding.UTF8,"application/json")};
@@ -155,9 +165,13 @@ internal static class WorkerChecks
         Require(saved.Saved,"A successful receipt was lost when the roster GET failed.");
         Require(fixture.Handler.Bodies.Count==2&&fixture.Handler.Bodies[0]==fixture.Handler.Bodies[1],"Retry changed its idempotency key/body.");
         Require(worker.View.Characters.Single().Retainers.Single().Revision==1,"The acknowledged revision was not published before completion.");
+        Require(worker.View.RetainerSnapshots?.Single().Listings.Single().UnitPrice==100,"An acknowledged upload did not update the visible listings.");
         await fixture.OnWorker(()=>Set(worker,"characters",worker.View.Characters.Select(c=>c with{Retainers=c.Retainers.Select(r=>r with{Revision=2}).ToArray()}).ToArray()));
+        var newer=new RetainerSnapshot("1",2,DateTimeOffset.UtcNow,DateTimeOffset.UtcNow,[new(0,8,false,5,90)]);
+        await fixture.OnWorker(()=>Set(worker,"retainerSnapshots",new[]{newer}));
         Require((await worker.Upload("1",capture)!.WaitAsync(TimeSpan.FromSeconds(10))).Saved
             &&worker.View.Characters.Single().Retainers.Single().Revision==2,"An old duplicate receipt downgraded a newer known revision.");
+        Require(worker.View.RetainerSnapshots?.Single().Listings.Single().UnitPrice==90,"An old receipt replaced newer displayed prices.");
         fixture.Handler.Failure=HttpStatusCode.Forbidden;
         var denied=await worker.Upload("1",capture)!.WaitAsync(TimeSpan.FromSeconds(10));
         Require(!denied.Saved&&!denied.Retryable,"A permission denial was retried.");
@@ -165,6 +179,58 @@ internal static class WorkerChecks
         var sentBeforeCancellation=fixture.Handler.Bodies.Count;
         await fixture.OnWorker(()=>{cancelled=worker.Upload("1",capture);worker.CancelQueuedCaptures();});
         Require(!(await cancelled!.WaitAsync(TimeSpan.FromSeconds(10))).Retryable&&fixture.Handler.Bodies.Count==sentBeforeCancellation,"A cancelled visit sent a queued capture.");
+    }
+    internal static async Task RetainerListings()
+    {
+        using var fixture=new Fixture();await fixture.Connect();
+        var worker=fixture.Worker;var now=DateTimeOffset.UtcNow;
+        fixture.Handler.ReadRoster=true;
+        fixture.Handler.RegisteredCharacters=worker.View.Characters;
+        fixture.Handler.Snapshots=[new("1",1,now,now,[new(0,8,false,5,100),new(1,8,false,5,100)])];
+        Require(worker.RefreshRetainers(),"Retainer refresh was not queued.");
+        await Until(()=>worker.View.RetainerSnapshots?.SingleOrDefault()?.Listings.Length==2&&!worker.View.RefreshingRetainers);
+        Require(worker.View.RetainerSnapshots!.Single().Listings.Select(l=>l.Slot).SequenceEqual(new byte[]{0,1}),"Refreshing collapsed identical stacks.");
+        await fixture.OnWorker(()=>{
+            Require(worker.RefreshRetainers(),"Bound retainer refresh was not queued.");
+            var other=fixture.Session with{Id="replacement",AccountId="456",Scopes=[]};
+            fixture.SetSession(other);Set(worker,"loadedDevice",other.Id);
+        });
+        await fixture.OnWorker(()=>{});
+        Require(worker.View.RetainerSnapshots is null,"A replacement account could see saved retainer listings.");
+        Console.WriteLine("PASS: stable retainer listings, separate identical stacks, acknowledged price updates, revision ordering and account-bound refresh.");
+    }
+    internal static async Task Notifications()
+    {
+        using var fixture=new Fixture();await fixture.Connect();
+        var worker=fixture.Worker;var now=DateTimeOffset.UtcNow;
+        var path=Path.Combine(fixture.Root,"notifications.json");
+        var history=new NotificationHistory(path);
+        var alert=new GameDelivery("1",42,"alert","Price alert","Fixture",new("none",null,null),now.AddHours(1));
+        var test=alert with{Id="2",EventId=null,Kind="test"};history.Receive([alert,test],now);
+        var session=fixture.Session with{Scopes=["notifications:mark-read"]};
+        await fixture.OnWorker(()=>{fixture.SetSession(session);Set(worker,"history",history);});
+        await Until(()=>worker.View.Inbox.Length==2);
+        Require(worker.MarkRead(alert.Id),"Read action was not queued.");
+        await Until(()=>worker.View.ReadNotificationIds?.Contains(alert.Id)==true);
+        using(var body=JsonDocument.Parse(fixture.Handler.NotificationReads.Single()))
+            Require(body.RootElement.GetProperty("ids")[0].GetString()==alert.Id,"Mark read sent an event ID instead of a delivery ID.");
+        Require(worker.MarkRead(test.Id),"Test read action was not queued.");
+        await Until(()=>worker.View.ReadNotificationIds?.Contains(test.Id)==true);
+        Require(fixture.Handler.NotificationReads.Count==1,"A local test notification changed website history.");
+        var queue=(ConcurrentQueue<GameDelivery>)typeof(ClientWorker).GetField("toasts",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(worker)!;
+        queue.Enqueue(alert);
+        Require(worker.DeleteNotifications(worker.View.Session,[alert.Id]),"Delete action was not queued.");
+        await Until(()=>worker.View.Inbox.Length==1);
+        Require(!worker.TryToast(out _),"A deleted notification still appeared in game chat.");
+        Require(new NotificationHistory(path).IsDeleted(alert.Id),"Worker deletion was not durable.");
+        await fixture.OnWorker(()=>{
+            Require(worker.DeleteNotifications(session,[test.Id]),"Bound deletion was not queued.");
+            Require(worker.MarkRead(test.Id),"Bound read action was not queued.");
+            var replacement=session with{Id="replacement",AccountId="456"};fixture.SetSession(replacement);Set(worker,"loadedDevice",replacement.Id);
+        });
+        await fixture.OnWorker(()=>{});
+        Require(history.Entries.Length==1&&fixture.Handler.NotificationReads.Count==1,"A queued history action crossed accounts.");
+        Console.WriteLine("PASS: worker read/delete lifecycle, pending chat suppression, durability and account-bound history actions.");
     }
     internal static async Task CartLifecycle()
     {
