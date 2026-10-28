@@ -208,6 +208,7 @@ async function main() {
     const emptyPrices=await api("GET",pricePath,undefined,access);
     assert.equal(emptyPrices.status,200);assert.equal(emptyPrices.data.source,"universalis");
     assert.equal(emptyPrices.data.listings.length,0,"price lookup cannot retain a deleted private capture");
+    await require("./dalamud-live-lists.cjs")({api,page,cookies,access,world:character.home_world});
     if(process.env.DALAMUD_RETAINER_ONLY==="1"){
       console.log("PASS: integrated onboarding and consent, real retainer registration, normal unverified-character grouping, immediate private listings in SSR/hydrated All Listings and individual views, separate identical stacks, Undercuts, account isolation, public-table separation and deletion.");
       return;

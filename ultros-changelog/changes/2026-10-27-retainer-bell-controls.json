@@ -1,0 +1,8 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Manage Ultros retainers at the summoning bell",
+  "blurb": "Refresh missing retainers from the bell window, match Ultros to your in-game retainer order, and disable retainers you no longer use without losing their saved listings.",
+  "link": "/retainers/listings",
+  "labs": true
+}

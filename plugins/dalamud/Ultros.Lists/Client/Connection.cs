@@ -251,6 +251,33 @@ internal sealed class Connection : IDisposable
     internal Task<T> Public<T>(string path, CancellationToken cancellation) => transport.Send<T>(HttpMethod.Get, path, null, null, cancellation);
     private bool? notificationStreamSupported;
     private DateTimeOffset capabilitiesCheckAt;
+    private bool? listStreamSupported;
+    private DateTimeOffset listCapabilitiesCheckAt;
+    private bool? retainerPreferencesSupported;
+    private DateTimeOffset retainerCapabilitiesCheckAt;
+    internal async Task<bool> RetainerPreferences(CancellationToken cancellation)
+    {
+        if(retainerPreferencesSupported is null||DateTimeOffset.UtcNow>=retainerCapabilitiesCheckAt) {
+            using var capabilities=await Public<JsonDocument>("/api/v1/plugin/capabilities",cancellation).ConfigureAwait(false);
+            retainerPreferencesSupported=capabilities.RootElement.TryGetProperty("features",out var features)
+                &&features.EnumerateArray().Any(feature=>feature.GetString()=="retainer-preferences");
+            retainerCapabilitiesCheckAt=DateTimeOffset.UtcNow.AddSeconds(retainerPreferencesSupported==true?300:60);
+        }
+        return retainerPreferencesSupported==true;
+    }
+    internal async Task<ListFeed?> SubscribeList(int list,Action wake,CancellationToken cancellation)
+    {
+        if(listStreamSupported is null||DateTimeOffset.UtcNow>=listCapabilitiesCheckAt)
+        {
+            using var capabilities=await Public<JsonDocument>("/api/v1/plugin/capabilities",cancellation).ConfigureAwait(false);
+            listStreamSupported=capabilities.RootElement.TryGetProperty("features",out var features)
+                &&features.EnumerateArray().Any(feature=>feature.GetString()=="list-stream");
+            listCapabilitiesCheckAt=DateTimeOffset.UtcNow.AddSeconds(listStreamSupported==true?300:60);
+        }
+        if(listStreamSupported!=true)return null;
+        if(access is null||DateTimeOffset.UtcNow>=accessExpires.AddSeconds(-45))await Renew(cancellation).ConfigureAwait(false);
+        return new ListFeed(transport,access!,list,wake,cancellation);
+    }
     internal async Task<NotificationFeed?> SubscribeNotifications(Action wake,CancellationToken cancellation)
     {
         if(notificationStreamSupported is null||DateTimeOffset.UtcNow>=capabilitiesCheckAt)

@@ -4,6 +4,8 @@ pub(crate) mod auth;
 pub(crate) mod crypto;
 mod notifications;
 mod prices;
+#[cfg(test)]
+mod retainer_preferences_tests;
 mod retainers;
 #[cfg(test)]
 mod tests;

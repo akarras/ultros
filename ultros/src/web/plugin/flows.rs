@@ -20,6 +20,10 @@ pub(super) fn router() -> Router<super::WebState> {
     let lists = Router::new()
         .route("/api/v1/plugin/lists", get(lists))
         .route("/api/v1/plugin/lists/{id}/sync", post(sync_list))
+        .route(
+            "/api/v1/plugin/lists/{id}/stream",
+            get(super::list_stream::stream),
+        )
         .layer(DefaultBodyLimit::max(MAX_SYNC_BODY_BYTES));
     Router::new()
         .route("/api/v1/plugin/characters", get(characters))
@@ -27,6 +31,11 @@ pub(super) fn router() -> Router<super::WebState> {
         .route("/api/v1/plugin/characters/observe", post(observe))
         .route("/api/v1/plugin/retainers/register", post(register))
         .route("/api/v1/plugin/characters/{id}/uploads", post(consent))
+        .route("/api/v1/plugin/characters/{id}/order", post(retainer_order))
+        .route(
+            "/api/v1/plugin/retainers/{id}/enabled",
+            post(retainer_enabled),
+        )
         .route("/api/v1/plugin/retainers/{id}/listings", post(upload))
         .route("/api/v1/plugin/retainers/{id}/prices", get(retainer_prices))
         .route("/api/v1/plugin/retainers/snapshots", get(snapshots))
@@ -143,6 +152,27 @@ async fn consent(
         db.set_plugin_upload_consent(&user, id, &request).await?,
     ))
 }
+async fn retainer_order(
+    State(db): State<UltrosDb>,
+    PluginUser(user): PluginUser,
+    Path(id): Path<i64>,
+    Json(request): Json<RetainerGameOrder>,
+) -> Result<Json<Vec<UnverifiedCharacter>>, PluginApiError> {
+    Ok(Json(
+        db.set_plugin_retainer_order(&user, id, &request).await?,
+    ))
+}
+async fn retainer_enabled(
+    State(db): State<UltrosDb>,
+    PluginUser(user): PluginUser,
+    Path(id): Path<i64>,
+    Json(request): Json<RetainerEnabled>,
+) -> Result<Json<Vec<UnverifiedCharacter>>, PluginApiError> {
+    Ok(Json(
+        db.set_plugin_retainer_enabled(&user, id, request.enabled)
+            .await?,
+    ))
+}
 async fn upload(
     State(db): State<UltrosDb>,
     PluginUser(user): PluginUser,
@@ -207,7 +237,7 @@ async fn test_notification(
     Ok(axum::http::StatusCode::ACCEPTED)
 }
 
-fn list_error(error: ultros_db::list_doc::ListDocError) -> PluginApiError {
+pub(super) fn list_error(error: ultros_db::list_doc::ListDocError) -> PluginApiError {
     use ultros_db::plugin::PluginError as P;
     use ultros_db::{list_doc::ListDocError as E, lists::ListError};
     PluginApiError(match error {

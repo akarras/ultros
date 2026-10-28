@@ -16,6 +16,16 @@ The **Retainers** tab shows your uploaded selling lists together, grouped by cha
 
 Visit a summoning bell and open each retainer's **Markets** window to capture its full selling list. Confirmed price edits, including unchanged prices, produce a new snapshot after a fresh game response and stability check. Registration and pause/delete controls live under **Manage uploads**. The plugin does not suggest selling prices or automate game actions; use the game's market data and your preferred price tools. Older plugin versions can still use the legacy price-lookup API.
 
+Retainers follow the website's saved order within each character. The **Ultros** shortcut on the summoning-bell window refreshes missing retainers in one click. Its menu also offers **Use in-game order**, which saves the current bell order on Ultros and in the plugin without changing other characters' assignments or relative order. Display-order maps are bounds/uniqueness checked; an incomplete map cannot be saved as an order.
+
+Under **Manage uploads**, uncheck a retainer to disable it. Disabled retainers stop accepting uploads and disappear from the plugin's normal listing view, website All Listings, and retainer undercut lookups. Their registration, ordering and snapshots remain available; enable them again to restore their saved listings. **Show disabled retainers** lets you inspect retained snapshots. Availability is a separate observation from the last bell visit and never automatically disables a retainer.
+
+## Live lists and shortcuts
+
+The active list subscribes to bearer-authenticated, list-scoped WebSocket change notices from the same list-document event bus used by the website. Notices trigger the existing durable HTTP sync; they do not replace the CRDT merge, checkpoint or recovery protocol. Wakes are coalesced, subscriptions are fenced to their account/device/list instance, reconnects catch up immediately, and periodic HTTP reconciliation remains available if the stream or server feature is unavailable. The UI reports **Live updates** or **Periodic refresh**.
+
+In **Settings → Shortcuts**, turn off **Item right-click shortcuts** to hide all Ultros item-menu actions, including list additions, Search Ultros, and Open Ultros website. This preference takes effect immediately and does not disable the summoning-bell controls. Existing shortcut preferences are preserved by leaving the switch on by default.
+
 ## Build and load
 
 Requires Windows, PowerShell 7, .NET 10, the repository's Rust/MSVC toolchain, and Dalamud API 15 references. The SDK normally finds them in the XIVLauncher Dalamud dev directory.

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 namespace Ultros.Client;
 
 internal static class Protocol
@@ -37,9 +38,12 @@ internal sealed class TokenPair
 }
 public sealed record DeviceSession(string Id, string Label, string AccountId, string AccountName, string[] Scopes,
     DateTimeOffset CreatedAt, DateTimeOffset LastSeenAt, DateTimeOffset ExpiresAt, int? EndpointId);
-public sealed record ObservedRetainer(string ContentId, string Name, int? City);
+public sealed record ObservedRetainer(string ContentId, string Name, int? City,
+    [property:JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] int? GameOrder = null,
+    [property:JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] bool? Available = null);
 public sealed record ObservedCharacter(string ContentId, string Name, int HomeWorld, ObservedRetainer[] Retainers);
-public sealed record PrivateRetainer(string Id, string Name, int? City, bool Registered, long Revision, DateTimeOffset ObservedAt, bool GroupingConflict, int? PublicRetainerId = null);
+public sealed record PrivateRetainer(string Id, string Name, int? City, bool Registered, long Revision, DateTimeOffset ObservedAt, bool GroupingConflict, int? PublicRetainerId = null,
+    int? GameOrder = null, bool? Available = null, bool Disabled = false);
 public sealed record UnverifiedCharacter(string Id, string Name, int HomeWorld, bool Registered, bool Verified,
     bool UploadEnabled, long CaptureEpoch, DateTimeOffset ObservedAt, PrivateRetainer[] Retainers);
 public sealed record PrivateListing(byte Slot, int ItemId, bool Hq, int Quantity, long UnitPrice);

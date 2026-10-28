@@ -15,6 +15,12 @@ fn validate_observation(value: &ObserveCharacter) -> Result<()> {
     }
     for (i, retainer) in value.retainers.iter().enumerate() {
         if !bounded_text(&retainer.name, 64)
+            || retainer.game_order.is_some_and(|order| order > 9)
+            || retainer.game_order.is_some_and(|order| {
+                value.retainers[..i]
+                    .iter()
+                    .any(|r| r.game_order == Some(order))
+            })
             || retainer
                 .city
                 .is_some_and(|c| ![1, 2, 3, 4, 7, 10, 12, 14].contains(&c))
@@ -63,9 +69,9 @@ async fn observe(
         let fingerprint = keys.private_fingerprint(owner, "retainer", &retainer.content_id)?;
         if !create {
             // Upload-only grants may refresh known entries, never add or group one.
-            exec(txn,"UPDATE plugin_retainer SET name=$1,city=$2,observed_at=now() WHERE owner=$3 AND fingerprint=$4 AND registered_character=$5",vec![retainer.name.clone().into(),retainer.city.into(),owner.into(),fingerprint.into(),character.into()]).await?;
+            exec(txn,"UPDATE plugin_retainer SET name=$1,city=$2,observed_at=now(),game_order=coalesce($6,game_order),available=coalesce($7,available) WHERE owner=$3 AND fingerprint=$4 AND registered_character=$5",vec![retainer.name.clone().into(),retainer.city.into(),owner.into(),fingerprint.into(),character.into(),retainer.game_order.map(i16::from).into(),retainer.available.into()]).await?;
         } else {
-            exec(txn,"INSERT INTO plugin_retainer(owner,fingerprint,name,city,observed_character) VALUES($1,$2,$3,$4,$5) ON CONFLICT(owner,fingerprint) DO UPDATE SET name=excluded.name,city=excluded.city,observed_character=excluded.observed_character,observed_at=now()",vec![owner.into(),fingerprint.into(),retainer.name.clone().into(),retainer.city.into(),character.into()]).await?;
+            exec(txn,"INSERT INTO plugin_retainer(owner,fingerprint,name,city,observed_character,game_order,available) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(owner,fingerprint) DO UPDATE SET name=excluded.name,city=excluded.city,observed_character=excluded.observed_character,observed_at=now(),game_order=coalesce(excluded.game_order,plugin_retainer.game_order),available=coalesce(excluded.available,plugin_retainer.available)",vec![owner.into(),fingerprint.into(),retainer.name.clone().into(),retainer.city.into(),character.into(),retainer.game_order.map(i16::from).into(),retainer.available.into()]).await?;
         }
     }
     Ok(character)
@@ -82,9 +88,9 @@ async fn roster(txn: &DatabaseTransaction, owner: i64) -> Result<Vec<UnverifiedC
     {
         let id = row.try_get::<i64>("", "id")?;
         let mut retainers = Vec::new();
-        for r in query(txn,"SELECT * FROM plugin_retainer WHERE owner=$1 AND (observed_character=$2 OR registered_character=$2) ORDER BY name,id",vec![owner.into(),id.into()]).await? {
+        for r in query(txn,"SELECT r.* FROM plugin_retainer r LEFT JOIN owned_retainers o ON o.discord_id=r.owner AND o.retainer_id=r.public_retainer_id WHERE r.owner=$1 AND (r.observed_character=$2 OR r.registered_character=$2) ORDER BY o.weight NULLS FIRST,o.id NULLS LAST,r.name,r.id",vec![owner.into(),id.into()]).await? {
             let assigned=r.try_get::<Option<i64>>("","registered_character")?;
-            retainers.push(PrivateRetainer { id:r.try_get::<i64>("","id")?.to_string(),name:r.try_get("","name")?,city:r.try_get("","city")?,registered:assigned==Some(id),revision:r.try_get("","revision")?,observed_at:r.try_get("","observed_at")?,grouping_conflict:assigned.is_some_and(|a| a!=id),public_retainer_id:r.try_get("","public_retainer_id")? });
+            retainers.push(PrivateRetainer { id:r.try_get::<i64>("","id")?.to_string(),name:r.try_get("","name")?,city:r.try_get("","city")?,registered:assigned==Some(id),revision:r.try_get("","revision")?,observed_at:r.try_get("","observed_at")?,grouping_conflict:assigned.is_some_and(|a| a!=id),public_retainer_id:r.try_get("","public_retainer_id")?,game_order:r.try_get::<Option<i16>>("","game_order")?.map(|v|v as u8),available:r.try_get("","available")?,disabled:r.try_get("","disabled")? });
         }
         result.push(UnverifiedCharacter {
             id: id.to_string(),
@@ -262,6 +268,105 @@ impl UltrosDb {
         txn.commit().await?;
         Ok(result)
     }
+    pub async fn set_plugin_retainer_enabled(
+        &self,
+        principal: &PluginPrincipal,
+        retainer: i64,
+        enabled: bool,
+    ) -> Result<Vec<UnverifiedCharacter>> {
+        let txn = self.db.begin().await?;
+        authorize(&txn, principal, Some("retainers:register")).await?;
+        let row = one(&txn, "SELECT disabled,registered_character FROM plugin_retainer WHERE owner=$1 AND id=$2 AND registered_character IS NOT NULL FOR UPDATE", vec![principal.owner.into(),retainer.into()]).await?;
+        if row.try_get::<bool>("", "disabled")? == enabled {
+            exec(
+                &txn,
+                "UPDATE plugin_retainer SET disabled=$1 WHERE owner=$2 AND id=$3",
+                vec![(!enabled).into(), principal.owner.into(), retainer.into()],
+            )
+            .await?;
+            // Fence captures queued before disabling, including a later re-enable.
+            exec(&txn, "UPDATE plugin_character SET capture_epoch=capture_epoch+1 WHERE owner=$1 AND id=$2", vec![principal.owner.into(),row.try_get::<i64>("", "registered_character")?.into()]).await?;
+        }
+        let result = roster(&txn, principal.owner).await?;
+        txn.commit().await?;
+        Ok(result)
+    }
+
+    pub async fn set_plugin_retainer_order(
+        &self,
+        principal: &PluginPrincipal,
+        character: i64,
+        request: &RetainerGameOrder,
+    ) -> Result<Vec<UnverifiedCharacter>> {
+        if !operation_id(&request.operation_id)
+            || request.retainer_ids.is_empty()
+            || request.retainer_ids.len() > 10
+        {
+            return Err(PluginError::Invalid("invalid_retainer_order"));
+        }
+        let mut ids = std::collections::HashSet::new();
+        for id in &request.retainer_ids {
+            if id
+                .parse::<i64>()
+                .ok()
+                .filter(|value| *value > 0 && value.to_string() == *id)
+                .is_none()
+                || !ids.insert(id)
+            {
+                return Err(PluginError::Invalid("invalid_retainer_order"));
+            }
+        }
+        let hash = digest(
+            &serde_json::to_vec(request)
+                .map_err(|_| PluginError::Invalid("invalid_retainer_order"))?,
+        );
+        let kind = format!("order/{character}");
+        let txn = self.db.begin().await?;
+        authorize(&txn, principal, Some("retainers:register")).await?;
+        if let Some(response) =
+            receipt(&txn, principal.owner, &kind, &request.operation_id, &hash).await?
+        {
+            return serde_json::from_value(response).map_err(|_| PluginError::Storage);
+        }
+        let count=one(&txn,
+            "SELECT count(*)::bigint AS n FROM plugin_retainer p JOIN owned_retainers o ON o.discord_id=p.owner AND o.retainer_id=p.public_retainer_id JOIN jsonb_array_elements_text($3) AS j(id) ON p.id=j.id::bigint WHERE p.owner=$1 AND p.registered_character=$2",
+            vec![principal.owner.into(),character.into(),json!(request.retainer_ids).into()]).await?.try_get::<i64>("","n")?;
+        if count != request.retainer_ids.len() as i64 {
+            return Err(PluginError::Conflict("retainer_registration_required"));
+        }
+        // Reuse this set's existing positions. Retainers outside this character
+        // keep their relative order and every website character assignment.
+        exec(&txn,
+            "WITH current_order AS (
+                SELECT id,row_number() OVER(ORDER BY weight NULLS FIRST,id)-1 AS position FROM owned_retainers WHERE discord_id=$1
+             ), selected AS (
+                SELECT o.id,j.n FROM jsonb_array_elements_text($3) WITH ORDINALITY AS j(id,n)
+                JOIN plugin_retainer p ON p.id=j.id::bigint AND p.owner=$1 AND p.registered_character=$2
+                JOIN owned_retainers o ON o.discord_id=p.owner AND o.retainer_id=p.public_retainer_id
+             ), slots AS (
+                SELECT c.position,row_number() OVER(ORDER BY c.position) AS n FROM current_order c JOIN selected s ON s.id=c.id
+             )
+             UPDATE owned_retainers o SET weight=coalesce(slots.position,c.position)::integer
+             FROM current_order c LEFT JOIN selected s ON s.id=c.id LEFT JOIN slots ON slots.n=s.n
+             WHERE o.id=c.id AND o.discord_id=$1",
+            vec![principal.owner.into(),character.into(),json!(request.retainer_ids).into()]).await?;
+        let result = roster(&txn, principal.owner).await?;
+        exec(
+            &txn,
+            "INSERT INTO plugin_operation(owner,kind,id,body_hash,response) VALUES($1,$2,$3,$4,$5)",
+            vec![
+                principal.owner.into(),
+                kind.into(),
+                request.operation_id.clone().into(),
+                hash.into(),
+                json!(result).into(),
+            ],
+        )
+        .await?;
+        txn.commit().await?;
+        Ok(result)
+    }
+
     pub async fn set_plugin_upload_consent(
         &self,
         principal: &PluginPrincipal,
@@ -325,7 +430,10 @@ impl UltrosDb {
         {
             return serde_json::from_value(response).map_err(|_| PluginError::Storage);
         }
-        let row=one(&txn,"SELECT r.revision,c.upload_enabled,c.capture_epoch FROM plugin_retainer r JOIN plugin_character c ON c.id=r.registered_character AND c.owner=r.owner WHERE r.id=$1 AND r.owner=$2 AND c.registered FOR UPDATE OF r,c",vec![retainer.into(),principal.owner.into()]).await?;
+        let row=one(&txn,"SELECT r.revision,r.disabled,c.upload_enabled,c.capture_epoch FROM plugin_retainer r JOIN plugin_character c ON c.id=r.registered_character AND c.owner=r.owner WHERE r.id=$1 AND r.owner=$2 AND c.registered FOR UPDATE OF r,c",vec![retainer.into(),principal.owner.into()]).await?;
+        if row.try_get::<bool>("", "disabled")? {
+            return Err(PluginError::Conflict("retainer_disabled"));
+        }
         if !row.try_get::<bool>("", "upload_enabled")?
             || row.try_get::<i64>("", "capture_epoch")? != capture.capture_epoch
         {

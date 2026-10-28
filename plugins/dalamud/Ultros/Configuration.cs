@@ -10,6 +10,7 @@ internal sealed class Configuration : IPluginConfiguration
     public bool CaptureEnabled { get; set; } = true;
     public string? CaptureGameBuild { get; set; }
     public bool InventoryProgressEnabled { get; set; }
+    public bool ItemContextMenuEnabled { get; set; } = true;
     public string? InventoryProgressGameBuild { get; set; }
     public int NotificationChatType { get; set; } = (int)Dalamud.Game.Text.XivChatType.Echo;
     public bool NotificationPopup { get; set; }

@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "List changes reach your game client sooner",
+  "blurb": "Changes to your active list on Ultros now reach the game client through live updates. Periodic refreshes keep it in sync when the live connection is unavailable.",
+  "link": "/plugin",
+  "labs": true
+}

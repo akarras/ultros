@@ -17,18 +17,25 @@ var deliveries=new[]{
     new GameDelivery("2",24,"alert","Price alert: Grade 8 Dark Matter","The price on Gilgamesh is now 280 gil. Your target is 300 gil.",new("open_item",10386,null),now.AddHours(1))};
 var view=new ClientView(true,"Connected.","Credentials protected by Windows.",null,"https://ultros.app/plugin/verify",session,[],null,null,true,[],deliveries,null,[],null,scopes,NotificationTransport:"Live alerts",ReadNotificationIds:["1"]);
 var retainerView=view with{Characters=[new("1","Mira Example",63,true,false,true,1,now,[new("1","Copper Finch",1,true,1,now,false,1)])],
-    RetainerSnapshots=[new("1",1,now,now,[new(0,8,false,99,45),new(1,5056,true,1,188330)])]};
+    RetainerSnapshots=[new("1",1,now,now,[new(0,8,false,99,45),new(1,5056,true,1,188330)])],RetainerPreferences=true};
+var disabledView=retainerView with{Characters=[retainerView.Characters[0] with{Retainers=[..retainerView.Characters[0].Retainers,new("2","Silver Wren",1,true,1,now,false,2,1,false,true)]}]};
 foreach(var width in new[]{940,650})
 {
     Render("account",width,Page.Account,view);
     Render("history",width,Page.Notifications,view);
     Render("retainers",width,Page.Retainers,retainerView);
+    Render("retainers-with-disabled",width,Page.Retainers,disabledView);
+    Render("retainer-management",width,Page.Retainers,disabledView);
+    Render("bell-missing",width,Page.Retainers,retainerView);
+    Render("bell-menu",width,Page.Retainers,retainerView);
+    Render("bell-refreshing",width,Page.Retainers,retainerView with{Registering=true});
 }
 Render("connect",940,Page.Account,view with{Connected=false,Status="Disconnected.",Session=null,Inbox=[]});
 Render("approval",650,Page.Account,view with{Connected=false,Status="Waiting for browser approval.",Session=null,Inbox=[],HumanCode="ABCD-EFGH",ApprovalUrl="https://ultros.app/plugin/verify#pair=fixture"});
 Render("empty-history",650,Page.Notifications,view with{Inbox=[]});
 Render("account-large-font",650,Page.Account,view,22);
 Render("retainers-large-font",650,Page.Retainers,retainerView,22);
+Render("retainer-management-large-font",650,Page.Retainers,disabledView,22);
 Console.WriteLine($"Native ImGui previews rendered to {Path.GetFullPath(output)}");
 
 unsafe void Render(string name,int width,Page selected,ClientView state,float fontSize=17)
@@ -38,12 +45,15 @@ unsafe void Render(string name,int width,Page selected,ClientView state,float fo
     {
         ImGui.StyleColorsDark();
         var io=ImGui.GetIO();io.DisplaySize=new(width,700);io.DeltaTime=1f/60;io.IniFilename=null;
-        io.Fonts.AddFontFromFileTTF(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts),"segoeui.ttf"),fontSize,default,null);
+        if(name=="bell-menu")io.MousePos=new(35,195);
+        ushort* glyphs=stackalloc ushort[]{0x20,0xff,0x2000,0x206f,0};
+        io.Fonts.AddFontFromFileTTF(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts),"segoeui.ttf"),fontSize,default,glyphs);
         byte* atlas=null;int aw=0,ah=0;io.Fonts.GetTexDataAsRGBA32(0,&atlas,&aw,&ah);
         io.Fonts.SetTexID(0,new ImTextureID(1));
         var pixels=new byte[aw*ah*4];Marshal.Copy((IntPtr)atlas,pixels,0,pixels.Length);
         var account=new AccountPanel();var history=new NotificationPanel();
         var retainers=new RetainerListingsPanel{ItemName=id=>id==8?"Ice Crystal":"Courtly Lover's Shoes of Healing",WorldName=_=>"Gilgamesh"};
+        var bell=new BellRetainerPanel();
         var log=Path.GetFullPath(Path.Combine(output,$"{name}-{width}.txt"));File.WriteAllText(log,"");
         // Let ImGui settle the child positions before capturing draw data.
         for(var frame=0;frame<3;frame++)
@@ -56,6 +66,17 @@ unsafe void Render(string name,int width,Page selected,ClientView state,float fo
             UiKit.BeginContent();
             account.Track(state,selected==Page.Account);
             if(selected==Page.Account)account.Draw(state);
+            else if(name.StartsWith("bell-",StringComparison.Ordinal)) {
+                UiKit.Heading("Summoning-bell shortcut","Component fixture; the in-game control is anchored to the bell window's header.");
+                var observed=new ObservedCharacter("fixture-character","Mira Example",63,[new("fixture-retainer","Copper Finch",1,0,true)]);
+                if(name=="bell-missing")observed=observed with{Retainers=[..observed.Retainers,new("new-fixture-retainer","New Finch",1,1,true)]};
+                if(name=="bell-menu"&&frame>0)ImGui.OpenPopup("Ultros retainers");
+                bell.Draw(state,observed);
+            }
+            else if(name.StartsWith("retainer-management",StringComparison.Ordinal)) {
+                UiKit.Heading("Manage retainers","Keep saved data when a retainer's contract ends.");
+                foreach(var character in state.Characters)retainers.Manage(character,true);
+            }
             else if(selected==Page.Retainers){UiKit.Heading("Retainers","Your uploaded listings, grouped by character and retainer.");retainers.Draw(state);}
             else history.Draw(state);
             UiKit.EndContent(state.Status);ImGui.End();UiKit.EndStyle();if(frame==2)ImGui.LogFinish();ImGui.Render();
@@ -65,6 +86,9 @@ unsafe void Render(string name,int width,Page selected,ClientView state,float fo
             if(drawn.Contains(secret,StringComparison.Ordinal))throw new Exception($"Private identity or pairing code visible in {name}.");
         if(state.Connected&&selected==Page.Account&&drawn.Contains("Connect to Ultros",StringComparison.Ordinal))
             throw new Exception("A connected account still shows setup instructions.");
+        if(name=="retainers-with-disabled"&&(!drawn.Contains("Show disabled retainers",StringComparison.Ordinal)||drawn.Contains("Silver Wren",StringComparison.Ordinal)))
+            throw new Exception("Disabled retainers were not hidden with a recovery control.");
+        if(name=="bell-missing"&&!drawn.Contains("Refresh retainers (+1)",StringComparison.Ordinal))throw new Exception("Missing retainers did not expose one-click bell refresh.");
         WritePng(ImGui.GetDrawData(),pixels,aw,ah,width,700,Path.Combine(output,$"{name}-{width}.png"));
     }
     finally{ImGui.DestroyContext();}

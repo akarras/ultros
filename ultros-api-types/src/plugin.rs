@@ -146,6 +146,10 @@ pub struct ObservedRetainer {
     pub content_id: String,
     pub name: String,
     pub city: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_order: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -176,6 +180,25 @@ pub struct PrivateRetainer {
     /// A unique existing public market record, never manufactured from game data.
     #[serde(default)]
     pub public_retainer_id: Option<i32>,
+    #[serde(default)]
+    pub game_order: Option<u8>,
+    #[serde(default)]
+    pub available: Option<bool>,
+    #[serde(default)]
+    pub disabled: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetainerEnabled {
+    pub enabled: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetainerGameOrder {
+    pub operation_id: String,
+    pub retainer_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

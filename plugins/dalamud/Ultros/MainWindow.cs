@@ -22,7 +22,7 @@ internal sealed class MainWindow : Window
     private bool localhost;
     private string localOrigin,profile;
     private string search="",scope="";
-    private bool automaticScope=true,openItem,openLists,pendingMarket;
+    private bool automaticScope=true,openItem,openLists,openRetainers,manageRetainers,pendingMarket;
     private int itemId=8,quantity=1,quality;
     private (uint Id,string Name)[] matches=[];
     private readonly Dictionary<string,(int Need,int Acquired)> drafts=[];
@@ -39,7 +39,7 @@ internal sealed class MainWindow : Window
             Test=()=>Submit(worker.TestNotification()),Refresh=()=>Submit(worker.Refresh()),
             MarkRead=id=>Submit(worker.MarkRead(id)),Delete=(session,ids)=>Submit(worker.DeleteNotifications(session,ids)),
             OpenItem=id=>ShowItem(id),OpenList=id=>{Submit(worker.SelectList(id));openLists=true;}};
-        retainerListings=new(){ItemName=ItemName,WorldName=WorldName,Marketable=Marketable,OpenItem=id=>ShowItem(id)};
+        retainerListings=new(){ItemName=ItemName,WorldName=WorldName,Marketable=Marketable,OpenItem=id=>ShowItem(id),SetEnabled=(id,enabled)=>Submit(worker.SetRetainerEnabled(id,enabled))};
         localhost=config.Localhost;localOrigin=config.LocalOrigin;profile=config.Profile;
         Size=new Vector2(940,700);SizeCondition=ImGuiCond.FirstUseEver;
         SizeConstraints=new WindowSizeConstraints{MinimumSize=new Vector2(650,440),MaximumSize=new Vector2(float.MaxValue)};
@@ -58,6 +58,7 @@ internal sealed class MainWindow : Window
     private static bool Marketable(int id)=>id>0&&Plugin.Data.GetExcelSheet<Item>().TryGetRow((uint)id,out var item)&&item.ItemSearchCategory.RowId!=0;
     private static string WorldName(int id)=>Plugin.Data.GetExcelSheet<Lumina.Excel.Sheets.World>().TryGetRow((uint)id,out var world)?world.Name.ToString():$"World #{id}";
     internal void ShowItem(int id,string? priceWorld=null){itemId=id;openItem=true;pendingMarket=true;IsOpen=true;if(priceWorld is not null){scope=priceWorld;automaticScope=false;}}
+    internal void ShowRetainers(){openRetainers=true;manageRetainers=true;IsOpen=true;}
     internal void AddToList(int id,ListEditTarget? destination)
     {
         itemId=id;quality=0;quantity=1;openItem=false;pendingMarket=false;openLists=true;IsOpen=true;
@@ -71,12 +72,13 @@ internal sealed class MainWindow : Window
     {
         if(Interlocked.Exchange(ref browserError,null) is { } browserFailure)uiStatus=browserFailure;
         var v=worker.View;
-        var activatePage=firstDraw||openItem||openLists;
+        var activatePage=firstDraw||openItem||openLists||openRetainers;
         if(automaticScope)scope=v.PriceRegion;
         if(pendingMarket&&scope.Length>0){pendingMarket=false;Submit(worker.FetchItem(itemId,scope));}
         if(firstDraw){page=v.Connected?Page.Market:Page.Account;firstDraw=false;}
         if(openItem){page=Page.Market;openItem=false;}
         if(openLists){page=Page.Lists;openLists=false;}
+        if(openRetainers){page=Page.Retainers;openRetainers=false;}
         UiKit.BeginStyle();
         try
         {
@@ -159,6 +161,7 @@ internal sealed class MainWindow : Window
         if(!v.CanEdit)ImGui.TextWrapped("Choose a writable online list and enable list editing in Account to add items.");
         if(v.Cart is not { } cart){ImGui.TextWrapped("Your online Cart is selected automatically when available. Create an online list named Cart on Ultros, or choose another list here.");return;}
         ImGui.TextUnformatted($"{cart.Name} · {(cart.AwaitingPersist?"UNSAVED — retry save":cart.RecoveryReview?"Recovery paused for review":"Saved locally")}");
+        UiKit.Hint(v.ListTransport);
         if(ImGui.Button("Retry save / sync"))Submit(worker.RetrySave(cartTarget));
         ImGui.SameLine();if(ImGui.Button("Refresh market estimate"))Submit(worker.Estimate(cartTarget));
         if(cart.RecoveryReview)
@@ -240,8 +243,17 @@ internal sealed class MainWindow : Window
         ImGui.EndDisabled();
         UiKit.Inline(240);if(ImGui.Button("View listings on Ultros"))Open(new Uri(new Uri(v.VerificationUrl),"/retainers/listings").AbsoluteUri);
         UiKit.Hint(capture.Status);
+        if(capture.Bell is { } bell)
+        {
+            var saved=ClientWorker.LatestObservation(v.Characters,bell.Character);
+            ImGui.BeginDisabled(!v.RetainerPreferences||!v.Scopes.Contains("retainers:register")||saved is null||RetainerRoster.GameOrder(saved,bell.Character) is null);
+            if(ImGui.Button("Use in-game order"))Submit(worker.UseGameRetainerOrder(bell.Character));
+            ImGui.EndDisabled();
+        }
+        UiKit.Hint("Retainers follow your saved Ultros order. Use in-game order at a summoning bell to update both views.");
         retainerListings.Draw(v);
         ImGui.Spacing();ImGui.Spacing();
+        if(manageRetainers){ImGui.SetNextItemOpen(true,ImGuiCond.Always);manageRetainers=false;}
         if(!ImGui.CollapsingHeader("Manage uploads"))return;
         UploaderControls();
         if(v.RosterStatus.Length>0)ImGui.TextWrapped(v.RosterStatus);
@@ -277,6 +289,7 @@ internal sealed class MainWindow : Window
                         ImGui.EndPopup();
                     }
                 }finally{ImGui.EndDisabled();}
+                retainerListings.Manage(character,v.Connected&&v.RetainerPreferences&&v.Scopes.Contains("retainers:register"));
             }finally{ImGui.PopID();}
         }
     }
@@ -315,6 +328,10 @@ internal sealed class MainWindow : Window
             if(ImGui.SliderInt("Sound effect",ref sound,1,16)){config.NotificationSoundId=sound;Plugin.Interface.SavePluginConfig(config);}
         }
         if(ImGui.Button("Test chat notification"))Plugin.TestNotification();
+        UiKit.Section("Shortcuts");
+        var itemShortcuts=config.ItemContextMenuEnabled;
+        if(ImGui.Checkbox("Item right-click shortcuts",ref itemShortcuts)){config.ItemContextMenuEnabled=itemShortcuts;Plugin.Interface.SavePluginConfig(config);}
+        UiKit.Hint("Show Ultros actions in item menus. Summoning-bell controls work independently.");
         UiKit.Section("List progress");
         var automatic=config.InventoryProgressEnabled;
         var canEnable=capture.Compatible&&capture.GameBuild is not null;

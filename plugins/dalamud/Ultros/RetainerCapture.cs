@@ -1,14 +1,18 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Numerics;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Gui;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using Ultros.Client;
 
 namespace UltrosPlugin;
+
+internal sealed record RetainerBell(ObservedCharacter Character,Vector2 Position,float Scale);
 
 /// <summary>Read-only copies on the framework thread; pointers never leave this class.</summary>
 internal sealed unsafe class RetainerCapture : IDisposable
@@ -23,6 +27,7 @@ internal sealed unsafe class RetainerCapture : IDisposable
     private string? registrationContext;
     private string? editorVisit;
     internal ObservedCharacter? Character { get; private set; }
+    internal RetainerBell? Bell { get; private set; }
     private string status = "Uploader is off.";
     internal string Status
     {
@@ -114,10 +119,12 @@ internal sealed unsafe class RetainerCapture : IDisposable
     private void Reset(string status,bool awaitingWindow=false){gate.Reset();upload=null;if(!awaitingWindow){freshness.Reset();editorVisit=null;}worker.CancelQueuedCaptures();Status=status;}
     private void Update(IFramework framework)
     {
+        UpdateBell();
         if(DateTimeOffset.UtcNow<nextRead)return;
         nextRead=DateTimeOffset.UtcNow.AddMilliseconds(250);
         if(!Compatible){Character=null;Reset($"Capture disabled: {CompatibilityStatus}");return;}
         if(GameBuild is null){Character=null;Reset("Capture disabled: ffxivgame.ver could not be read beside the game executable. Check the game installation and reload the plugin.");return;}
+        if(config.CaptureGameBuild!=GameBuild){Character=null;Reset("Game build changed. Enable the uploader for the current build in Settings.");return;}
         if(!Plugin.Player.IsLoaded||Plugin.Player.ContentId==0||Plugin.Condition[ConditionFlag.BetweenAreas])
         {Character=null;Reset("Log in and visit a summoning bell.");return;}
         try
@@ -126,21 +133,33 @@ internal sealed unsafe class RetainerCapture : IDisposable
             var manager=RetainerManager.Instance();
             if(manager==null||!manager->IsReady){Character=null;Reset("Visit a summoning bell to load your retainer roster.");return;}
             var roster=new List<ObservedRetainer>();
-            foreach(var retainer in manager->Retainers)
+            var bellList=Plugin.GameGui.GetAddonByName("RetainerList",1);
+            var bellRosterVisible=!bellList.IsNull&&bellList.IsReady&&bellList.IsVisible;
+            var entries=manager->Retainers.ToArray();
+            var display=RetainerRoster.DisplaySlots(entries.Select(r=>r.RetainerId).ToArray(),manager->DisplayOrder.ToArray());
+            var slots=display??Enumerable.Range(0,10).Where(i=>entries[i].RetainerId!=0).ToArray();
+            foreach(var slot in slots)
             {
+                var retainer=entries[slot];
                 if(retainer.RetainerId==0)continue;
                 var name=retainer.NameString;
                 if(name.Length is <1 or >64)throw new InvalidOperationException();
-                roster.Add(new(retainer.RetainerId.ToString(),name,(int)retainer.Town==0?null:(int)retainer.Town));
+                roster.Add(new(retainer.RetainerId.ToString(),name,(int)retainer.Town==0?null:(int)retainer.Town,display is null?null:roster.Count,bellRosterVisible?retainer.Available:null));
             }
             if(roster.Count>10||Plugin.Player.ContentId!=player)throw new InvalidOperationException();
             Character=new(player.ToString(),Plugin.Player.CharacterName,(int)Plugin.Player.HomeWorld.RowId,roster.ToArray());
             var view=worker.View;
             var registrationVisit=$"{view.Session?.Id}/{Character.ContentId}";
             if(registrationContext!=registrationVisit){registrationContext=registrationVisit;nextRegistration=DateTimeOffset.MinValue;}
-            if(Plugin.Condition[ConditionFlag.OccupiedSummoningBell]&&view.Connected&&view.Scopes.Contains("retainers:register")&&DateTimeOffset.UtcNow>=nextRegistration
-                &&ClientWorker.NeedsRegistration(view.Characters,Character)&&worker.Register(Character))
-                nextRegistration=DateTimeOffset.UtcNow.AddSeconds(15);
+            if(Plugin.Condition[ConditionFlag.OccupiedSummoningBell]&&view.Connected&&view.Scopes.Contains("retainers:register")&&DateTimeOffset.UtcNow>=nextRegistration)
+            {
+                // Metadata changes must not re-claim a retainer the user
+                // deliberately removed on the website. The bell action is an
+                // explicit refresh; automatic known-roster updates only observe.
+                var offered=ClientWorker.NeedsRegistration(view.Characters,Character)?worker.Register(Character)
+                    :view.RetainerPreferences&&RetainerRoster.Changed(view.Characters,Character)&&worker.Observe(Character);
+                if(offered)nextRegistration=DateTimeOffset.UtcNow.AddSeconds(15);
+            }
             if(!config.CaptureEnabled){Reset("Listing capture is off on this game client. Click Enable listing uploader to send listings from Markets.");return;}
             if(config.CaptureGameBuild!=GameBuild){Reset("Game build changed. Enable the uploader for the current build in Settings.");return;}
             if(!view.Connected||!view.Scopes.Contains("retainers:upload")){Reset("Connect and approve retainer uploads first.");return;}
@@ -155,6 +174,7 @@ internal sealed unsafe class RetainerCapture : IDisposable
             var privateMatches=matches[0].Retainers.Where(r=>r.Registered&&!r.GroupingConflict&&r.Name==active->NameString).ToArray();
             if(privateMatches.Length!=1){Reset("Register the active retainer to this character first.");return;}
             var privateRetainer=privateMatches[0];
+            if(privateRetainer.Disabled){Reset("This retainer is disabled. Enable it in Manage uploads when you want to use it again.");return;}
             var inventory=InventoryManager.Instance();
             if(inventory==null){Reset("Retainer inventory unavailable.");return;}
             var container=inventory->GetInventoryContainer(InventoryType.RetainerMarket);
@@ -191,5 +211,17 @@ internal sealed unsafe class RetainerCapture : IDisposable
         }
         catch {Character=null;Reset("Capture stopped because the game data was inconsistent. Revisit the retainer.");}
     }
-    public void Dispose(){Plugin.Framework.Update-=Update;Plugin.GameGui.AgentUpdate-=OnAgentUpdate;Plugin.AddonLifecycle.UnregisterListener(OnSellingListUpdate);Plugin.AddonLifecycle.UnregisterListener(OnPriceEditorOpened);Plugin.AddonLifecycle.UnregisterListener(OnPriceEditorClosed);Character=null;editorVisit=null;gate.Reset();freshness.Reset();worker.CancelQueuedCaptures();}
+    private void UpdateBell()
+    {
+        Bell=null;
+        if(!Compatible||GameBuild is null||config.CaptureGameBuild!=GameBuild||!Plugin.Player.IsLoaded
+            ||!Plugin.Condition[ConditionFlag.OccupiedSummoningBell]||Character is not { } current
+            ||current.ContentId!=Plugin.Player.ContentId.ToString())return;
+        var addon=Plugin.GameGui.GetAddonByName("RetainerList",1);
+        if(addon.IsNull||!addon.IsReady||!addon.IsVisible)return;
+        var unit=(AtkUnitBase*)addon.Address;
+        if(unit->RootNode==null||unit->RootNode->Width<300||!float.IsFinite(unit->Scale)||unit->Scale is <0.5f or >4)return;
+        Bell=new(current,new(unit->X+180*unit->Scale,unit->Y+5*unit->Scale),unit->Scale);
+    }
+    public void Dispose(){Plugin.Framework.Update-=Update;Plugin.GameGui.AgentUpdate-=OnAgentUpdate;Plugin.AddonLifecycle.UnregisterListener(OnSellingListUpdate);Plugin.AddonLifecycle.UnregisterListener(OnPriceEditorOpened);Plugin.AddonLifecycle.UnregisterListener(OnPriceEditorClosed);Character=null;Bell=null;editorVisit=null;gate.Reset();freshness.Reset();worker.CancelQueuedCaptures();}
 }

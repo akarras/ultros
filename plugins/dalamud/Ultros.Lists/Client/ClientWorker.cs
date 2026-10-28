@@ -10,7 +10,7 @@ public sealed record ClientView(bool Connected, string Status, string StorageMod
     DeviceSession? Session, ListAccess[] Lists, int? SelectedList, CartView? Cart, bool CanEdit, UnverifiedCharacter[] Characters,
     GameDelivery[] Inbox, MarketView? Market, SaleRow[] Sales, CartEstimate? Estimate, string[] Scopes, string PriceRegion = "", string NotificationTransport = "Polling", string RosterStatus = "", bool Registering = false, string? ApprovalUrl = null,
     RetainerPriceLookup? RetainerPrices = null, string RetainerPriceStatus = "", Guid? CartInstance = null, long RecoveryRevision = 0, string[]? ReadNotificationIds = null,
-    RetainerSnapshot[]? RetainerSnapshots = null, bool RefreshingRetainers = false)
+    RetainerSnapshot[]? RetainerSnapshots = null, bool RefreshingRetainers = false, string ListTransport = "Periodic refresh", bool RetainerPreferences = false)
 {
     public override string ToString() => $"ClientView {{ Connected = {Connected}, pairing credentials redacted }}";
 }
@@ -31,6 +31,7 @@ public sealed class ClientWorker : IDisposable
     private UnverifiedCharacter[] characters = [];
     private RetainerSnapshot[]? retainerSnapshots;
     private bool refreshingRetainers;
+    private bool retainerPreferences;
     private NotificationHistory? history;
     private readonly HashSet<string> queuedToasts = [];
     private MarketView? market;
@@ -39,6 +40,11 @@ public sealed class ClientWorker : IDisposable
     private WorldDirectory? worlds;
     private string priceRegion="";
     private NotificationFeed? notificationFeed;
+    private ListFeed? listFeed;
+    private sealed record ListFeedTarget(string Device,string Account,int List,Guid Instance);
+    private ListFeedTarget? listFeedTarget;
+    private int listFeedGeneration,listWake,listFeedReady,listFeedFailures;
+    private DateTimeOffset nextListFeed;
     private DateTimeOffset nextFeed;
     private int notificationWake,feedReady;
     private string status = "Starting…";
@@ -85,6 +91,7 @@ public sealed class ClientWorker : IDisposable
         try{CloseCart();}
         catch(Exception){status="Disconnect paused: unsaved list edits could not be saved. Retry saving, then disconnect. Your connection and edits are still available.";return;}
         await StopFeed();
+        await StopListFeed();
         await connection!.Disconnect();lists=[];characters=[];history=null;loadedDevice=null;estimate=null;rosterStatus="";
         ClearRetainerPrices();
         while(toasts.TryDequeue(out _)){}queuedToasts.Clear();CancelQueuedCaptures();
@@ -97,6 +104,7 @@ public sealed class ClientWorker : IDisposable
         // Keep the live document if its checkpoint cannot be written. This also
         // fences a new device/account from replacing unsaved work during pairing.
         if(cart?.Document.View.AwaitingPersist==true)cart.Save();
+        Interlocked.Increment(ref listFeedGeneration);
         cart?.Dispose();cart=null;
     }
     private bool SessionReady()=>connection?.Connected==true&&loadedDevice==connection.Session?.Id;
@@ -210,11 +218,17 @@ public sealed class ClientWorker : IDisposable
         estimate=await connection!.Send<CartEstimate>(HttpMethod.Get,$"/api/v1/plugin/lists/{cart!.Id}/estimate",null,stop.Token);
         status="Market estimate refreshed. Prices are not reserved; whole stacks may cost more.";
     });
-    public bool Observe(ObservedCharacter observation)=>Offer(async()=>{
-        characters=await connection!.Send<UnverifiedCharacter[]>(HttpMethod.Post,"/api/v1/plugin/characters/observe",observation,stop.Token);
-        rosterStatus=status="Character saved as an unverified game observation. Save its retainers to add them to your account.";
-    });
-    internal static UnverifiedCharacter? LatestObservation(IEnumerable<UnverifiedCharacter> roster,ObservedCharacter observation)=>
+    public bool Observe(ObservedCharacter observation)
+    {
+        var expected=View.Session;
+        if(!View.Connected||expected is null||!expected.Scopes.Contains("retainers:register"))return false;
+        return Offer(async()=>{
+            if(!SameNotificationSession(expected)||!connection!.HasScope("retainers:register"))return;
+            characters=await connection.Send<UnverifiedCharacter[]>(HttpMethod.Post,"/api/v1/plugin/characters/observe",ObservationForServer(observation),stop.Token);
+            rosterStatus=status=LatestObservation(characters,observation)?.Registered==true?"Retainer details refreshed.":"Character saved. Save its retainers to add them to your account.";
+        });
+    }
+    public static UnverifiedCharacter? LatestObservation(IEnumerable<UnverifiedCharacter> roster,ObservedCharacter observation)=>
         roster.Where(c=>c.Name==observation.Name&&c.HomeWorld==observation.HomeWorld)
             .OrderByDescending(c=>c.ObservedAt).FirstOrDefault();
     public static bool NeedsRegistration(IEnumerable<UnverifiedCharacter> roster,ObservedCharacter observation)
@@ -233,7 +247,7 @@ public sealed class ClientWorker : IDisposable
                 ||connection.Session.AccountId!=session.AccountId||!connection.HasScope("retainers:register"))return;
             registering=true;rosterStatus="Saving retainers to your Ultros account…";Publish();
             try {
-                var request=new {operation_id=Guid.NewGuid().ToString("N"),character=observation};
+                var request=new {operation_id=Guid.NewGuid().ToString("N"),character=ObservationForServer(observation)};
                 characters=await connection!.Send<UnverifiedCharacter[]>(HttpMethod.Post,"/api/v1/plugin/retainers/register",request,stop.Token);
                 var saved=LatestObservation(characters,observation);
                 var count=observation.Retainers.Count(observed=>saved?.Retainers.Any(r=>r.Registered&&r.Name==observed.Name)==true);
@@ -245,6 +259,34 @@ public sealed class ClientWorker : IDisposable
             finally{registering=false;}
         });
     }
+    public bool UseGameRetainerOrder(ObservedCharacter observation)
+    {
+        var expected=View.Session;
+        if(!View.Connected||!View.RetainerPreferences||expected is null||!expected.Scopes.Contains("retainers:register"))return false;
+        return Offer(async()=>{
+            if(!SameNotificationSession(expected)||!connection!.HasScope("retainers:register"))return;
+            var saved=LatestObservation(characters,observation);
+            if(saved is null||RetainerRoster.GameOrder(saved,observation) is not { } ids) {
+                status=rosterStatus="Refresh this character's retainers at the summoning bell first.";return;
+            }
+            characters=await connection.Send<UnverifiedCharacter[]>(HttpMethod.Post,$"/api/v1/plugin/characters/{PositiveId(saved.Id)}/order",
+                new{operation_id=Guid.NewGuid().ToString("N"),retainer_ids=ids},stop.Token);
+            status=rosterStatus="Retainer order saved. Ultros and this client now follow the in-game order.";
+        });
+    }
+    public bool SetRetainerEnabled(string retainer,bool enabled)
+    {
+        var expected=View.Session;
+        if(!View.Connected||!View.RetainerPreferences||expected is null||!expected.Scopes.Contains("retainers:register"))return false;
+        return Offer(async()=>{
+            if(!SameNotificationSession(expected)||!connection!.HasScope("retainers:register"))return;
+            CancelQueuedCaptures();
+            characters=await connection.Send<UnverifiedCharacter[]>(HttpMethod.Post,$"/api/v1/plugin/retainers/{PositiveId(retainer)}/enabled",new{enabled},stop.Token);
+            status=rosterStatus=enabled?"Retainer enabled. Revisit Markets to upload its current listings.":"Retainer disabled. Saved listings are kept and can be shown again by enabling it.";
+        });
+    }
+    private ObservedCharacter ObservationForServer(ObservedCharacter observation)=>retainerPreferences?observation:
+        observation with{Retainers=observation.Retainers.Select(r=>r with{GameOrder=null,Available=null}).ToArray()};
     public bool UploadConsent(string character,bool enabled,bool delete=false)=>Offer(async()=>{
         characters=await connection!.Send<UnverifiedCharacter[]>(HttpMethod.Post,$"/api/v1/plugin/characters/{PositiveId(character)}/uploads",new{enabled,delete_snapshots=delete},stop.Token);
         if(delete){var ids=characters.Where(c=>c.Id==character).SelectMany(c=>c.Retainers).Select(r=>r.Id).ToHashSet();retainerSnapshots=retainerSnapshots?.Where(s=>!ids.Contains(s.RetainerId)).ToArray();}
@@ -259,7 +301,8 @@ public sealed class ClientWorker : IDisposable
         var accepted=Offer(async()=>{try{
             if(generation!=Volatile.Read(ref captureGeneration)||session is null||!connection!.Connected
                 ||connection.Session?.AccountId!=session.AccountId||connection.Session?.Id!=session.Id
-                ||DateTimeOffset.UtcNow-capture.ObservedAt>TimeSpan.FromMinutes(10))return;
+                ||DateTimeOffset.UtcNow-capture.ObservedAt>TimeSpan.FromMinutes(10)
+                ||characters.SelectMany(c=>c.Retainers).Any(r=>r.Id==retainer&&r.Disabled))return;
             var receipt=await connection.Send<CaptureReceipt>(HttpMethod.Post,$"/api/v1/plugin/retainers/{PositiveId(retainer)}/listings",capture,stop.Token);
             // The POST is acknowledged even if the following roster read fails.
             // Publish its revision before the game thread can queue the next capture.
@@ -332,6 +375,7 @@ public sealed class ClientWorker : IDisposable
     }
     private async Task ReadRetainers()
     {
+        retainerPreferences=await connection!.RetainerPreferences(stop.Token);
         characters=await connection!.Send<UnverifiedCharacter[]>(HttpMethod.Get,"/api/v1/plugin/characters",null,stop.Token);
         // Preserve the existing rows while refreshing; the table never clears
         // or changes columns as each retainer loads.
@@ -390,6 +434,7 @@ public sealed class ClientWorker : IDisposable
     {
         if(connection?.Connected!=true)return;
         if(connection.HasScope("lists:read"))lists=await connection.Send<ListAccess[]>(HttpMethod.Get,"/api/v1/plugin/lists",null,stop.Token);
+        else lists=[];
         if(cart is null)
         {
             int? remembered=null;
@@ -426,6 +471,54 @@ public sealed class ClientWorker : IDisposable
         if(retry.Length>0)_=await connection.Send<bool>(HttpMethod.Post,"/api/v1/plugin/notifications/ack",new{ids=retry},stop.Token);
         nextNotifications=DateTimeOffset.UtcNow.AddMilliseconds(Math.Clamp(batch.PollAfterMs,1000,60_000));
     }
+    private ListFeedTarget? CurrentListFeedTarget()=>SessionReady()&&connection!.HasScope("lists:read")&&cart is not null&&!cart.AccessDenied
+        ?new(connection.Session!.Id,connection.Session.AccountId,cart.Id,cart.InstanceId):null;
+    private async Task StopListFeed()
+    {
+        Interlocked.Increment(ref listFeedGeneration);
+        if(listFeed is not null) {
+            listFeed.Dispose();
+            try{await listFeed.Completion;}catch(Exception){}
+            listFeed=null;
+        }
+        listFeedTarget=null;nextListFeed=DateTimeOffset.MinValue;
+        Interlocked.Exchange(ref listWake,0);Interlocked.Exchange(ref listFeedReady,0);
+    }
+    private void DelayListFeed()
+    {
+        listFeedFailures=Math.Min(listFeedFailures+1,5);
+        nextListFeed=DateTimeOffset.UtcNow.AddSeconds(Math.Min(30,1<<listFeedFailures));
+    }
+    private async Task UpdateListFeed()
+    {
+        var target=CurrentListFeedTarget();
+        if(target!=listFeedTarget) {await StopListFeed();listFeedFailures=0;}
+        if(target is null)return;
+        if(listFeed?.Completion.IsCompleted==true) {await StopListFeed();listFeedTarget=target;nextCart=DateTimeOffset.MinValue;DelayListFeed();}
+        if(listFeed is null&&DateTimeOffset.UtcNow>=nextListFeed)
+        {
+            listFeedTarget=target;
+            var generation=Volatile.Read(ref listFeedGeneration);
+            try {
+                listFeed=await connection!.SubscribeList(target.List,()=>{
+                    if(generation!=Volatile.Read(ref listFeedGeneration))return;
+                    Interlocked.Exchange(ref listWake,1);Interlocked.Exchange(ref listFeedReady,1);
+                },stop.Token);
+                if(listFeed is null)nextListFeed=DateTimeOffset.UtcNow.AddSeconds(60);
+            }
+            catch(OperationCanceledException)when(stop.IsCancellationRequested){throw;}
+            catch(ApiFailure e)when(e.Status is 401 or 426){throw;}
+            catch(Exception){DelayListFeed();}
+        }
+        if(target==CurrentListFeedTarget()&&Interlocked.Exchange(ref listWake,0)!=0)
+        {
+            listFeedFailures=0;estimate=null;
+            // Refresh permission/name metadata as well as document changes.
+            // Retainer HTTP refreshes remain on their independent schedule.
+            lists=await connection!.Send<ListAccess[]>(HttpMethod.Get,"/api/v1/plugin/lists",null,stop.Token);
+            nextCart=DateTimeOffset.MinValue;
+        }
+    }
     private async Task StopFeed()
     {
         if(notificationFeed is not null)
@@ -453,16 +546,18 @@ public sealed class ClientWorker : IDisposable
     {
         var connected=connection?.Connected==true;
         var ready=SessionReady();
-        var visibleCart=ready?cart:null;
+        var visibleCart=ready&&connection!.HasScope("lists:read")?cart:null;
+        var liveLists=ready&&listFeedTarget is not null&&listFeedTarget==CurrentListFeedTarget()&&Volatile.Read(ref listFeedReady)!=0;
         var showPrices=connected&&connection!.HasScope("retainers:read")
             &&pricesDevice==connection.Session?.Id&&pricesAccount==connection.Session?.AccountId;
         var visibleStatus=pendingInventory is { } pending&&cart?.Document.View.AwaitingPersist==true
             ? $"Inventory progress paused after {pending.Batch.Applied:N0} units; retry saving to finish the retained batch."
             : status;
         Volatile.Write(ref view,new ClientView(connected,visibleStatus,connection?.StorageMode??"",connection?.HumanCode,connection?.VerificationUrl??endpoint.At("/plugin/verify").AbsoluteUri,
-            connection?.Session,ready?lists:[],visibleCart?.Id,visibleCart?.Document.View,CanEdit(),ready?characters:[],ready?history?.Entries??[]:[],market,sales,ready?estimate:null,connection?.Session?.Scopes??[],priceRegion,Volatile.Read(ref feedReady)!=0?"Live notifications (SSE)":"Polling fallback",ready?rosterStatus:"",registering,connection?.ApprovalUrl,
+            connection?.Session,ready&&connection!.HasScope("lists:read")?lists:[],visibleCart?.Id,visibleCart?.Document.View,CanEdit(),ready&&connection!.HasScope("retainers:read")?characters:[],ready?history?.Entries??[]:[],market,sales,ready?estimate:null,connection?.Session?.Scopes??[],priceRegion,Volatile.Read(ref feedReady)!=0?"Live notifications (SSE)":"Polling fallback",ready?rosterStatus:"",registering,connection?.ApprovalUrl,
             showPrices?retainerPrices:null,showPrices?retainerPriceStatus:"",visibleCart?.InstanceId,visibleCart?.RecoveryRevision??0,ready?history?.ReadIds:[],
-            ready&&connection!.HasScope("retainers:read")?retainerSnapshots:null,ready&&refreshingRetainers));
+            ready&&connection!.HasScope("retainers:read")?retainerSnapshots:null,ready&&refreshingRetainers,
+            liveLists?"Live updates":"Periodic refresh",ready&&retainerPreferences));
     }
     private async Task<Connection> AcquireConnection()
     {
@@ -500,19 +595,22 @@ public sealed class ClientWorker : IDisposable
                     {
                         if(loadedDevice!=connection.Session!.Id){
                             CancelQueuedInventory();await StopFeed();
+                            await StopListFeed();
                             // A failed save can delay the transition. Stop displaying
                             // the previous device's queued messages during that pause.
                             while(toasts.TryDequeue(out _)){}queuedToasts.Clear();
-                            CloseCart();estimate=null;rosterStatus="";ClearRetainerPrices();LoadInbox();nextLists=nextNotifications=DateTimeOffset.MinValue;
+                            CloseCart();lists=[];characters=[];estimate=null;rosterStatus="";ClearRetainerPrices();LoadInbox();nextLists=nextNotifications=DateTimeOffset.MinValue;
                         }
                         if(DateTimeOffset.UtcNow>=nextLists)await RefreshAccount();
                         if(connection.HasScope("notifications:read"))await UpdateFeed();
+                        await UpdateListFeed();
                         if(DateTimeOffset.UtcNow>=nextNotifications&&connection.HasScope("notifications:read"))await PollNotifications();
                         if(DateTimeOffset.UtcNow>=nextCart&&cart is not null){await SyncCart();nextCart=DateTimeOffset.UtcNow.AddSeconds(60);}
                     }
                     else {
                         if(connection.CanRestore)status=connection.Status;
                         if(notificationFeed is not null)await StopFeed();
+                        if(listFeed is not null)await StopListFeed();
                     }
                 }
                 catch(OperationCanceledException)when(stop.IsCancellationRequested){throw;}
@@ -525,6 +623,7 @@ public sealed class ClientWorker : IDisposable
         finally
         {
             await StopFeed();
+            await StopListFeed();
             try{if(cart?.Document.View.AwaitingPersist==true)cart.Save();}catch{status="Final cart save failed; the last checkpoint is preserved.";}
             cart?.Dispose();cart=null;
             if(connection is not null){await connection.RevokeMemoryOnlyOnExit();connection.Dispose();}
