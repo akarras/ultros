@@ -507,6 +507,21 @@ async fn plugin_permission(
 }
 
 impl UltrosDb {
+    /// Validate a live game subscription without loading its document payload.
+    pub async fn plugin_list_readable(
+        &self,
+        principal: &crate::plugin::PluginPrincipal,
+        list_id: i32,
+    ) -> Result<(), ListDocError> {
+        let txn = self.db.begin().await?;
+        crate::plugin::auth::authorize(&txn, principal, Some("lists:read")).await?;
+        if plugin_permission(&txn, list_id, principal.owner).await? < ListPermission::Read {
+            return Err(ListError::Forbidden("Insufficient permissions to read list").into());
+        }
+        txn.commit().await?;
+        Ok(())
+    }
+
     pub async fn plugin_list_snapshot(
         &self,
         principal: &crate::plugin::PluginPrincipal,

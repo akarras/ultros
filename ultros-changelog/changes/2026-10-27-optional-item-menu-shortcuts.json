@@ -1,0 +1,8 @@
+{
+  "category": "improvements",
+  "importance": "low",
+  "title": "Choose whether Ultros appears in item menus",
+  "blurb": "Turn off all Ultros item right-click shortcuts with one setting, while keeping the summoning-bell controls available.",
+  "link": "/plugin",
+  "labs": true
+}

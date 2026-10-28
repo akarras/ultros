@@ -22,8 +22,13 @@ internal static class WorkerChecks
         internal readonly List<string> NotificationReads=[];
         internal readonly List<string[]> PairingScopes=[];
         internal readonly List<ObservedCharacter> Registrations=[];
+        internal readonly List<ObservedCharacter> Observations=[];
         internal UnverifiedCharacter[] RegisteredCharacters=[];
         internal RetainerSnapshot[] Snapshots=[];
+        internal string[] Features=[];
+        internal ListAccess[] Lists=[];
+        internal readonly ConcurrentDictionary<int,SyncReply> SyncReplies=new();
+        internal readonly ConcurrentDictionary<int,int> SyncCounts=new();
         internal bool ReadRoster;
         internal HttpStatusCode? Failure=HttpStatusCode.ServiceUnavailable;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancellation)
@@ -35,7 +40,12 @@ internal static class WorkerChecks
                 return new(HttpStatusCode.NoContent);
             }
             if(route=="/api/v1/plugin/capabilities")
-                return new(HttpStatusCode.OK){Content=new StringContent("{\"protocol\":1}")};
+                return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(new{protocol=1,features=Features}))};
+            if(route.StartsWith("/api/v1/plugin/lists/",StringComparison.Ordinal)&&route.EndsWith("/sync",StringComparison.Ordinal)) {
+                var id=int.Parse(route.Split('/')[5],System.Globalization.CultureInfo.InvariantCulture);
+                SyncCounts.AddOrUpdate(id,1,(_,prior)=>prior+1);
+                return SyncReplies.TryGetValue(id,out var reply)?new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(reply,Protocol.Json))}:new(HttpStatusCode.ServiceUnavailable){Content=new StringContent("{}")};
+            }
             if(route=="/api/v1/plugin/session/reauthorize") {
                 using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellation));
                 PairingScopes.Add(body.RootElement.GetProperty("scopes").EnumerateArray().Select(value=>value.GetString()!).ToArray());
@@ -48,8 +58,13 @@ internal static class WorkerChecks
                 Registrations.Add(body.RootElement.GetProperty("character").Deserialize<ObservedCharacter>(Protocol.Json)!);
                 return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(RegisteredCharacters,Protocol.Json))};
             }
+            if(route=="/api/v1/plugin/characters/observe") {
+                using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellation));
+                Observations.Add(body.RootElement.Deserialize<ObservedCharacter>(Protocol.Json)!);
+                return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(RegisteredCharacters,Protocol.Json))};
+            }
             if(request.Method==HttpMethod.Get&&request.RequestUri!.AbsolutePath=="/api/v1/plugin/lists")
-                return new(HttpStatusCode.OK){Content=new StringContent("[]")};
+                return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(Lists,Protocol.Json))};
             if(request.Method==HttpMethod.Get&&request.RequestUri!.AbsolutePath=="/api/v1/plugin/characters")
                 return ReadRoster?new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(RegisteredCharacters,Protocol.Json))}:new(HttpStatusCode.ServiceUnavailable){Content=new StringContent("{}")};
             if(request.Method==HttpMethod.Get&&route=="/api/v1/plugin/retainers/snapshots")
@@ -58,6 +73,47 @@ internal static class WorkerChecks
             Bodies.Add(await request.Content!.ReadAsStringAsync(cancellation));
             return new(Failure??HttpStatusCode.OK){Content=new StringContent(Failure is null?"{\"revision\":1,\"hash\":\"fixture\"}":"{\"error\":\"service_unavailable\"}",Encoding.UTF8,"application/json")};
         }
+    }
+    internal static async Task LiveLists()
+    {
+        using var fixture=new Fixture();await fixture.Connect();
+        using var first=Document.Open();first.Edit(new{kind="add",item_id=8,quality="nq",need=10});
+        using var second=Document.Open();second.Edit(new{kind="add",item_id=9,quality="nq",need=20});
+        var handler=fixture.Handler;handler.Features=["list-stream"];
+        handler.Lists=[new(new(1,123,"Cart",JsonSerializer.SerializeToElement<object?>(null)),"Owner",null),new(new(2,123,"Other",JsonSerializer.SerializeToElement<object?>(null)),"Owner",null)];
+        handler.SyncReplies[1]=new(first.View.Version,"snapshot",Convert.ToBase64String(first.Export()));
+        handler.SyncReplies[2]=new(second.View.Version,"snapshot",Convert.ToBase64String(second.Export()));
+        var opened=new ConcurrentQueue<(int List,Action Wake,TaskCompletionSource End)>();
+        var transport=(Transport)typeof(Connection).GetField("transport",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(fixture.Connection)!;
+        transport.ListListener=async(_,list,wake,cancellation)=>{
+            var end=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            opened.Enqueue((list,wake,end));wake();await end.Task.WaitAsync(cancellation);
+        };
+        await fixture.OnWorker(()=>Set(fixture.Worker,"lists",handler.Lists));
+        Require(fixture.Worker.SelectList(1),"Live list selection was not queued.");
+        await Until(()=>opened.Count==1&&fixture.Worker.View.Cart?.Rows.Length==1&&fixture.Worker.View.ListTransport=="Live updates");
+        var original=opened.First();
+        await fixture.OnWorker(()=>Set(fixture.Worker,"nextCart",DateTimeOffset.UtcNow.AddHours(1)));
+        first.Edit(new{kind="add",item_id=10,quality="hq",need=30});
+        handler.SyncReplies[1]=new(first.View.Version,"snapshot",Convert.ToBase64String(first.Export()));
+        var before=handler.SyncCounts[1];for(var i=0;i<200;i++)original.Wake();
+        await Until(()=>fixture.Worker.View.Cart?.Rows.Length==2);
+        Require(handler.SyncCounts[1]<=before+3,"A notification burst caused an unbounded sync storm.");
+        Require(fixture.Worker.SelectList(2),"Second list selection was not queued.");
+        await Until(()=>opened.Count>=2&&fixture.Worker.View.SelectedList==2&&fixture.Worker.View.Cart?.Rows.Single().ItemId==9);
+        await fixture.OnWorker(()=>Set(fixture.Worker,"nextCart",DateTimeOffset.UtcNow.AddHours(1)));
+        before=handler.SyncCounts[2];original.Wake();await Task.Delay(400);
+        Require(handler.SyncCounts[2]==before,"An old list's wake crossed into the newly selected cart.");
+        var current=opened.Last();current.End.SetResult();
+        await Until(()=>fixture.Worker.View.ListTransport=="Periodic refresh");
+        await Until(()=>opened.Count>=3&&fixture.Worker.View.ListTransport=="Live updates");
+        await fixture.OnWorker(()=>{
+            handler.Lists=[];fixture.SetSession(fixture.Session with{Id="new-list-device",AccountId="456",Scopes=[]});
+        });
+        await Until(()=>fixture.Worker.View.Session?.AccountId=="456"&&fixture.Worker.View.Cart is null);
+        before=handler.SyncCounts.Values.Sum();original.Wake();current.Wake();await Task.Delay(400);
+        Require(handler.SyncCounts.Values.Sum()==before,"A retired account's WebSocket caused another HTTP sync.");
+        Console.WriteLine("PASS: immediate worker list refresh, burst coalescing, reconnect/fallback and list/account fencing.");
     }
     internal static async Task DefaultSetup()
     {
@@ -98,13 +154,22 @@ internal static class WorkerChecks
         await Until(()=>worker.View.RosterStatus.StartsWith("Saved",StringComparison.Ordinal));
         Require(fixture.Handler.Registrations.Count==1&&fixture.Handler.Registrations[0].ContentId==observation.ContentId
             &&!worker.View.Characters.Single().UploadEnabled,"Registration lost the observation or changed a saved pause.");
+        var detailed=observation with{Retainers=[observation.Retainers[0] with{GameOrder=0,Available=true}]};
+        Require(worker.Observe(detailed),"Legacy-compatible observation was not queued.");
+        await Until(()=>fixture.Handler.Observations.Count==1);
+        Require(fixture.Handler.Observations[0].Retainers[0].GameOrder is null,"An old server received unsupported roster fields.");
+        await fixture.OnWorker(()=>Set(worker,"retainerPreferences",true));
+        Require(worker.Observe(detailed),"Roster metadata observation was not queued.");
+        await Until(()=>fixture.Handler.Observations.Count==2);
+        Require(fixture.Handler.Observations[1].Retainers[0].GameOrder==0&&fixture.Handler.Registrations.Count==1,"Known metadata was re-registered instead of observed.");
 
         await fixture.OnWorker(()=>{
             Require(worker.Register(observation),"Bound registration was not queued.");
+            Require(worker.Observe(detailed),"Bound observation was not queued.");
             fixture.SetSession(authorized with{Id="another-device",AccountId="456"});
         });
         await fixture.OnWorker(()=>{});
-        Require(fixture.Handler.Registrations.Count==1,"A queued game observation crossed to a different account.");
+        Require(fixture.Handler.Registrations.Count==1&&fixture.Handler.Observations.Count==2,"A queued game observation crossed to a different account.");
         Console.WriteLine("PASS: default connection permissions, customized grants, automatic retainer registration decisions, saved pauses and account-bound registration.");
     }
     private sealed class Fixture : IDisposable

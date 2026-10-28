@@ -121,7 +121,7 @@ pub(super) async fn capabilities(
     let current = bundle(&config, None).await;
     Json(serde_json::json!({
         "protocol": PROTOCOL_VERSION,
-        "features": ["device-authorization","lists-2","private-retainers","game-notifications","notification-stream"],
+        "features": ["device-authorization","lists-2","private-retainers","game-notifications","notification-stream","list-stream","retainer-preferences"],
         "minimum_client_version": config.minimum_version.to_string(),
         "latest_client_version": current.map(|c| c.release.version),
         "update_url": format!("{}/plugin", config.origin),

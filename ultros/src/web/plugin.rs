@@ -3,6 +3,7 @@
 pub(crate) mod browser;
 mod flows;
 mod key_file;
+mod list_stream;
 mod notifications;
 mod releases;
 pub(crate) fn wake_notifications(owner: i64) {

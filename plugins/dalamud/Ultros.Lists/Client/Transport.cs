@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.WebSockets;
 using System.Text.Json;
 namespace Ultros.Client;
 
@@ -79,6 +80,25 @@ internal sealed class Transport : IDisposable
         if(response.Content.Headers.ContentType?.MediaType!="text/event-stream")throw new IOException("Unexpected notification stream content type.");
         await using var stream=await response.Content.ReadAsStreamAsync(cancellation).ConfigureAwait(false);
         await NotificationFeed.Read(stream,wake,cancellation).ConfigureAwait(false);
+    }
+    internal Func<string,int,Action,CancellationToken,Task>? ListListener { get; set; }
+    internal async Task ListenList(string access,int list,Action wake,CancellationToken cancellation)
+    {
+        if(ListListener is { } listener){await listener(access,list,wake,cancellation).ConfigureAwait(false);return;}
+        var address=new UriBuilder(Endpoint.At($"/api/v1/plugin/lists/{list}/stream"));
+        address.Scheme=address.Scheme=="https"?"wss":"ws";
+        using var socket=new ClientWebSocket();
+        socket.Options.SetRequestHeader("Authorization","Bearer "+access);
+        socket.Options.SetRequestHeader("X-Ultros-Client-Version",ClientBuild.Version.ToString(4));
+        socket.Options.SetRequestHeader("X-Ultros-Protocol-Version",ClientBuild.ServerProtocol.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        socket.Options.KeepAliveInterval=TimeSpan.FromSeconds(20);
+        socket.Options.KeepAliveTimeout=TimeSpan.FromSeconds(30);
+        using var invoker=new HttpMessageInvoker(new SocketsHttpHandler{AllowAutoRedirect=false,UseCookies=false});
+        using(var handshake=CancellationTokenSource.CreateLinkedTokenSource(cancellation)) {
+            handshake.CancelAfter(requestTimeout);
+            await socket.ConnectAsync(address.Uri,invoker,handshake.Token).ConfigureAwait(false);
+        }
+        await ListFeed.Read(socket,list,wake,cancellation).ConfigureAwait(false);
     }
     private static async Task<byte[]> ReadBounded(HttpContent content, int limit, CancellationToken cancellation)
     {

@@ -6,29 +6,36 @@ namespace UltrosPlugin.Ui;
 /// <summary>One stable listing view for all retainers; no per-retainer lookup window.</summary>
 internal sealed class RetainerListingsPanel
 {
+    private bool showDisabled;
     internal Func<int,string> ItemName { get; init; }=id=>$"Item #{id}";
     internal Func<int,string> WorldName { get; init; }=id=>$"World #{id}";
     internal Func<int,bool> Marketable { get; init; }=_=>false;
     internal Action<int> OpenItem { get; init; }=_=>{};
+    internal Action<string,bool> SetEnabled { get; init; }=(_,_)=>{};
 
     internal void Draw(ClientView view)
     {
         if(!view.Connected){UiKit.Empty("Connect to see your listings","Open Account to connect this game client to Ultros.");return;}
         if(!view.Scopes.Contains("retainers:read")){UiKit.Empty("Retainer access is not approved","Enable View retainer listings in Account and approve the updated connection.");return;}
         if(view.Characters.Length==0){UiKit.Empty("No retainers saved yet","Visit a summoning bell. Your characters and retainers sync automatically.");return;}
+        if(view.Characters.SelectMany(c=>c.Retainers).Any(r=>r.Disabled))ImGui.Checkbox("Show disabled retainers",ref showDisabled);
         foreach(var character in view.Characters)
         {
+            var visible=character.Retainers.Where(r=>showDisabled||!r.Disabled).ToArray();
+            if(visible.Length==0)continue;
             ImGui.PushID(character.Id);
             try
             {
                 UiKit.Section($"{character.Name} · {WorldName(character.HomeWorld)}");
                 if(!character.UploadEnabled)ImGui.TextUnformatted("Uploads paused for this character.");
-                foreach(var retainer in character.Retainers)
+                foreach(var retainer in visible)
                 {
                     ImGui.PushID(retainer.Id);
                     try
                     {
                         ImGui.Spacing();ImGui.SetWindowFontScale(1.15f);ImGui.TextUnformatted(retainer.Name);ImGui.SetWindowFontScale(1);
+                        if(retainer.Disabled)UiKit.Hint("Disabled · saved listings kept; uploads paused.");
+                        else if(retainer.Available==false)UiKit.Hint("Unavailable in game at the last bell visit. Disable it in Manage uploads if you no longer use it.");
                         if(retainer.GroupingConflict){UiKit.Hint("Saved under another character. Review Manage uploads below.");continue;}
                         if(!retainer.Registered){UiKit.Hint("Waiting for this retainer to sync with your account.");continue;}
                         var snapshot=view.RetainerSnapshots?.FirstOrDefault(s=>s.RetainerId==retainer.Id);
@@ -38,6 +45,21 @@ internal sealed class RetainerListingsPanel
                         Listings(snapshot.Listings);
                     }finally{ImGui.PopID();}
                 }
+            }finally{ImGui.PopID();}
+        }
+    }
+    internal void Manage(UnverifiedCharacter character,bool canManage)
+    {
+        UiKit.Hint("Disable retainers you no longer use. Listings and upload data are kept so you can enable them again.");
+        foreach(var retainer in character.Retainers)
+        {
+            ImGui.PushID(retainer.Id);
+            try {
+                ImGui.BeginDisabled(!canManage||!retainer.Registered||retainer.GroupingConflict);
+                var enabled=!retainer.Disabled;
+                if(ImGui.Checkbox($"{retainer.Name.Replace('#','＃')}##enabled",ref enabled))SetEnabled(retainer.Id,enabled);
+                ImGui.EndDisabled();
+                if(retainer.Available==false){ImGui.SameLine();UiKit.Muted("Unavailable in game");}
             }finally{ImGui.PopID();}
         }
     }

@@ -12,6 +12,7 @@ if (args.Length != 1) throw new ArgumentException("Pass the directory containing
 try { using var unavailable = Document.Open(); throw new Exception("Document opened before ABI verification."); }
 catch (InvalidOperationException) { }
 Native.Configure(args[0]);
+await Ultros.Lists.Smoke.WorkerChecks.LiveLists();
 await Ultros.Lists.Smoke.WorkerChecks.CartLifecycle();
 Ultros.Lists.Smoke.CartCommandChecks.Run();
 Ultros.Lists.Smoke.InventoryProgressChecks.NativeDeltas();

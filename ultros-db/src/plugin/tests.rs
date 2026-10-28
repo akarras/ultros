@@ -64,7 +64,7 @@ async fn apply_market_board(
     db.update_listings(listings, item, world, version).await
 }
 
-async fn pair(
+pub(super) async fn pair(
     db: &UltrosDb,
     keys: &PluginKeys,
     owner: i64,
@@ -331,6 +331,8 @@ async fn plugin_connected_flows_postgres() {
             content_id: "222222".into(),
             name: "FixtureRetainer".into(),
             city: Some(1),
+            game_order: None,
+            available: None,
         }],
     };
     let observed = db
@@ -951,6 +953,8 @@ async fn plugin_connected_flows_postgres() {
             content_id: "333333".into(),
             name: public_name,
             city: Some(1),
+            game_order: None,
+            available: None,
         }],
         ..observation.clone()
     };
@@ -1262,10 +1266,12 @@ async fn plugin_connected_flows_postgres() {
         "resource write permission does not replace the lists:write scope"
     );
     assert!(db.plugin_list_snapshot(&read_only, list.id).await.is_ok());
+    assert!(db.plugin_list_readable(&read_only, list.id).await.is_ok());
     db.unshare_list_from_user(list.id, owner, other)
         .await
         .unwrap();
     assert!(db.plugin_list_snapshot(&read_only, list.id).await.is_err());
+    assert!(db.plugin_list_readable(&read_only, list.id).await.is_err());
 
     // Private registration can create unknown or client-reported city metadata.
     // Both must yield to Universalis, without later private observations undoing it.
@@ -1279,6 +1285,8 @@ async fn plugin_connected_flows_postgres() {
                 content_id: format!("80000{index}"),
                 name: name.clone(),
                 city,
+                game_order: None,
+                available: None,
             }],
         };
         db.register_plugin_retainers(

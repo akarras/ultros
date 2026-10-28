@@ -24,6 +24,8 @@ internal static class ClientChecks
         RetainerPriceChecks.Run();
         HistoryPrivacyChecks.Run();
         CaptureUploadChecks.Run();
+        RetainerRosterChecks.Run();
+        await ListFeedChecks.Run();
         await WorkerChecks.Uploads();
         await WorkerChecks.RetainerListings();
         await WorkerChecks.Notifications();

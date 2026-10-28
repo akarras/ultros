@@ -4,7 +4,7 @@ use crate::plugin::{exec, query};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde_json::Value as Json;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use ultros_api_types::plugin::PrivateListing;
 use ultros_api_types::user::{
     RetainerCharacter, RetainerListing, RetainerListingId, UserRetainerListings, UserRetainers,
@@ -74,6 +74,11 @@ fn listing_view(
 }
 
 impl UltrosDb {
+    pub async fn disabled_game_retainer_ids(&self, owner: i64) -> Result<HashSet<i32>> {
+        query(&self.db,"SELECT public_retainer_id FROM plugin_retainer WHERE owner=$1 AND disabled AND registered_character IS NOT NULL AND public_retainer_id IS NOT NULL",vec![owner.into()]).await?
+            .into_iter().map(|r|r.try_get("","public_retainer_id").map_err(Into::into)).collect()
+    }
+
     pub async fn website_retainers(&self, owner: i64) -> Result<UserRetainers> {
         let observed = self.registered_game_characters(owner).await?;
         let mut game_characters = HashMap::new();
@@ -89,7 +94,8 @@ impl UltrosDb {
                 }
             }
         }
-        let mut groups = BTreeMap::<_, Vec<_>>::new();
+        let mut groups =
+            BTreeMap::<_, Vec<(ultros_api_types::user::OwnedRetainer, Retainer)>>::new();
         for (character, retainers) in self
             .get_all_owned_retainers_and_character(owner as u64)
             .await?
@@ -106,12 +112,16 @@ impl UltrosDb {
                     .push((owned.into(), retainer.into()));
             }
         }
+        for retainers in groups.values_mut() {
+            retainers.sort_by_key(|(owned, _)| (owned.weight, owned.id));
+        }
         Ok(UserRetainers {
             retainers: groups.into_iter().collect(),
         })
     }
 
     pub async fn website_retainer_listings(&self, owner: i64) -> Result<UserRetainerListings> {
+        let disabled = self.disabled_game_retainer_ids(owner).await?;
         let groups = self.website_retainers(owner).await?;
         let mut public: HashMap<_, _> = self
             .get_retainer_listings_for_discord_user(owner as u64)
@@ -148,6 +158,9 @@ impl UltrosDb {
         for (character, retainers) in groups.retainers {
             let mut listings = Vec::new();
             for (_, retainer) in retainers {
+                if disabled.contains(&retainer.id) {
+                    continue;
+                }
                 let public = public.remove(&retainer.id).unwrap_or_default();
                 let rows = if let Some(snapshot) = snapshots.get_mut(&retainer.id) {
                     let before = snapshot.confirmed_slots.len();
@@ -164,7 +177,9 @@ impl UltrosDb {
                 };
                 listings.push((retainer, rows));
             }
-            result.push((character, listings));
+            if !listings.is_empty() {
+                result.push((character, listings));
+            }
         }
         Ok(UserRetainerListings { retainers: result })
     }

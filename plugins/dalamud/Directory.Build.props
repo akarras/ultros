@@ -1,8 +1,8 @@
 <Project>
   <PropertyGroup>
     <!-- One checked-in version for every managed assembly and release package. -->
-    <UltrosPluginVersion>1.5.0.2</UltrosPluginVersion>
-    <UltrosPluginReleaseNotes>Keep the familiar tabs, with uploaded listings grouped by retainer and clearer account permissions. Account details stay hidden until revealed. Delete notifications or clear this client's history. Fresh market responses keep complete listings current even when a confirmed price is unchanged.</UltrosPluginReleaseNotes>
+    <UltrosPluginVersion>1.6.0.0</UltrosPluginVersion>
+    <UltrosPluginReleaseNotes>Retainers follow your Ultros order, with a summoning-bell shortcut to refresh missing retainers and use the game's order. Disable retainers you no longer use while keeping their saved data. Connected lists receive live updates, and all item right-click shortcuts can be turned off in Settings.</UltrosPluginReleaseNotes>
     <Version>$(UltrosPluginVersion)</Version>
     <AssemblyVersion>$(UltrosPluginVersion)</AssemblyVersion>
     <FileVersion>$(UltrosPluginVersion)</FileVersion>

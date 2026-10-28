@@ -384,6 +384,7 @@ impl UltrosDb {
         &self,
         discord_user: u64,
     ) -> Result<DiscordUserRetainerListings> {
+        let disabled = self.disabled_game_retainer_ids(discord_user as i64).await?;
         let mut owned_retainers = owned_retainers::Entity::find()
             .find_also_related(retainer::Entity)
             .filter(owned_retainers::Column::DiscordId.eq(discord_user as i64))
@@ -395,6 +396,9 @@ impl UltrosDb {
         let mut retainers = Vec::with_capacity(owned_retainers.len());
 
         for (owned, retainer) in owned_retainers {
+            if disabled.contains(&owned.retainer_id) {
+                continue;
+            }
             let r = retainer.ok_or_else(|| anyhow::Error::msg("Retainer not found"))?;
             valid_owned.push(owned);
             retainers.push(r);

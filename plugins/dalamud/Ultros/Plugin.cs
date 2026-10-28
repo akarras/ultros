@@ -31,6 +31,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly MainWindow window;
     private readonly GameNotifications gameNotifications;
     private readonly ItemShortcuts itemShortcuts;
+    private readonly BellRetainerShortcut bellShortcut;
     private MergeLabWindow? lab;
     private static Action? openLab;
 
@@ -47,7 +48,8 @@ public sealed class Plugin : IDalamudPlugin
         inventoryProgress=new InventoryAcquisition(worker,capture,config);
         window=new MainWindow(worker,capture,inventoryProgress,config);
         gameNotifications=new GameNotifications(worker,config,capture);
-        itemShortcuts=new ItemShortcuts(worker,window,endpoint);
+        itemShortcuts=new ItemShortcuts(worker,window,endpoint,config);
+        bellShortcut=new BellRetainerShortcut(worker,capture,window);
         testNotifications=gameNotifications.Test;
         windows.AddWindow(window);
         openLab=ShowLab;
@@ -81,7 +83,7 @@ public sealed class Plugin : IDalamudPlugin
         Interface.UiBuilder.OpenMainUi -= Toggle;
         Interface.UiBuilder.OpenConfigUi -= Toggle;
         Commands.RemoveHandler("/ultros");if(UltrosEndpoint.LocalhostAvailable)Commands.RemoveHandler("/ultroslab");
-        itemShortcuts.Dispose();gameNotifications.Dispose();inventoryProgress.Dispose();capture.Dispose();worker.Dispose();openLab=null;testNotifications=null;
+        bellShortcut.Dispose();itemShortcuts.Dispose();gameNotifications.Dispose();inventoryProgress.Dispose();capture.Dispose();worker.Dispose();openLab=null;testNotifications=null;
         windows.RemoveAllWindows();
         lab?.Dispose();
     }
