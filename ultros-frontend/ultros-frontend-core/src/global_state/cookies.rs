@@ -205,7 +205,6 @@ pub fn get_cookies() -> Option<CookieJar> {
     // use gloo::utils::document;
     use wasm_bindgen::JsCast;
     use web_sys::{HtmlDocument, window};
-    let mut cookie_jar = CookieJar::new();
     let cookie = window()?
         .document()?
         .dyn_into::<HtmlDocument>()
@@ -213,13 +212,7 @@ pub fn get_cookies() -> Option<CookieJar> {
         .cookie()
         .ok()
         .unwrap_or_default();
-    for cookie in Cookie::split_parse_encoded(cookie) {
-        match cookie {
-            Ok(o) => cookie_jar.add_original(o),
-            Err(e) => log::error!("Error parsing cookie {e:?}"),
-        }
-    }
-    Some(cookie_jar)
+    Some(parse_cookie_header(cookie))
 }
 
 #[cfg(feature = "ssr")]
@@ -228,19 +221,38 @@ pub fn get_cookies() -> Option<CookieJar> {
     let request_parts = use_context::<Parts>().expect("Request parts not provided");
     let cookie = request_parts.headers.get("Cookie")?;
     let value = cookie.to_str().ok()?.to_string();
+    Some(parse_cookie_header(value))
+}
+
+/// Parses a `Cookie` header (or `document.cookie`) into a jar, skipping any
+/// fragment that isn't a `name=value` pair. The header is client-controlled —
+/// scanners send junk, and third-party scripts can leave a bare token in
+/// `document.cookie` — so a bad fragment is a warning, not an error report,
+/// and must not cost the visitor the cookies that did parse.
+fn parse_cookie_header(header: String) -> CookieJar {
     let mut cookie_jar = CookieJar::new();
-    for cookie in Cookie::split_parse_encoded(value) {
+    for cookie in Cookie::split_parse_encoded(header) {
         match cookie {
             Ok(o) => cookie_jar.add_original(o),
-            Err(e) => log::error!("Error parsing cookie {e:?}"),
+            Err(e) => log::warn!("Skipping unparseable cookie fragment: {e:?}"),
         }
     }
-    Some(cookie_jar)
+    cookie_jar
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fragment without `=` (`MissingPair`) is skipped; its neighbours survive.
+    #[test]
+    fn a_malformed_fragment_keeps_the_rest_of_the_jar() {
+        let jar = parse_cookie_header("HIDE_ADS=true; garbage; theme=dark".to_string());
+
+        assert_eq!(jar.get("HIDE_ADS").map(Cookie::value), Some("true"));
+        assert_eq!(jar.get("theme").map(Cookie::value), Some("dark"));
+        assert_eq!(jar.iter().count(), 2);
+    }
 
     /// Renders a jar's pending writes the way `set_cookies` does: this is the
     /// exact string assigned to `document.cookie`, and the exact value a
