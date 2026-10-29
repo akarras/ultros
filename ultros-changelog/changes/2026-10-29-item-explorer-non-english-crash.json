@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Item Explorer category links work in every language",
+  "blurb": "Opening an older Item Explorer category link with the site set to a language other than English no longer stops the page from loading. Category names in the explorer now show in your language straight away.",
+  "link": "/items"
+}

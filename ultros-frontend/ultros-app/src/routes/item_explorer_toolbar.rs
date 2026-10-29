@@ -15,14 +15,25 @@ use leptos_router::hooks::{use_location, use_params_map};
 use xiv_gen::{ClassJob, ItemSearchCategoryId};
 
 /// Resolve the active top-level category group (1=Weapons, 2=Armor,
-/// 3=Items, 4=Housing, 5=Job Sets) from route params. Both args come
+/// 3=Items, 4=Housing, 5=Job Sets) from route params. Both route args come
 /// directly from `ParamsMap::get(...).as_deref()` at the call site, so
 /// this helper has no router dependency and is trivial to unit-test.
-pub(crate) fn active_group_from_route(jobset: Option<&str>, category: Option<&str>) -> Option<u8> {
+///
+/// `data` must be the pack the rest of the render reads — `tracked_data()`,
+/// never `xiv_gen_db::data()`. On the server `data()` is the process-wide
+/// English pack while the page itself renders the visitor's locale, so a
+/// legacy name-keyed link (`/items/category/Tables`) resolved to Housing on
+/// the server and to nothing in a Chinese client: the toolbar rendered a
+/// collapsed Housing accordion on one side and an open Weapons one on the
+/// other, and tachys panicked hydrating it.
+pub(crate) fn active_group_from_route(
+    data: &xiv_gen::Data,
+    jobset: Option<&str>,
+    category: Option<&str>,
+) -> Option<u8> {
     if jobset.is_some() {
         return Some(5);
     }
-    let data = xiv_gen_db::data();
     resolve_category_param(data, category?).map(|cat| cat.category)
 }
 
@@ -34,21 +45,27 @@ pub(crate) fn active_group_from_route(jobset: Option<&str>, category: Option<&st
 /// gets the viewport. An unresolvable category counts as "names nothing"
 /// and opens, so a dead link lands on a usable picker.
 ///
-/// Both args come straight from `ParamsMap::get(...).as_deref()` at the call
-/// site, so this stays router-free and unit-testable like its neighbour.
-pub(crate) fn accordion_open_for_route(jobset: Option<&str>, category: Option<&str>) -> bool {
-    active_group_from_route(jobset, category).is_none()
+/// Router-free and unit-testable like its neighbour, and takes the same
+/// per-locale `data` for the same reason.
+pub(crate) fn accordion_open_for_route(
+    data: &xiv_gen::Data,
+    jobset: Option<&str>,
+    category: Option<&str>,
+) -> bool {
+    active_group_from_route(data, jobset, category).is_none()
 }
 
 /// Return the search categories that belong to a non-job group
 /// (1..=4), sorted by `cat.order`. Each entry is
 /// `(display_name, ItemSearchCategoryId)`. Group 5 returns empty —
-/// jobs use `job_chips_sorted` instead.
-pub(crate) fn category_chips_for_group(group: u8) -> Vec<(&'static str, ItemSearchCategoryId)> {
+/// jobs use `job_chips_sorted_in` instead.
+pub(crate) fn category_chips_for_group(
+    data: &'static xiv_gen::Data,
+    group: u8,
+) -> Vec<(&'static str, ItemSearchCategoryId)> {
     if group == 5 || group == 0 {
         return Vec::new();
     }
-    let data = xiv_gen_db::data();
     let mut rows: Vec<(u8, &'static str, ItemSearchCategoryId)> = data
         .item_search_categorys
         .iter()
@@ -63,6 +80,10 @@ pub(crate) fn category_chips_for_group(group: u8) -> Vec<(&'static str, ItemSear
 /// filter used by the original sidebar `JobsList` and the existing
 /// `test_job_filtering` test: only jobs with `job_index > 0` or
 /// `doh_dol_job_index >= 0`, and with a non-empty abbreviation or name.
+///
+/// Test-only: it reads the process-wide pack, which is English on the
+/// server. Rendering code goes through `job_chips_sorted_in(tracked_data())`.
+#[cfg(test)]
 pub(crate) fn job_chips_sorted() -> Vec<&'static ClassJob> {
     job_chips_sorted_in(xiv_gen_db::data())
 }
@@ -156,7 +177,11 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
 
     let active_group = Memo::new(move |_| {
         let p = params();
-        active_group_from_route(p.get("jobset").as_deref(), p.get("category").as_deref())
+        active_group_from_route(
+            tracked_data(),
+            p.get("jobset").as_deref(),
+            p.get("category").as_deref(),
+        )
     });
 
     // Default selection: whatever the route says, else Weapons (1).
@@ -171,7 +196,11 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
     // click has to force it open.
     let open = RwSignal::new({
         let p = params.get_untracked();
-        accordion_open_for_route(p.get("jobset").as_deref(), p.get("category").as_deref())
+        accordion_open_for_route(
+            tracked_data(),
+            p.get("jobset").as_deref(),
+            p.get("category").as_deref(),
+        )
     });
 
     // Collapse onto any navigation; re-open on the bare /items route.
@@ -290,7 +319,7 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                     let groups: Vec<(Option<String>, Vec<NavLink>)> = if group == 5 {
                         // Job sets: jobs bucketed by role.
                         role_buckets(
-                            job_chips_sorted()
+                            job_chips_sorted_in(data)
                                 .into_iter()
                                 .map(|job| {
                                     // Label stays localized (a German player
@@ -321,7 +350,7 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                         // Weapons: categories bucketed by the role of their
                         // associated job.
                         role_buckets(
-                            category_chips_for_group(1)
+                            category_chips_for_group(data, 1)
                                 .into_iter()
                                 .map(|(name, id)| {
                                     let role = data
@@ -345,7 +374,7 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                         )
                     } else {
                         // Armor, Items, Housing: one headerless section.
-                        let links: Vec<NavLink> = category_chips_for_group(group)
+                        let links: Vec<NavLink> = category_chips_for_group(data, group)
                             .into_iter()
                             .map(|(name, id)| NavLink {
                                 label: name.to_string(),
@@ -380,12 +409,18 @@ mod tests {
 
     #[test]
     fn active_group_is_none_on_bare_items_route() {
-        assert_eq!(active_group_from_route(None, None), None);
+        assert_eq!(
+            active_group_from_route(xiv_gen_db::data(), None, None),
+            None
+        );
     }
 
     #[test]
     fn active_group_for_jobset_route_is_five() {
-        assert_eq!(active_group_from_route(Some("PLD"), None), Some(5));
+        assert_eq!(
+            active_group_from_route(xiv_gen_db::data(), Some("PLD"), None),
+            Some(5)
+        );
     }
 
     #[test]
@@ -393,7 +428,7 @@ mod tests {
         // "Pugilist's Arms" is a weapon (category = 1) in the xiv data.
         // Percent-encoded as it would arrive from the router.
         assert_eq!(
-            active_group_from_route(None, Some("Pugilist%27s%20Arms")),
+            active_group_from_route(xiv_gen_db::data(), None, Some("Pugilist%27s%20Arms")),
             Some(1),
         );
     }
@@ -411,7 +446,7 @@ mod tests {
             .min_by_key(|cat| cat.key_id.0)
             .expect("weapons group must have categories");
         assert_eq!(
-            active_group_from_route(None, Some(&weapon.key_id.0.to_string())),
+            active_group_from_route(xiv_gen_db::data(), None, Some(&weapon.key_id.0.to_string())),
             Some(1),
             "a numeric category id must select the category's own group",
         );
@@ -420,27 +455,61 @@ mod tests {
     #[test]
     fn active_group_for_unknown_category_id_is_none() {
         // Well past the end of the sheet; must not select a group.
-        assert_eq!(active_group_from_route(None, Some("999999")), None);
+        assert_eq!(
+            active_group_from_route(xiv_gen_db::data(), None, Some("999999")),
+            None
+        );
     }
 
     #[test]
     fn active_group_for_unknown_category_is_none() {
         assert_eq!(
-            active_group_from_route(None, Some("Not%20A%20Real%20Category")),
+            active_group_from_route(xiv_gen_db::data(), None, Some("Not%20A%20Real%20Category")),
             None,
         );
+    }
+
+    /// GlitchTip "hydrate_async ... unreachable" on
+    /// `/items/category/Tables?lang=cn`: a legacy English name resolves under
+    /// the English pack and under no other, so the group (and with it the
+    /// whole accordion) depends on which pack the caller hands in. The server
+    /// used to resolve against the process-wide English pack while the
+    /// Chinese client resolved against its own, and the two renders built
+    /// different accordions. Both sides now pass the render's own pack.
+    #[test]
+    fn legacy_name_param_follows_the_pack_it_is_given() {
+        let en = xiv_gen_db::data_for(xiv_gen::Language::En);
+        let cn = xiv_gen_db::data_for(xiv_gen::Language::Cn);
+        assert_eq!(active_group_from_route(en, None, Some("Tables")), Some(4));
+        assert_eq!(active_group_from_route(cn, None, Some("Tables")), None);
+        assert!(!accordion_open_for_route(en, None, Some("Tables")));
+        assert!(accordion_open_for_route(cn, None, Some("Tables")));
+        // The chip labels come from the same pack, so a Chinese render shows
+        // Chinese category names rather than the server's English ones.
+        let tables = ItemSearchCategoryId(69);
+        let label = |data| {
+            category_chips_for_group(data, 4)
+                .into_iter()
+                .find(|(_, id)| *id == tables)
+                .map(|(name, _)| name)
+        };
+        assert_eq!(label(en), Some("Tables"));
+        assert_ne!(label(cn), Some("Tables"));
     }
 
     #[test]
     fn jobset_wins_over_category_when_both_present() {
         // Defensive — if the router ever produces both, Job Sets takes
         // precedence (matches the original `active_category_group` order).
-        assert_eq!(active_group_from_route(Some("PLD"), Some("Sword")), Some(5),);
+        assert_eq!(
+            active_group_from_route(xiv_gen_db::data(), Some("PLD"), Some("Sword")),
+            Some(5),
+        );
     }
 
     #[test]
     fn weapon_chips_are_sorted_by_order_and_non_empty() {
-        let chips = category_chips_for_group(1);
+        let chips = category_chips_for_group(xiv_gen_db::data(), 1);
         assert!(!chips.is_empty(), "weapons group must have chips");
 
         // Re-fetch the source-of-truth order from xiv data to assert sort.
@@ -462,7 +531,7 @@ mod tests {
     #[test]
     fn job_sets_group_returns_no_category_chips() {
         // Group 5 is rendered as job chips, not category chips.
-        assert!(category_chips_for_group(5).is_empty());
+        assert!(category_chips_for_group(xiv_gen_db::data(), 5).is_empty());
     }
 
     #[test]
@@ -508,12 +577,16 @@ mod tests {
     fn accordion_starts_open_on_bare_items_route() {
         // Nothing is selected yet, so the picker is the whole point of the
         // page — show it expanded.
-        assert!(accordion_open_for_route(None, None));
+        assert!(accordion_open_for_route(xiv_gen_db::data(), None, None));
     }
 
     #[test]
     fn accordion_starts_closed_for_a_jobset_deep_link() {
-        assert!(!accordion_open_for_route(Some("PLD"), None));
+        assert!(!accordion_open_for_route(
+            xiv_gen_db::data(),
+            Some("PLD"),
+            None
+        ));
     }
 
     #[test]
@@ -527,6 +600,7 @@ mod tests {
             .min_by_key(|cat| cat.key_id.0)
             .expect("weapons group must have categories");
         assert!(!accordion_open_for_route(
+            xiv_gen_db::data(),
             None,
             Some(&weapon.key_id.0.to_string()),
         ));
@@ -536,7 +610,11 @@ mod tests {
     fn accordion_starts_closed_for_a_legacy_name_param() {
         // Links minted before the switch to ids are percent-encoded names
         // and still resolve; they name a category, so they collapse too.
-        assert!(!accordion_open_for_route(None, Some("Pugilist%27s%20Arms"),));
+        assert!(!accordion_open_for_route(
+            xiv_gen_db::data(),
+            None,
+            Some("Pugilist%27s%20Arms"),
+        ));
     }
 
     #[test]
@@ -544,7 +622,11 @@ mod tests {
         // A dead link selects nothing, so falling back to the expanded
         // picker is the useful answer rather than a collapsed header
         // labelled with a category that does not exist.
-        assert!(accordion_open_for_route(None, Some("999999")));
+        assert!(accordion_open_for_route(
+            xiv_gen_db::data(),
+            None,
+            Some("999999")
+        ));
     }
 
     #[test]
@@ -554,7 +636,7 @@ mod tests {
         // produce an accordion that expands to nothing.
         for group in 1..=4u8 {
             assert!(
-                !category_chips_for_group(group).is_empty(),
+                !category_chips_for_group(xiv_gen_db::data(), group).is_empty(),
                 "group {group} must have at least one category chip",
             );
         }
