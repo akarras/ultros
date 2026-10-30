@@ -702,6 +702,12 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
         })
     });
     let planning = crate::recipe_work::use_planning(request);
+    // Handed to `<Transition set_pending>` as the signal itself, never through
+    // `SignalSetter::map`: a mapped setter runs its closure while holding the
+    // request arena's read lock, and setting a signal inside it re-reads that
+    // lock. During SSR the Transition's effect runs on another worker than the
+    // render, so a render queueing an arena write between the two reads
+    // deadlocks both threads on std's writer-preferring RwLock for good.
     let planning_pending = RwSignal::new(false);
     let planned = Memo::new(move |_| {
         planning
@@ -843,7 +849,7 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             <section aria-label="World visit comparison" class="space-y-2">
                 <div class="flex flex-wrap justify-between gap-2"><h2 class="font-semibold text-lg">{t!(i18n, recipe_planner_route_heading)}</h2><span class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, recipe_planner_route_subheading)}</span></div>
                 <div class="grid grid-cols-2 xl:grid-cols-5 gap-2">
-                <Transition set_pending=SignalSetter::map(move |pending|planning_pending.set(pending)) fallback=move ||view!{<div class="panel rounded-xl p-5 animate-pulse">"Loading ingredient markets…"</div>}>
+                <Transition set_pending=planning_pending fallback=move ||view!{<div class="panel rounded-xl p-5 animate-pulse">"Loading ingredient markets…"</div>}>
                     {move || {
                         let Cards{plans,pinned,best_value,cheapest,basis}=cards.get();
                         let basis_name=move ||if basis==Some(0) { t_string!(i18n, recipe_planner_route_basis_home).to_string() } else { t_string!(i18n, recipe_planner_route_basis_first_complete).to_string() };
