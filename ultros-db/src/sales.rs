@@ -275,14 +275,14 @@ impl UltrosDb {
         sales: &[SaleView],
     ) -> Result<HashMap<String, unknown_final_fantasy_character::Model>, anyhow::Error> {
         use unknown_final_fantasy_character::{ActiveModel, Column, Entity};
-        let names: std::collections::BTreeSet<_> =
-            sales.iter().map(|s| s.buyer_name.clone()).collect();
+        let names: std::collections::BTreeSet<&str> =
+            sales.iter().map(|s| s.buyer_name.as_str()).collect();
         let names: Vec<_> = names.into_iter().collect();
         let mut buyers = HashMap::new();
         for chunk in names.chunks(500) {
             buyers.extend(
                 Entity::find()
-                    .filter(Column::Name.is_in(chunk.iter().cloned()))
+                    .filter(Column::Name.is_in(chunk.iter().copied()))
                     .all(&self.db)
                     .await?
                     .into_iter()
@@ -290,9 +290,9 @@ impl UltrosDb {
             );
             let missing: Vec<_> = chunk
                 .iter()
-                .filter(|name| !buyers.contains_key(*name))
+                .filter(|&&name| !buyers.contains_key(name))
                 .map(|name| ActiveModel {
-                    name: ActiveValue::Set(name.clone()),
+                    name: ActiveValue::Set(name.to_string()),
                     ..Default::default()
                 })
                 .collect();
