@@ -75,21 +75,58 @@ try {
 
     # A web-only commit reuses the package; a dependency/native/managed change
     # must get a new version even when its protocol and API stay the same.
+    # The fixture is a two-crate workspace like the real one: the plugin's
+    # native library and a server crate sharing Cargo.toml and Cargo.lock.
+    function Write-FixtureFile([string]$Path, [string]$Text) {
+        $full = Join-Path $fixture $Path
+        New-Item -ItemType Directory -Path (Split-Path $full) -Force | Out-Null
+        [IO.File]::WriteAllText($full, $Text)
+    }
+    function Save-FixtureCommit([string]$Message) {
+        Invoke-FixtureGit @('add','--all')
+        Invoke-FixtureGit @('-c','user.name=Package fixture','-c','user.email=fixture@example.invalid','-c','commit.gpgsign=false','commit','--quiet','-m',$Message)
+    }
+    $workspace = "[workspace]`nmembers = ['ultros-list-doc-ffi', 'server']`nresolver = '3'`n`n[profile.release]`nopt-level = 'z'`n"
+    $toolchain = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '../../rust-toolchain')
+    if ($toolchain -notmatch '(?m)^channel = "([^"]+)"') { throw 'Could not read the pinned toolchain.' }
     Invoke-FixtureGit @('init','--quiet')
-    $pluginFile = Join-Path $fixture 'plugins/dalamud/input.cs'
-    New-Item -ItemType Directory -Path (Split-Path $pluginFile) -Force | Out-Null
-    [IO.File]::WriteAllText($pluginFile, 'original')
-    Invoke-FixtureGit @('add','--','plugins/dalamud/input.cs')
-    Invoke-FixtureGit @('-c','user.name=Package fixture','-c','user.email=fixture@example.invalid','-c','commit.gpgsign=false','commit','--quiet','-m','Original package')
+    Write-FixtureFile '.gitignore' "target/`n"
+    Write-FixtureFile 'rust-toolchain.toml' "[toolchain]`nchannel = `"$($Matches[1])`"`n"
+    Write-FixtureFile 'Cargo.toml' $workspace
+    Write-FixtureFile 'ultros-list-doc-ffi/Cargo.toml' "[package]`nname = 'ultros-list-doc-ffi'`nversion = '0.1.0'`nedition = '2024'`n"
+    Write-FixtureFile 'ultros-list-doc-ffi/src/lib.rs' "pub fn answer() -> u32 { 42 }`n"
+    Write-FixtureFile 'server/Cargo.toml' "[package]`nname = 'server'`nversion = '0.1.0'`nedition = '2024'`n"
+    Write-FixtureFile 'server/src/main.rs' "fn main() {}`n"
+    Write-FixtureFile 'plugins/dalamud/input.cs' 'original'
+    Push-Location -LiteralPath $fixture
+    try { & cargo generate-lockfile --offline --quiet; if ($LASTEXITCODE) { throw 'Could not lock the fixture workspace.' } } finally { Pop-Location }
+    Save-FixtureCommit 'Original package'
     $sourceCommit = (& git -C $fixture rev-parse HEAD).Trim()
-    [IO.File]::WriteAllText((Join-Path $fixture 'website.txt'), 'web-only change')
-    Invoke-FixtureGit @('add','--','website.txt')
-    Invoke-FixtureGit @('-c','user.name=Package fixture','-c','user.email=fixture@example.invalid','-c','commit.gpgsign=false','commit','--quiet','-m','Website change')
+    Write-FixtureFile 'website.txt' 'web-only change'
+    Save-FixtureCommit 'Website change'
     Assert-ImagePluginSource $fixture $sourceCommit
-    [IO.File]::WriteAllText($pluginFile, 'modified')
-    Invoke-FixtureGit @('add','--','plugins/dalamud/input.cs')
-    Invoke-FixtureGit @('-c','user.name=Package fixture','-c','user.email=fixture@example.invalid','-c','commit.gpgsign=false','commit','--quiet','-m','Changed package input')
-    Assert-Rejected { Assert-ImagePluginSource $fixture $sourceCommit } 'Changed plugin inputs reused an old package.'
+    # Server-only edits to the shared workspace manifest do not touch the
+    # native build, and check-only scripts are not packaged, so the published
+    # package is reused.
+    Write-FixtureFile 'Cargo.toml' ($workspace + "`n[profile.server-release]`ninherits = 'release'`nopt-level = 3`n")
+    Write-FixtureFile 'server/src/main.rs' "fn main() { println!(`"server change`"); }`n"
+    Write-FixtureFile 'plugins/dalamud/test-policy.ps1' 'check-only script'
+    Save-FixtureCommit 'Server-only workspace change'
+    Assert-ImagePluginSource $fixture $sourceCommit
+    $rejections = [ordered]@{
+        'Cargo.toml' = @(($workspace -replace "opt-level = 'z'", 'opt-level = 3'), 'A release-profile change reused an old native library.')
+        'ultros-list-doc-ffi/src/lib.rs' = @("pub fn answer() -> u32 { 43 }`n", 'A native source change reused an old package.')
+        'plugins/dalamud/input.cs' = @('modified', 'Changed plugin inputs reused an old package.')
+    }
+    $accepted = (& git -C $fixture rev-parse HEAD).Trim()
+    foreach ($path in $rejections.Keys) {
+        Write-FixtureFile $path $rejections[$path][0]
+        Save-FixtureCommit "Change $path"
+        $message = $null
+        try { Assert-ImagePluginSource $fixture $sourceCommit } catch { $message = $_.Exception.Message }
+        if ($message -notmatch 'Bump UltrosPluginVersion') { throw "$($rejections[$path][1]) ($message)" }
+        Invoke-FixtureGit @('reset','--quiet','--hard',$accepted)
+    }
     Write-Output 'PASS: immutable ZIP integrity, clean production provenance, stable-reference mismatch and package source/version policy.'
 } finally {
     $resolved = [IO.Path]::GetFullPath($fixture)
