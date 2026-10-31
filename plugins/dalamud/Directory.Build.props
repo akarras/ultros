@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <!-- One checked-in version for every managed assembly and release package. -->
-    <UltrosPluginVersion>1.6.0.0</UltrosPluginVersion>
+    <UltrosPluginVersion>1.6.0.1</UltrosPluginVersion>
     <UltrosPluginReleaseNotes>Retainers follow your Ultros order, with a summoning-bell shortcut to refresh missing retainers and use the game's order. Disable retainers you no longer use while keeping their saved data. Connected lists receive live updates, and all item right-click shortcuts can be turned off in Settings.</UltrosPluginReleaseNotes>
     <Version>$(UltrosPluginVersion)</Version>
     <AssemblyVersion>$(UltrosPluginVersion)</AssemblyVersion>
