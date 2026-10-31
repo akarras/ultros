@@ -1,14 +1,23 @@
+/// Serves the jemalloc heap profile as pprof on port 3123.
+///
+/// The port is not published by the container, so it is only reachable from
+/// the Docker network, e.g.
+/// `docker run --rm --network <compose network> curlimages/curl -s http://ultros:3123/debug/pprof/heap > heap.pb.gz`.
+/// Compare two dumps taken some time apart with
+/// `go tool pprof -base heap1.pb.gz ultros heap2.pb.gz` to see what grew.
 pub(crate) async fn start_profiling_server() {
-    let mut v = vec![];
-    for i in 0..1000000 {
-        v.push(i);
-    }
-
     let app = axum::Router::new().route("/debug/pprof/heap", axum::routing::get(handle_get_heap));
 
-    // run our app with hyper, listening globally on port 3123
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3123").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = match tokio::net::TcpListener::bind("0.0.0.0:3123").await {
+        Ok(listener) => listener,
+        Err(err) => {
+            tracing::error!(%err, "heap profiling server failed to bind :3123");
+            return;
+        }
+    };
+    if let Err(err) = axum::serve(listener, app).await {
+        tracing::error!(%err, "heap profiling server stopped");
+    }
 }
 
 use axum::http::StatusCode;

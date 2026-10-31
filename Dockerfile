@@ -60,7 +60,7 @@ ENV LEPTOS_OUTPUT_NAME=ultros \
 #  - lib-package = "ultros-client" → wasm-release profile, wasm32-unknown-unknown
 # Edits to source code below this line won't invalidate these layers.
 RUN cargo chef cook --locked --profile server-release -p ultros --bin ultros \
-    --no-default-features --features jemalloc --recipe-path recipe.json
+    --no-default-features --features jemalloc,profiling --recipe-path recipe.json
 # cargo-leptos isolates its frontend artifacts in target/front. Match that
 # directory, profile and feature selection, not Cargo's default target/.
 #
@@ -127,7 +127,10 @@ RUN CARGO_UNSTABLE_BUILD_STD=std,panic_abort,core,alloc \
 RUN cargo build --release -p wasm-symbols \
     && ./target/release/wasm-symbols target/site/pkg/ultros.wasm
 # Split debug info: keep an unstripped copy for CI to upload to GlitchTip,
-# strip the production binary. objcopy is in binutils (transitive via
+# strip the debug info from the production binary. The symbol table stays
+# (no `--strip-unneeded`): heap profiles from /debug/pprof/heap and gdb
+# backtraces on the live container need function names, and the debug-file
+# upload is not a dependable source of them. objcopy is in binutils (transitive via
 # build-essential). The GNU build-id NOTE survives stripping and is the
 # correlation key GlitchTip uses to match the stripped runtime binary against
 # the uploaded debug file.
@@ -140,7 +143,7 @@ RUN cargo build --release -p wasm-symbols \
 # upload would otherwise be ~250–300MB per push.
 RUN cp /app/target/server-release/ultros /app/target/server-release/ultros.unstripped \
     && objcopy --compress-debug-sections=zlib /app/target/server-release/ultros.unstripped \
-    && objcopy --strip-debug --strip-unneeded /app/target/server-release/ultros
+    && objcopy --strip-debug /app/target/server-release/ultros
 
 # ---- Debug-files artifact (export-only) --------------------------------------
 # Tiny stage holding only the unstripped binary. Never part of any pushed image.

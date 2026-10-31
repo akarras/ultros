@@ -303,8 +303,11 @@ lib-profile-release = "wasm-release"
 # optimization is unchanged.
 wasm-opt-features = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "-g"]
 # Enable the jemalloc global allocator in release builds — better throughput
-# and lower RSS fragmentation under sustained tokio/axum load.
-bin-features = ["jemalloc"]
+# and lower RSS fragmentation under sustained tokio/axum load. `profiling` turns
+# on sampled heap profiling (1 sample per 512 KiB allocated, see `malloc_conf`
+# in ultros/src/main.rs) and serves the live heap as pprof on :3123, so a memory
+# leak in prod can be traced to its allocation sites without a special build.
+bin-features = ["jemalloc", "profiling"]
 # The site root folder is where cargo-leptos generate all output.
 # NOTE: It is relative to the workspace root when running in a workspace.
 # WARNING: all content of this folder will be erased on a rebuild.
