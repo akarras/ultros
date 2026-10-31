@@ -60,14 +60,79 @@ function Assert-ImagePluginPackage([string]$Directory, [string]$Version, [string
     return $release
 }
 
+$script:NativePackage = 'ultros-list-doc-ffi'
+$script:NativeTarget = 'x86_64-pc-windows-msvc'
+
+# Cargo's resolved build plan for the plugin's native library: every crate it
+# compiles with its version, features, target and profile settings, plus the
+# Git tree of each workspace crate among them. Paths are made relative to the
+# checkout so two checkouts of the same sources produce the same plan.
+# Requires the pinned nightly (`-Z unstable-options --unit-graph`).
+function Get-NativeBuildPlan([string]$Root) {
+    Push-Location -LiteralPath $Root
+    try {
+        $json = & cargo build --locked --quiet -Z unstable-options --unit-graph -p $script:NativePackage --release --target $script:NativeTarget
+        if ($LASTEXITCODE) { throw 'Could not compute the native library build plan.' }
+    } finally { Pop-Location }
+    $graph = ($json -join "`n") | ConvertFrom-Json
+    $rootPath = [IO.Path]::GetFullPath($Root)
+    $packages = @{}
+    $ids = @(foreach ($unit in $graph.units) {
+        $id = $unit.pkg_id
+        if ($id -match '^path\+(file:///[^#]+)#(.+)$') {
+            $relative = [IO.Path]::GetRelativePath($rootPath, ([Uri]$Matches[1]).LocalPath).Replace('\', '/')
+            if ($relative.StartsWith('..')) { throw "Native build uses a crate outside the repository: $relative" }
+            $tree = (& git -C $Root rev-parse "HEAD:$relative").Trim()
+            if ($LASTEXITCODE) { throw "Could not hash workspace crate $relative." }
+            $packages[$relative] = $true
+            $id = "path:$relative@$tree#$($Matches[2])"
+        }
+        $id
+    })
+    $lines = for ($index = 0; $index -lt $graph.units.Count; $index++) {
+        $unit = $graph.units[$index]
+        [ordered]@{
+            package = $ids[$index]; mode = $unit.mode; platform = $unit.platform
+            target = [ordered]@{ name = $unit.target.name; kind = $unit.target.kind; crate_types = $unit.target.crate_types; edition = $unit.target.edition }
+            profile = $unit.profile; features = @($unit.features)
+            dependencies = @($unit.dependencies | ForEach-Object { "$($_.extern_crate_name)=$($ids[$_.index])" } | Sort-Object)
+        } | ConvertTo-Json -Compress -Depth 8
+    }
+    [pscustomobject]@{
+        Hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes((($lines | Sort-Object) -join "`n"))))
+        WorkspaceCrates = @($packages.Keys | Sort-Object)
+    }
+}
+
 function Assert-ImagePluginSource([string]$Root, [string]$Commit) {
     if ($Commit -notmatch '^[a-f0-9]{40}$') { throw 'Invalid package source commit.' }
     & git -C $Root cat-file -e "$Commit`^{commit}"
     if ($LASTEXITCODE) { throw 'Package source commit is missing. Fetch the complete repository history and release tags.' }
+    $changed = 'Plugin package inputs changed after publication. Bump UltrosPluginVersion instead of replacing the published version.'
     # Changing any package input requires an explicit version bump. Ordinary
     # website-only commits reuse the exact published ZIP, including provenance.
-    & git -C $Root diff --quiet $Commit HEAD -- plugins/dalamud ultros-list-doc ultros-list-doc-ffi ultros-api-types vendor/loro-kv-store Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo LICENSE integration/fixtures/list-compatibility.json
-    if ($LASTEXITCODE) { throw 'Plugin package inputs changed after publication. Bump UltrosPluginVersion instead of replacing the published version.' }
+    # The fixtures and this script only check packages; they are not in the ZIP.
+    & git -C $Root diff --quiet $Commit HEAD -- plugins/dalamud ':(exclude)plugins/dalamud/test-*.ps1' ':(exclude)plugins/dalamud/prepare-image-package.ps1' rust-toolchain rust-toolchain.toml .cargo LICENSE integration/fixtures/list-compatibility.json
+    if ($LASTEXITCODE) { throw $changed }
+    # The workspace Cargo.toml and Cargo.lock are shared with the server, so a
+    # line diff would demand a plugin release for server-only dependency or
+    # profile edits. Compare what the native build compiles instead.
+    $current = Get-NativeBuildPlan $Root
+    & git -C $Root diff --quiet $Commit HEAD -- Cargo.toml Cargo.lock @($current.WorkspaceCrates)
+    if (!$LASTEXITCODE) { return }
+    $published = Join-Path ([IO.Path]::GetTempPath()) ('ultros-plugin-source-' + [Guid]::NewGuid().ToString('N'))
+    $previousSmudge = $env:GIT_LFS_SKIP_SMUDGE
+    $env:GIT_LFS_SKIP_SMUDGE = '1'
+    try {
+        & git -C $Root worktree add --quiet --detach $published $Commit
+        if ($LASTEXITCODE) { throw 'Could not check out the published package source.' }
+        $previous = Get-NativeBuildPlan $published
+    } finally {
+        $env:GIT_LFS_SKIP_SMUDGE = $previousSmudge
+        & git -C $Root worktree remove --force $published 2>$null
+        if (Test-Path -LiteralPath $published) { Remove-Item -LiteralPath $published -Recurse -Force }
+    }
+    if ($previous.Hash -cne $current.Hash) { throw $changed }
 }
 
 # Fixtures import the validators without network access or publication.
