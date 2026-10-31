@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "high",
+  "title": "Site no longer freezes for minutes at a time",
+  "blurb": "Fixed a server stall, introduced by the recipe planner update, that made ultros.app stop responding for a few minutes several times a day."
+}
