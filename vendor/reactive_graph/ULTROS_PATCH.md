@@ -169,6 +169,43 @@ effect first-polls against teardowns on a 4-worker runtime. Before the fix,
 about 2,500 of them ran their body against a disposed signal. After it, none
 do.
 
+## Sandboxed arena scopes restore the previous arena (2026-11-01)
+
+Prod heap profiles after jemalloc profiling shipped
+(akarras/ultros#1711) showed the process growing ~0.5 GB/h: live heap
+dominated by `ArenaItem` values created during SSR item-page renders
+(memos/signals under `Recipe`/item views), retained for hours although
+renders last ~70 ms at ~30 concurrent. The sandboxed thread-locals are
+the seam: `Sandboxed` polls set the *arena* but not the *owner*, and
+`Owner::with` restored the owner but not the arena, so outside those
+scopes (integration glue between polls of a streaming response on a
+shared worker thread, post-`await` view walks) the arena and the owner
+could belong to different requests. A value created in that gap is
+inserted into one request's arena while registered for cleanup against
+another's, whose cleanup removes from its own arena and can never find
+it — the node leaks for the life of that arena.
+
+The patch makes both scoped setters symmetric: `Owner::with` and
+`Sandboxed` polls now save the previously-active arena
+(`Arena::replace`) and restore it when the scope ends
+(`Arena::restore`), so after any scoped section the thread is back to
+the outer scope's arena/owner pair instead of whichever request ran
+last. It also adds cheap bookkeeping counters
+(`owner::arena_diagnostics()`: inserts, unregistered inserts, cleanup
+removes/misses, explicit removes — surfaced as
+`ultros_reactive_arena_*` gauges) and `Owner::arena_len()` so tests and
+prod can assert a completed render leaves its request arena empty.
+Regression coverage lives in `ultros/src/ssr_drain.rs` (probe pages and
+the real item page, sequential/concurrent/abandoned; every render must
+end with `arena_len() == 0` and every drop-counted value dropped).
+Note: the leak was not reproduced locally end-to-end — the tests pin
+the invariant, and the prod gauges/dumps are the arbiter after deploy.
+
+One upstream subtlety preserved while instrumenting: `ArenaItem::dispose`
+must drop the removed value *after* the arena lock is released (as
+upstream's one-liner does); dropping it inside `with_mut` re-enters the
+arena from memo/signal drops and hangs upstream's `cleanup` tests.
+
 ## Upstream status
 
 Not yet reported upstream as of 2026-10-19; the newest published
@@ -197,6 +234,11 @@ the same `try_read`-only `Plain::try_new`. Once it is fixed upstream and
   `ULTROS_PATCH.diff`.
 - Format with the crate's own `rustfmt.toml` (`cargo fmt` inside this
   directory); the root `cargo fmt --all` does not touch it.
+- `ULTROS_PATCH.diff` was last regenerated 2026-11-01 against the
+  pristine crates.io `.crate` for 0.2.16 (byte-identical `src/` to the
+  monorepo tag outside this patch's files, verified by diffing the two
+  trees); regenerate it the same way after any vendored edit so the
+  patch stays re-appliable.
 - Run its tests with
   `cargo test --manifest-path vendor/reactive_graph/Cargo.toml --features effects`;
   `scripts/check_tests.sh` runs the unit tests and the `memo_concurrent`,

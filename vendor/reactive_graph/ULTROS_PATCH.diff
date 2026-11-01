@@ -1,3 +1,41 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 315f89a..5f338c9 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -46,6 +46,10 @@ serde = ["dep:serde"]
+ subsecond = ["dep:subsecond"]
+ tracing = ["dep:tracing"]
+ 
++# Standalone: this vendored copy is consumed through the root workspace's
++# `[patch.crates-io]`, never as a member. Lets `cargo test` run here directly.
++[workspace]
++
+ [lib]
+ name = "reactive_graph"
+ path = "src/lib.rs"
+@@ -70,6 +74,10 @@ path = "tests/effect_immediate.rs"
+ name = "memo"
+ path = "tests/memo.rs"
+ 
++[[test]]
++name = "memo_concurrent"
++path = "tests/memo_concurrent.rs"
++
+ [[test]]
+ name = "signal"
+ path = "tests/signal.rs"
+@@ -184,3 +192,11 @@ check-cfg = [
+     "cfg(leptos_debuginfo)",
+     "cfg(rustc_nightly)",
+ ]
++
++[[test]]
++name = "async_source_walk"
++path = "tests/async_source_walk.rs"
++
++[[test]]
++name = "effect_disposed_first_run"
++path = "tests/effect_disposed_first_run.rs"
 diff --git a/src/computed/arc_memo.rs b/src/computed/arc_memo.rs
 index 007b06d..5a69db5 100644
 --- a/src/computed/arc_memo.rs
@@ -463,7 +501,7 @@ index f05f34b..52f21e9 100644
                      }
                  }
 diff --git a/src/owner.rs b/src/owner.rs
-index b32ea75..42021b4 100644
+index b32ea75..fd2f352 100644
 --- a/src/owner.rs
 +++ b/src/owner.rs
 @@ -12,6 +12,7 @@ use std::{
@@ -474,15 +512,24 @@ index b32ea75..42021b4 100644
  mod arc_stored_value;
  mod arena;
  mod arena_item;
-@@ -19,6 +20,7 @@ mod context;
+@@ -19,12 +20,16 @@ mod context;
  mod storage;
  mod stored_value;
  use self::arena::Arena;
 +pub(crate) use activity::RunGuard;
  pub use arc_stored_value::ArcStoredValue;
++pub use arena::arena_diagnostics;
  #[cfg(feature = "sandboxed-arenas")]
  pub use arena::sandboxed::Sandboxed;
-@@ -174,6 +176,11 @@ impl Owner {
+ #[cfg(feature = "sandboxed-arenas")]
+ use arena::ArenaMap;
+ use arena::NodeId;
++#[cfg(feature = "sandboxed-arenas")]
++use arena::{ARENA_CLEANUP_REMOVES, ARENA_CLEANUP_REMOVE_MISSES};
+ pub use arena_item::*;
+ pub use context::*;
+ pub use storage::*;
+@@ -174,6 +179,11 @@ impl Owner {
                      .and_then(|parent| parent.upgrade())
                      .map(|parent| parent.read().or_poisoned().arena.clone())
                      .unwrap_or_default(),
@@ -494,7 +541,7 @@ index b32ea75..42021b4 100644
                  paused: false,
              })),
              #[cfg(feature = "hydration")]
-@@ -208,6 +215,7 @@ impl Owner {
+@@ -208,6 +218,7 @@ impl Owner {
                  children: Default::default(),
                  #[cfg(feature = "sandboxed-arenas")]
                  arena: Default::default(),
@@ -502,7 +549,7 @@ index b32ea75..42021b4 100644
                  paused: false,
              })),
              #[cfg(feature = "hydration")]
-@@ -242,6 +250,7 @@ impl Owner {
+@@ -242,6 +253,7 @@ impl Owner {
          let mut inner = self.inner.write().or_poisoned();
          #[cfg(feature = "sandboxed-arenas")]
          let arena = inner.arena.clone();
@@ -510,7 +557,7 @@ index b32ea75..42021b4 100644
          let paused = inner.paused;
          let child = Self {
              inner: Arc::new(RwLock::new(OwnerInner {
-@@ -252,6 +261,7 @@ impl Owner {
+@@ -252,6 +264,7 @@ impl Owner {
                  children: Default::default(),
                  #[cfg(feature = "sandboxed-arenas")]
                  arena,
@@ -518,7 +565,79 @@ index b32ea75..42021b4 100644
                  paused,
              })),
              #[cfg(feature = "hydration")]
-@@ -368,9 +378,40 @@ impl Owner {
+@@ -261,6 +274,23 @@ impl Owner {
+         child
+     }
+ 
++    /// The arena this owner's nodes are stored in and removed from at
++    /// cleanup.
++    #[cfg(feature = "sandboxed-arenas")]
++    pub(crate) fn arena(&self) -> Arc<RwLock<ArenaMap>> {
++        self.inner.read().or_poisoned().arena.clone()
++    }
++
++    /// Number of values currently stored in this owner's arena. After a
++    /// completed SSR render's forced cleanup this must be back to zero;
++    /// anything left was inserted into this arena without a registration
++    /// this owner's tree could remove. Intended for diagnostics and tests.
++    #[cfg(feature = "sandboxed-arenas")]
++    #[doc(hidden)]
++    pub fn arena_len(&self) -> usize {
++        self.arena().read().or_poisoned().len()
++    }
++
+     /// Sets this as the current `Owner`.
+     pub fn set(&self) {
+         OWNER.with_borrow_mut(|owner| *owner = Some(self.downgrade()));
+@@ -271,17 +301,43 @@ impl Owner {
+     /// Runs the given function with this as the current `Owner`.
+     pub fn with<T>(&self, fun: impl FnOnce() -> T) -> T {
+         // codegen optimisation:
+-        fn inner_1(self_: &Owner) -> Option<WeakOwner> {
++        #[cfg(feature = "sandboxed-arenas")]
++        fn inner_1(
++            self_: &Owner,
++        ) -> (
++            Option<WeakOwner>,
++            Option<std::sync::Weak<std::sync::RwLock<ArenaMap>>>,
++        ) {
+             let prev = OWNER.with_borrow_mut(|o| o.replace(self_.downgrade()));
+-            #[cfg(feature = "sandboxed-arenas")]
+-            Arena::set(&self_.inner.read().or_poisoned().arena);
+-            prev
++            // Restore the previous arena afterwards as well as the
++            // previous owner: leaving this owner's arena active pairs it
++            // with whatever owner the caller restores, and values created
++            // in that gap are inserted here but registered there — a
++            // combination no cleanup can ever remove.
++            let prev_arena =
++                Arena::replace(&self_.inner.read().or_poisoned().arena);
++            (prev, prev_arena)
++        }
++        #[cfg(not(feature = "sandboxed-arenas"))]
++        fn inner_1(self_: &Owner) -> Option<WeakOwner> {
++            OWNER.with_borrow_mut(|o| o.replace(self_.downgrade()))
+         }
+         let prev = inner_1(self);
+ 
+         let val = fun();
+ 
+         // monomorphisation optimisation:
++        #[cfg(feature = "sandboxed-arenas")]
++        fn inner_2(
++            prev: (
++                Option<WeakOwner>,
++                Option<std::sync::Weak<std::sync::RwLock<ArenaMap>>>,
++            ),
++        ) {
++            OWNER.with_borrow_mut(|o| *o = prev.0);
++            Arena::restore(prev.1);
++        }
++        #[cfg(not(feature = "sandboxed-arenas"))]
+         fn inner_2(prev: Option<WeakOwner>) {
+             OWNER.with_borrow_mut(|o| *o = prev);
+         }
+@@ -368,9 +424,40 @@ impl Owner {
                  mem::take(owner);
              }
          });
@@ -559,7 +678,7 @@ index b32ea75..42021b4 100644
      /// Returns the current [`SharedContext`], if any.
      #[cfg(feature = "hydration")]
      pub fn current_shared_context(
-@@ -502,6 +543,8 @@ pub(crate) struct OwnerInner {
+@@ -502,6 +589,8 @@ pub(crate) struct OwnerInner {
      pub children: Vec<Weak<RwLock<OwnerInner>>>,
      #[cfg(feature = "sandboxed-arenas")]
      arena: Arc<RwLock<ArenaMap>>,
@@ -568,7 +687,7 @@ index b32ea75..42021b4 100644
      paused: bool,
  }
  
-@@ -518,6 +561,11 @@ impl Debug for OwnerInner {
+@@ -518,6 +607,11 @@ impl Debug for OwnerInner {
  
  impl Drop for OwnerInner {
      fn drop(&mut self) {
@@ -580,6 +699,52 @@ index b32ea75..42021b4 100644
          for child in std::mem::take(&mut self.children) {
              if let Some(child) = child.upgrade() {
                  child.cleanup();
+@@ -541,7 +635,21 @@ impl Drop for OwnerInner {
+             {
+                 let mut arena = self.arena.write().or_poisoned();
+                 for node in nodes {
+-                    nodes_to_drop.extend(arena.remove(node));
++                    match arena.remove(node) {
++                        Some(value) => {
++                            ARENA_CLEANUP_REMOVES.fetch_add(
++                                1,
++                                std::sync::atomic::Ordering::Relaxed,
++                            );
++                            nodes_to_drop.push(value);
++                        }
++                        None => {
++                            ARENA_CLEANUP_REMOVE_MISSES.fetch_add(
++                                1,
++                                std::sync::atomic::Ordering::Relaxed,
++                            );
++                        }
++                    }
+                 }
+             }
+         }
+@@ -584,7 +692,21 @@ impl Cleanup for RwLock<OwnerInner> {
+                 let arena = self.read().or_poisoned().arena.clone();
+                 let mut arena = arena.write().or_poisoned();
+                 for node in nodes {
+-                    nodes_to_drop.extend(arena.remove(node));
++                    match arena.remove(node) {
++                        Some(value) => {
++                            ARENA_CLEANUP_REMOVES.fetch_add(
++                                1,
++                                std::sync::atomic::Ordering::Relaxed,
++                            );
++                            nodes_to_drop.push(value);
++                        }
++                        None => {
++                            ARENA_CLEANUP_REMOVE_MISSES.fetch_add(
++                                1,
++                                std::sync::atomic::Ordering::Relaxed,
++                            );
++                        }
++                    }
+                 }
+             }
+         }
 diff --git a/src/owner/activity.rs b/src/owner/activity.rs
 new file mode 100644
 index 0000000..77f5157
@@ -708,6 +873,210 @@ index 0000000..77f5157
 +        }
 +    }
 +}
+diff --git a/src/owner/arena.rs b/src/owner/arena.rs
+index ae9b25e..ce4f2d7 100644
+--- a/src/owner/arena.rs
++++ b/src/owner/arena.rs
+@@ -9,9 +9,40 @@ use std::sync::Weak;
+ use std::{
+     any::Any,
+     hash::Hash,
+-    sync::{Arc, RwLock},
++    sync::{
++        atomic::{AtomicU64, Ordering},
++        Arc, RwLock,
++    },
+ };
+ 
++/// Diagnostic counters for arena bookkeeping, used to chase SSR arena
++/// retention (see `ULTROS_PATCH.md`). Cheap relaxed atomics; read them with
++/// [`arena_diagnostics`].
++pub(crate) static ARENA_INSERTS: AtomicU64 = AtomicU64::new(0);
++pub(crate) static ARENA_INSERTS_UNREGISTERED: AtomicU64 = AtomicU64::new(0);
++pub(crate) static ARENA_CLEANUP_REMOVES: AtomicU64 = AtomicU64::new(0);
++pub(crate) static ARENA_CLEANUP_REMOVE_MISSES: AtomicU64 = AtomicU64::new(0);
++pub(crate) static ARENA_EXPLICIT_REMOVES: AtomicU64 = AtomicU64::new(0);
++
++/// Snapshot of the arena diagnostic counters: `(inserts,
++/// inserts_without_an_owner, cleanup_removes, cleanup_remove_misses,
++/// explicit_removes)`. A cleanup remove miss means the node was not in
++/// the cleaning owner's arena: either it had already been removed
++/// explicitly (`dispose`/`take`, counted in `explicit_removes`) or it was
++/// inserted into a different arena than the one its registering owner
++/// cleans up, in which case it stays there. Retained nodes over a window
++/// are `inserts - cleanup_removes - explicit_removes`.
++#[doc(hidden)]
++pub fn arena_diagnostics() -> (u64, u64, u64, u64, u64) {
++    (
++        ARENA_INSERTS.load(Ordering::Relaxed),
++        ARENA_INSERTS_UNREGISTERED.load(Ordering::Relaxed),
++        ARENA_CLEANUP_REMOVES.load(Ordering::Relaxed),
++        ARENA_CLEANUP_REMOVE_MISSES.load(Ordering::Relaxed),
++        ARENA_EXPLICIT_REMOVES.load(Ordering::Relaxed),
++    )
++}
++
+ new_key_type! {
+     /// Unique identifier for an item stored in the arena.
+     pub struct NodeId;
+@@ -41,6 +72,43 @@ impl Arena {
+         }
+     }
+ 
++    /// Sets the current arena, returning the previously-active one so the
++    /// caller can restore it with [`Arena::restore`]. Scoped setters
++    /// (`Owner::with`, `Sandboxed` polls) use this so an arena activated
++    /// for one scope does not leak into whatever runs next on the thread:
++    /// a leaked arena/owner pair from *different* scopes is how a value
++    /// ends up inserted into one request's arena while registered for
++    /// cleanup against another's (which then can never remove it).
++    #[cfg(feature = "sandboxed-arenas")]
++    pub(crate) fn replace(
++        arena: &Arc<RwLock<ArenaMap>>,
++    ) -> Option<Weak<RwLock<ArenaMap>>> {
++        MAP.with_borrow_mut(|prev| {
++            std::mem::replace(prev, Some(Arc::downgrade(arena)))
++        })
++    }
++
++    /// Restores an arena previously returned by [`Arena::replace`].
++    ///
++    /// Only a still-live previous arena is restored. If it is gone (the
++    /// common case at a root scope, where the previous value is the
++    /// thread's dead default), the current arena stays active: existing
++    /// code reads values after `Owner::with` returns (e.g. leptos_meta
++    /// title closures evaluated during meta injection), and those reads
++    /// resolve through the thread-local arena. Clearing it would turn
++    /// their graceful disposed-value handling into "no Arena is active"
++    /// panics. The cross-request pairing this guards against happens
++    /// between *nested live* scopes, where the previous arena is alive
++    /// and is restored.
++    #[cfg(feature = "sandboxed-arenas")]
++    pub(crate) fn restore(prev: Option<Weak<RwLock<ArenaMap>>>) {
++        if let Some(prev) = prev {
++            if prev.upgrade().is_some() {
++                MAP.with_borrow_mut(|arena| *arena = Some(prev));
++            }
++        }
++    }
++
+     #[track_caller]
+     pub fn with<U>(fun: impl FnOnce(&ArenaMap) -> U) -> U {
+         #[cfg(not(feature = "sandboxed-arenas"))]
+@@ -165,11 +233,13 @@ pub mod sandboxed {
+             self: Pin<&mut Self>,
+             cx: &mut Context<'_>,
+         ) -> Poll<Self::Output> {
+-            if let Some(arena) = self.arena.as_ref() {
+-                Arena::set(arena);
+-            }
++            let prev = self.arena.as_ref().map(|arena| Arena::replace(arena));
+             let this = self.project();
+-            this.inner.poll(cx)
++            let result = this.inner.poll(cx);
++            if let Some(prev) = prev {
++                Arena::restore(prev);
++            }
++            result
+         }
+     }
+ 
+@@ -183,11 +253,13 @@ pub mod sandboxed {
+             self: Pin<&mut Self>,
+             cx: &mut Context<'_>,
+         ) -> Poll<Option<Self::Item>> {
+-            if let Some(arena) = self.arena.as_ref() {
+-                Arena::set(arena);
+-            }
++            let prev = self.arena.as_ref().map(|arena| Arena::replace(arena));
+             let this = self.project();
+-            this.inner.poll_next(cx)
++            let result = this.inner.poll_next(cx);
++            if let Some(prev) = prev {
++                Arena::restore(prev);
++            }
++            result
+         }
+     }
+ }
+diff --git a/src/owner/arena_item.rs b/src/owner/arena_item.rs
+index 0c286dd..5986b9b 100644
+--- a/src/owner/arena_item.rs
++++ b/src/owner/arena_item.rs
+@@ -1,10 +1,13 @@
+ use super::{
+-    arena::{Arena, NodeId},
++    arena::{
++        Arena, NodeId, ARENA_EXPLICIT_REMOVES, ARENA_INSERTS,
++        ARENA_INSERTS_UNREGISTERED,
++    },
+     LocalStorage, Storage, SyncStorage, OWNER,
+ };
+ use crate::traits::{Dispose, IntoInner, IsDisposed};
+ use send_wrapper::SendWrapper;
+-use std::{any::Any, hash::Hash, marker::PhantomData};
++use std::{any::Any, hash::Hash, marker::PhantomData, sync::atomic::Ordering};
+ 
+ /// A copyable, stable reference for any value, stored on the arena whose ownership is managed by the
+ /// reactive ownership tree.
+@@ -52,9 +55,12 @@ where
+                 )
+             })
+         };
++        ARENA_INSERTS.fetch_add(1, Ordering::Relaxed);
+         OWNER.with(|o| {
+             if let Some(owner) = o.borrow().as_ref().and_then(|o| o.upgrade()) {
+                 owner.register(node);
++            } else {
++                ARENA_INSERTS_UNREGISTERED.fetch_add(1, Ordering::Relaxed);
+             }
+         });
+ 
+@@ -131,7 +137,15 @@ impl<T, S> IsDisposed for ArenaItem<T, S> {
+ 
+ impl<T, S> Dispose for ArenaItem<T, S> {
+     fn dispose(self) {
+-        Arena::with_mut(|arena| arena.remove(self.node));
++        // Keep upstream's drop timing: the removed value drops after
++        // `with_mut` returns (arena lock released), not inside it —
++        // dropping a memo/signal value under the arena lock can re-enter
++        // the arena and deadlock (upstream `cleanup` tests hang).
++        let removed = Arena::with_mut(|arena| arena.remove(self.node));
++        if removed.is_some() {
++            ARENA_EXPLICIT_REMOVES.fetch_add(1, Ordering::Relaxed);
++        }
++        drop(removed);
+     }
+ }
+ 
+diff --git a/src/owner/storage.rs b/src/owner/storage.rs
+index 07c6749..d8e1cfd 100644
+--- a/src/owner/storage.rs
++++ b/src/owner/storage.rs
+@@ -1,5 +1,6 @@
+-use super::arena::{Arena, NodeId};
++use super::arena::{Arena, NodeId, ARENA_EXPLICIT_REMOVES};
+ use send_wrapper::SendWrapper;
++use std::sync::atomic::Ordering as AtomicOrdering;
+ 
+ /// A trait for borrowing and taking data.
+ pub trait StorageAccess<T> {
+@@ -111,6 +112,7 @@ where
+     fn take(node: NodeId) -> Option<T> {
+         Arena::with_mut(|arena| {
+             let m = arena.remove(node)?;
++            ARENA_EXPLICIT_REMOVES.fetch_add(1, AtomicOrdering::Relaxed);
+             match m.downcast::<T>() {
+                 Ok(inner) => Some(*inner),
+                 Err(_) => None,
+@@ -169,6 +171,7 @@ where
+     fn take(node: NodeId) -> Option<T> {
+         Arena::with_mut(|arena| {
+             let m = arena.remove(node)?;
++            ARENA_EXPLICIT_REMOVES.fetch_add(1, AtomicOrdering::Relaxed);
+             match m.downcast::<SendWrapper<T>>() {
+                 Ok(inner) => Some(inner.take()),
+                 Err(_) => None,
 diff --git a/src/signal/guards.rs b/src/signal/guards.rs
 index 51628b5..fda393a 100644
 --- a/src/signal/guards.rs

@@ -9,8 +9,39 @@ use std::sync::Weak;
 use std::{
     any::Any,
     hash::Hash,
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, RwLock,
+    },
 };
+
+/// Diagnostic counters for arena bookkeeping, used to chase SSR arena
+/// retention (see `ULTROS_PATCH.md`). Cheap relaxed atomics; read them with
+/// [`arena_diagnostics`].
+pub(crate) static ARENA_INSERTS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static ARENA_INSERTS_UNREGISTERED: AtomicU64 = AtomicU64::new(0);
+pub(crate) static ARENA_CLEANUP_REMOVES: AtomicU64 = AtomicU64::new(0);
+pub(crate) static ARENA_CLEANUP_REMOVE_MISSES: AtomicU64 = AtomicU64::new(0);
+pub(crate) static ARENA_EXPLICIT_REMOVES: AtomicU64 = AtomicU64::new(0);
+
+/// Snapshot of the arena diagnostic counters: `(inserts,
+/// inserts_without_an_owner, cleanup_removes, cleanup_remove_misses,
+/// explicit_removes)`. A cleanup remove miss means the node was not in
+/// the cleaning owner's arena: either it had already been removed
+/// explicitly (`dispose`/`take`, counted in `explicit_removes`) or it was
+/// inserted into a different arena than the one its registering owner
+/// cleans up, in which case it stays there. Retained nodes over a window
+/// are `inserts - cleanup_removes - explicit_removes`.
+#[doc(hidden)]
+pub fn arena_diagnostics() -> (u64, u64, u64, u64, u64) {
+    (
+        ARENA_INSERTS.load(Ordering::Relaxed),
+        ARENA_INSERTS_UNREGISTERED.load(Ordering::Relaxed),
+        ARENA_CLEANUP_REMOVES.load(Ordering::Relaxed),
+        ARENA_CLEANUP_REMOVE_MISSES.load(Ordering::Relaxed),
+        ARENA_EXPLICIT_REMOVES.load(Ordering::Relaxed),
+    )
+}
 
 new_key_type! {
     /// Unique identifier for an item stored in the arena.
@@ -38,6 +69,43 @@ impl Arena {
             MAP.with_borrow_mut(|arena| {
                 *arena = Some(new_arena);
             })
+        }
+    }
+
+    /// Sets the current arena, returning the previously-active one so the
+    /// caller can restore it with [`Arena::restore`]. Scoped setters
+    /// (`Owner::with`, `Sandboxed` polls) use this so an arena activated
+    /// for one scope does not leak into whatever runs next on the thread:
+    /// a leaked arena/owner pair from *different* scopes is how a value
+    /// ends up inserted into one request's arena while registered for
+    /// cleanup against another's (which then can never remove it).
+    #[cfg(feature = "sandboxed-arenas")]
+    pub(crate) fn replace(
+        arena: &Arc<RwLock<ArenaMap>>,
+    ) -> Option<Weak<RwLock<ArenaMap>>> {
+        MAP.with_borrow_mut(|prev| {
+            std::mem::replace(prev, Some(Arc::downgrade(arena)))
+        })
+    }
+
+    /// Restores an arena previously returned by [`Arena::replace`].
+    ///
+    /// Only a still-live previous arena is restored. If it is gone (the
+    /// common case at a root scope, where the previous value is the
+    /// thread's dead default), the current arena stays active: existing
+    /// code reads values after `Owner::with` returns (e.g. leptos_meta
+    /// title closures evaluated during meta injection), and those reads
+    /// resolve through the thread-local arena. Clearing it would turn
+    /// their graceful disposed-value handling into "no Arena is active"
+    /// panics. The cross-request pairing this guards against happens
+    /// between *nested live* scopes, where the previous arena is alive
+    /// and is restored.
+    #[cfg(feature = "sandboxed-arenas")]
+    pub(crate) fn restore(prev: Option<Weak<RwLock<ArenaMap>>>) {
+        if let Some(prev) = prev {
+            if prev.upgrade().is_some() {
+                MAP.with_borrow_mut(|arena| *arena = Some(prev));
+            }
         }
     }
 
@@ -165,11 +233,13 @@ pub mod sandboxed {
             self: Pin<&mut Self>,
             cx: &mut Context<'_>,
         ) -> Poll<Self::Output> {
-            if let Some(arena) = self.arena.as_ref() {
-                Arena::set(arena);
-            }
+            let prev = self.arena.as_ref().map(|arena| Arena::replace(arena));
             let this = self.project();
-            this.inner.poll(cx)
+            let result = this.inner.poll(cx);
+            if let Some(prev) = prev {
+                Arena::restore(prev);
+            }
+            result
         }
     }
 
@@ -183,11 +253,13 @@ pub mod sandboxed {
             self: Pin<&mut Self>,
             cx: &mut Context<'_>,
         ) -> Poll<Option<Self::Item>> {
-            if let Some(arena) = self.arena.as_ref() {
-                Arena::set(arena);
-            }
+            let prev = self.arena.as_ref().map(|arena| Arena::replace(arena));
             let this = self.project();
-            this.inner.poll_next(cx)
+            let result = this.inner.poll_next(cx);
+            if let Some(prev) = prev {
+                Arena::restore(prev);
+            }
+            result
         }
     }
 }

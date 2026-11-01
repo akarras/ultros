@@ -41,6 +41,18 @@ fn record_request(method: &str, path: &str, status: &str, agent: &'static str, l
 
     metrics::counter!("ultros_http_requests_total", &labels).increment(1);
     metrics::histogram!("ultros_http_requests_duration_seconds", &labels).record(latency);
+    // Reactive-arena bookkeeping (vendored reactive_graph diagnostics):
+    // `retained` climbing without bound is the SSR arena leak signature —
+    // values inserted during renders that no owner cleanup removed.
+    let (inserts, unregistered, cleanup_removes, cleanup_misses, explicit_removes) =
+        leptos::reactive::owner::arena_diagnostics();
+    metrics::gauge!("ultros_reactive_arena_inserts").set(inserts as f64);
+    metrics::gauge!("ultros_reactive_arena_inserts_unregistered").set(unregistered as f64);
+    metrics::gauge!("ultros_reactive_arena_cleanup_removes").set(cleanup_removes as f64);
+    metrics::gauge!("ultros_reactive_arena_cleanup_misses").set(cleanup_misses as f64);
+    metrics::gauge!("ultros_reactive_arena_explicit_removes").set(explicit_removes as f64);
+    metrics::gauge!("ultros_reactive_arena_retained")
+        .set(inserts.saturating_sub(cleanup_removes + explicit_removes) as f64);
     // Keep agent counts separate from route/status/latency series, and never
     // retain raw, client-controlled strings in the recorder or Prometheus.
     metrics::counter!("ultros_http_user_agents_total", "agent" => agent).increment(1);

@@ -1,5 +1,6 @@
-use super::arena::{Arena, NodeId};
+use super::arena::{Arena, NodeId, ARENA_EXPLICIT_REMOVES};
 use send_wrapper::SendWrapper;
+use std::sync::atomic::Ordering as AtomicOrdering;
 
 /// A trait for borrowing and taking data.
 pub trait StorageAccess<T> {
@@ -111,6 +112,7 @@ where
     fn take(node: NodeId) -> Option<T> {
         Arena::with_mut(|arena| {
             let m = arena.remove(node)?;
+            ARENA_EXPLICIT_REMOVES.fetch_add(1, AtomicOrdering::Relaxed);
             match m.downcast::<T>() {
                 Ok(inner) => Some(*inner),
                 Err(_) => None,
@@ -169,6 +171,7 @@ where
     fn take(node: NodeId) -> Option<T> {
         Arena::with_mut(|arena| {
             let m = arena.remove(node)?;
+            ARENA_EXPLICIT_REMOVES.fetch_add(1, AtomicOrdering::Relaxed);
             match m.downcast::<SendWrapper<T>>() {
                 Ok(inner) => Some(inner.take()),
                 Err(_) => None,

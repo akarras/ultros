@@ -1,10 +1,13 @@
 use super::{
-    arena::{Arena, NodeId},
+    arena::{
+        Arena, NodeId, ARENA_EXPLICIT_REMOVES, ARENA_INSERTS,
+        ARENA_INSERTS_UNREGISTERED,
+    },
     LocalStorage, Storage, SyncStorage, OWNER,
 };
 use crate::traits::{Dispose, IntoInner, IsDisposed};
 use send_wrapper::SendWrapper;
-use std::{any::Any, hash::Hash, marker::PhantomData};
+use std::{any::Any, hash::Hash, marker::PhantomData, sync::atomic::Ordering};
 
 /// A copyable, stable reference for any value, stored on the arena whose ownership is managed by the
 /// reactive ownership tree.
@@ -52,9 +55,12 @@ where
                 )
             })
         };
+        ARENA_INSERTS.fetch_add(1, Ordering::Relaxed);
         OWNER.with(|o| {
             if let Some(owner) = o.borrow().as_ref().and_then(|o| o.upgrade()) {
                 owner.register(node);
+            } else {
+                ARENA_INSERTS_UNREGISTERED.fetch_add(1, Ordering::Relaxed);
             }
         });
 
@@ -131,7 +137,15 @@ impl<T, S> IsDisposed for ArenaItem<T, S> {
 
 impl<T, S> Dispose for ArenaItem<T, S> {
     fn dispose(self) {
-        Arena::with_mut(|arena| arena.remove(self.node));
+        // Keep upstream's drop timing: the removed value drops after
+        // `with_mut` returns (arena lock released), not inside it —
+        // dropping a memo/signal value under the arena lock can re-enter
+        // the arena and deadlock (upstream `cleanup` tests hang).
+        let removed = Arena::with_mut(|arena| arena.remove(self.node));
+        if removed.is_some() {
+            ARENA_EXPLICIT_REMOVES.fetch_add(1, Ordering::Relaxed);
+        }
+        drop(removed);
     }
 }
 
