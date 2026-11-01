@@ -22,11 +22,14 @@ mod stored_value;
 use self::arena::Arena;
 pub(crate) use activity::RunGuard;
 pub use arc_stored_value::ArcStoredValue;
+pub use arena::arena_diagnostics;
 #[cfg(feature = "sandboxed-arenas")]
 pub use arena::sandboxed::Sandboxed;
 #[cfg(feature = "sandboxed-arenas")]
 use arena::ArenaMap;
 use arena::NodeId;
+#[cfg(feature = "sandboxed-arenas")]
+use arena::{ARENA_CLEANUP_REMOVES, ARENA_CLEANUP_REMOVE_MISSES};
 pub use arena_item::*;
 pub use context::*;
 pub use storage::*;
@@ -271,6 +274,23 @@ impl Owner {
         child
     }
 
+    /// The arena this owner's nodes are stored in and removed from at
+    /// cleanup.
+    #[cfg(feature = "sandboxed-arenas")]
+    pub(crate) fn arena(&self) -> Arc<RwLock<ArenaMap>> {
+        self.inner.read().or_poisoned().arena.clone()
+    }
+
+    /// Number of values currently stored in this owner's arena. After a
+    /// completed SSR render's forced cleanup this must be back to zero;
+    /// anything left was inserted into this arena without a registration
+    /// this owner's tree could remove. Intended for diagnostics and tests.
+    #[cfg(feature = "sandboxed-arenas")]
+    #[doc(hidden)]
+    pub fn arena_len(&self) -> usize {
+        self.arena().read().or_poisoned().len()
+    }
+
     /// Sets this as the current `Owner`.
     pub fn set(&self) {
         OWNER.with_borrow_mut(|owner| *owner = Some(self.downgrade()));
@@ -281,17 +301,43 @@ impl Owner {
     /// Runs the given function with this as the current `Owner`.
     pub fn with<T>(&self, fun: impl FnOnce() -> T) -> T {
         // codegen optimisation:
-        fn inner_1(self_: &Owner) -> Option<WeakOwner> {
+        #[cfg(feature = "sandboxed-arenas")]
+        fn inner_1(
+            self_: &Owner,
+        ) -> (
+            Option<WeakOwner>,
+            Option<std::sync::Weak<std::sync::RwLock<ArenaMap>>>,
+        ) {
             let prev = OWNER.with_borrow_mut(|o| o.replace(self_.downgrade()));
-            #[cfg(feature = "sandboxed-arenas")]
-            Arena::set(&self_.inner.read().or_poisoned().arena);
-            prev
+            // Restore the previous arena afterwards as well as the
+            // previous owner: leaving this owner's arena active pairs it
+            // with whatever owner the caller restores, and values created
+            // in that gap are inserted here but registered there — a
+            // combination no cleanup can ever remove.
+            let prev_arena =
+                Arena::replace(&self_.inner.read().or_poisoned().arena);
+            (prev, prev_arena)
+        }
+        #[cfg(not(feature = "sandboxed-arenas"))]
+        fn inner_1(self_: &Owner) -> Option<WeakOwner> {
+            OWNER.with_borrow_mut(|o| o.replace(self_.downgrade()))
         }
         let prev = inner_1(self);
 
         let val = fun();
 
         // monomorphisation optimisation:
+        #[cfg(feature = "sandboxed-arenas")]
+        fn inner_2(
+            prev: (
+                Option<WeakOwner>,
+                Option<std::sync::Weak<std::sync::RwLock<ArenaMap>>>,
+            ),
+        ) {
+            OWNER.with_borrow_mut(|o| *o = prev.0);
+            Arena::restore(prev.1);
+        }
+        #[cfg(not(feature = "sandboxed-arenas"))]
         fn inner_2(prev: Option<WeakOwner>) {
             OWNER.with_borrow_mut(|o| *o = prev);
         }
@@ -589,7 +635,21 @@ impl Drop for OwnerInner {
             {
                 let mut arena = self.arena.write().or_poisoned();
                 for node in nodes {
-                    nodes_to_drop.extend(arena.remove(node));
+                    match arena.remove(node) {
+                        Some(value) => {
+                            ARENA_CLEANUP_REMOVES.fetch_add(
+                                1,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            nodes_to_drop.push(value);
+                        }
+                        None => {
+                            ARENA_CLEANUP_REMOVE_MISSES.fetch_add(
+                                1,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -632,7 +692,21 @@ impl Cleanup for RwLock<OwnerInner> {
                 let arena = self.read().or_poisoned().arena.clone();
                 let mut arena = arena.write().or_poisoned();
                 for node in nodes {
-                    nodes_to_drop.extend(arena.remove(node));
+                    match arena.remove(node) {
+                        Some(value) => {
+                            ARENA_CLEANUP_REMOVES.fetch_add(
+                                1,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            nodes_to_drop.push(value);
+                        }
+                        None => {
+                            ARENA_CLEANUP_REMOVE_MISSES.fetch_add(
+                                1,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                        }
+                    }
                 }
             }
         }
