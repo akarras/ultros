@@ -185,6 +185,8 @@ impl Owner {
                     .map(|parent| parent.read().or_poisoned().activity.clone())
                     .unwrap_or_default(),
                 paused: false,
+                #[cfg(feature = "hydration")]
+                root_shared_context: None,
             })),
             #[cfg(feature = "hydration")]
             shared_context,
@@ -220,6 +222,9 @@ impl Owner {
                 arena: Default::default(),
                 activity: Default::default(),
                 paused: false,
+                root_shared_context: shared_context
+                    .as_ref()
+                    .map(Arc::downgrade),
             })),
             #[cfg(feature = "hydration")]
             shared_context,
@@ -266,6 +271,8 @@ impl Owner {
                 arena,
                 activity,
                 paused,
+                #[cfg(feature = "hydration")]
+                root_shared_context: None,
             })),
             #[cfg(feature = "hydration")]
             shared_context: self.shared_context.clone(),
@@ -289,6 +296,15 @@ impl Owner {
     #[doc(hidden)]
     pub fn arena_len(&self) -> usize {
         self.arena().read().or_poisoned().len()
+    }
+
+    /// A weak lifetime probe for this owner's arena allocation.
+    /// Does not keep either the owner or its arena alive.
+    #[cfg(feature = "sandboxed-arenas")]
+    #[doc(hidden)]
+    pub fn arena_weak_reference(&self) -> Weak<dyn Send + Sync> {
+        let arena: Arc<dyn Send + Sync> = self.arena();
+        Arc::downgrade(&arena)
     }
 
     /// Sets this as the current `Owner`.
@@ -373,12 +389,20 @@ impl Owner {
             let fun = {
                 let arena = Arc::clone(&inner.arena);
                 move || {
-                    Arena::set(&arena);
-                    fun()
+                    let previous = Arena::replace(&arena);
+                    fun();
+                    Arena::restore(previous);
                 }
             };
 
-            inner.cleanups.push(Box::new(fun));
+            if inner.activity.is_closed() {
+                // Render glue may register a keep-alive after the final
+                // cleanup pass. Storing it now can retain an owner forever.
+                drop(inner);
+                fun();
+            } else {
+                inner.cleanups.push(Box::new(fun));
+            }
         }
     }
 
@@ -439,6 +463,15 @@ impl Owner {
             activity.wait_idle();
         }
         self.cleanup();
+        #[cfg(feature = "hydration")]
+        if is_root {
+            // The stream may have finished before a late resource registered
+            // its serializer. Release those futures, which can hold owners
+            // and stream wakers pointing back into the shared data buffers.
+            if let Some(context) = &self.shared_context {
+                context.close();
+            }
+        }
     }
 
     /// Runs an effect body, marking it as in flight for this owner's tree so
@@ -466,7 +499,7 @@ impl Owner {
             o.borrow()
                 .as_ref()
                 .and_then(|o| o.upgrade())
-                .and_then(|current| current.shared_context.clone())
+                .and_then(|current| current.shared_context())
         })
     }
 
@@ -480,7 +513,7 @@ impl Owner {
             let sc = OWNER.with_borrow(|o| {
                 o.as_ref()
                     .and_then(|o| o.upgrade())
-                    .and_then(|current| current.shared_context.clone())
+                    .and_then(|current| current.shared_context())
             });
             match sc {
                 None => fun(),
@@ -506,7 +539,7 @@ impl Owner {
             let sc = OWNER.with_borrow(|o| {
                 o.as_ref()
                     .and_then(|o| o.upgrade())
-                    .and_then(|current| current.shared_context.clone())
+                    .and_then(|current| current.shared_context())
             });
             match sc {
                 None => fun(),
@@ -592,6 +625,8 @@ pub(crate) struct OwnerInner {
     /// Shared by every owner in the tree; see `activity`.
     activity: Arc<activity::Activity>,
     paused: bool,
+    #[cfg(feature = "hydration")]
+    root_shared_context: Option<Weak<dyn SharedContext + Send + Sync>>,
 }
 
 impl Debug for OwnerInner {
@@ -652,6 +687,12 @@ impl Drop for OwnerInner {
                     }
                 }
             }
+        }
+        #[cfg(feature = "hydration")]
+        if let Some(context) =
+            self.root_shared_context.as_ref().and_then(Weak::upgrade)
+        {
+            context.close();
         }
     }
 }

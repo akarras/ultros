@@ -52,6 +52,10 @@ thread_local! {
 }
 
 impl Activity {
+    pub(crate) fn is_closed(&self) -> bool {
+        self.state.lock().or_poisoned().closed
+    }
+
     fn id(self: &Arc<Self>) -> usize {
         Arc::as_ptr(self) as usize
     }

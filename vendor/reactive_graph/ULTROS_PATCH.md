@@ -206,6 +206,74 @@ must drop the removed value *after* the arena lock is released (as
 upstream's one-liner does); dropping it inside `with_mut` re-enters the
 arena from memo/signal drops and hangs upstream's `cleanup` tests.
 
+## SSR request arena retention (2026-11-02)
+
+The post-deploy heap profile still attributed about 7 GiB to request arena
+SlotMap buffers, despite balanced node insertion/removal counters. Node cleanup
+alone does not prove that the arena allocation has been released.
+
+`ArcAsyncDerived::try_read_untracked` spawns a readiness waiter for suspense.
+SSR `LocalResource` uses a mock derived resource that deliberately stays pending.
+The waiter's future owns its waker list, which stores the waiter's own task
+waker; its `Sandboxed` wrapper retains the request arena. Dropping the resource
+and removing every arena node therefore does not end that task.
+
+Register an abort handle with the reading owner's cleanup and run the waiter
+through `Abortable`. This releases its suspense handle and arena even when the
+resource never becomes ready. It does not cancel the resource's fetcher.
+
+`effect_disposed_first_run` now checks 32 pending mock-resource teardown cycles,
+normal readiness completion, and completed resource/effect cleanup using
+`Owner::arena_weak_reference()`. Run these tests with
+`--features effects,hydration,sandboxed-arenas`; `scripts/check_tests.sh` includes that gate.
+The concurrent real item-page test also checks arena allocation release.
+Cleanup callbacks also save and restore the previous arena, just like
+`Owner::with` and `Sandboxed` polls. Previously they left the cleaned owner's
+arena active: the next spawned task could capture that arena even under a
+different owner. A dedicated lifetime test covers that capture path.
+
+Tracing the remaining intermittent item-page retention found owners with zero
+nodes or running sandboxed futures, retaining only `SuspenseContext` and
+`LocalResourceNotifier` contexts. The notifier's pending channel can keep a
+render waker alive, which in turn holds the scoped owner: waiting for the
+owner to drop its contexts leaves a cycle. `LocalResourceNotifier::from` now
+registers a cleanup that closes the channel. It captures the notifier storage
+weakly and drops the sender outside its mutex. A regression test models the
+render waker holding its owner; it fails against the original notifier and
+passes with the cleanup hook.
+
+Late hydration serializers create another cycle: the shared context buffers
+a future holding a resource's child owner, and that owner holds the same
+shared context. The hydration-data stream can finish before a later render
+walk registers that serializer. Removing all arena nodes does not release
+the buffered future's owner or its arena.
+
+Root teardown now calls `SharedContext::close()` after effect quiescence and
+owner cleanup; root destruction does so through a weak context link as well,
+covering abandoned renders. The companion `vendor/hydration_context` patch
+empties the actual pending-work buffers and rejects late registrations. Merely
+dropping an owner/context link is insufficient because stream wakers can retain
+the same buffers independently. Futures drop outside the buffer locks to permit
+reentrant cleanup. Ordinary effect cleanup and forced child cleanup leave the
+live context open, and surviving owner clones retain their context access.
+Tests cover both root teardown paths while a stream still holds the buffers.
+
+Sandboxed future and stream polls now capture the owner weakly as well as the
+arena, and restore both using an unwind-safe guard. Previously a poll could
+render under one arena while the worker's owner belonged to another request.
+`OwnedView` registers a parent cleanup after rendering; that mismatch could
+attach its owner-retaining callback to a different, already-cleaned request.
+`StickyArena` now scopes its entire handler poll with `Sandboxed::with`, rather
+than relying on a pending poll to leave thread-local state activated.
+
+Cleanup registered after an owner tree is closed executes immediately, outside
+the owner lock. Otherwise an owner-retaining cleanup added after the final pass
+could form a permanent cycle. Regressions cover the captured owner/arena pair,
+restoration after panic, and cleanup registration on a closed tree.
+
+Production heap growth must still be checked after deployment; the local
+reproduction proves the retention mechanism, not that it accounts for every byte.
+
 ## Upstream status
 
 Not yet reported upstream as of 2026-10-19; the newest published
@@ -234,7 +302,7 @@ the same `try_read`-only `Plain::try_new`. Once it is fixed upstream and
   `ULTROS_PATCH.diff`.
 - Format with the crate's own `rustfmt.toml` (`cargo fmt` inside this
   directory); the root `cargo fmt --all` does not touch it.
-- `ULTROS_PATCH.diff` was last regenerated 2026-11-01 against the
+- `ULTROS_PATCH.diff` was last regenerated 2026-11-02 against the
   pristine crates.io `.crate` for 0.2.16 (byte-identical `src/` to the
   monorepo tag outside this patch's files, verified by diffing the two
   trees); regenerate it the same way after any vendored edit so the

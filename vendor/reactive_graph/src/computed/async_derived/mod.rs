@@ -142,7 +142,18 @@ pub mod suspense {
 
     impl From<Sender<()>> for LocalResourceNotifier {
         fn from(value: Sender<()>) -> Self {
-            Self(Arc::new(Mutex::new(Some(value))))
+            let inner = Arc::new(Mutex::new(Some(value)));
+            let weak = Arc::downgrade(&inner);
+            crate::owner::on_cleanup(move || {
+                if let Some(inner) = weak.upgrade() {
+                    // A pending receiver can hold a render waker that owns
+                    // this context's owner. Close the channel at cleanup,
+                    // rather than waiting for that owner to drop its contexts.
+                    let sender = inner.lock().or_poisoned().take();
+                    drop(sender);
+                }
+            });
+            Self(inner)
         }
     }
 

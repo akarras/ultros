@@ -50,6 +50,9 @@ tracing = ["dep:tracing"]
 # `[patch.crates-io]`, never as a member. Lets `cargo test` run here directly.
 [workspace]
 
+[patch.crates-io]
+hydration_context = { path = "../hydration_context" }
+
 [lib]
 name = "reactive_graph"
 path = "src/lib.rs"

@@ -56,3 +56,8 @@ cargo test --locked -p game-data-pack --test pack_sanity
 # `effect_disposed_first_run` covers the follow-up: a forced teardown must
 # wait for an effect body that is mid-run on another worker.
 cargo test --locked --manifest-path vendor/reactive_graph/Cargo.toml --features effects --lib --test memo_concurrent --test async_source_walk --test effect_disposed_first_run
+
+# Pending SSR resource waiters must release the sandboxed request arena,
+# not merely remove its values. These lifetime tests require sandboxing.
+cargo test --locked --manifest-path vendor/reactive_graph/Cargo.toml --features effects,hydration,sandboxed-arenas --test effect_disposed_first_run arena
+cargo test --locked --manifest-path vendor/hydration_context/Cargo.toml --lib
