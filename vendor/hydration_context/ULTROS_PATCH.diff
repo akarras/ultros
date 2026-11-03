@@ -1,0 +1,145 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index c01304a8..da6c880d 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -77,2 +77,5 @@ level = "warn"
+ priority = 0
+ check-cfg = ["cfg(leptos_debuginfo)"]
++
++# Standalone tests for the vendored SSR lifecycle patch.
++[workspace]
+diff --git a/rustfmt.toml b/rustfmt.toml
+new file mode 100644
+index 00000000..1eb778a6
+--- /dev/null
++++ b/rustfmt.toml
+@@ -0,0 +1,9 @@
++# Stable options
++edition = "2021"
++max_width = 80
++
++# Unstable options
++imports_granularity = "Crate"
++format_strings = true
++group_imports = "One"
++format_code_in_doc_comments = true
+diff --git a/src/lib.rs b/src/lib.rs
+index 0b4b8c9b..f86fe2ca 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -65,4 +65,9 @@ impl From<SerializedDataId> for ErrorId {
+ /// Information that will be shared between the server and the client.
+ pub trait SharedContext: Debug {
++    /// Releases pending server work when the request's root owner is torn down.
++    /// Server implementations should also reject work registered after closure.
++    /// Browser and custom contexts may keep the default no-op implementation.
++    fn close(&self) {}
++
+     /// Whether the application is running in the browser.
+     fn is_browser(&self) -> bool;
+diff --git a/src/ssr.rs b/src/ssr.rs
+index 9a959453..b902e696 100644
+--- a/src/ssr.rs
++++ b/src/ssr.rs
+@@ -27,4 +27,5 @@ type SealedErrors = Arc<RwLock<HashSet<SerializedDataId>>>;
+ /// The shared context that should be used on the server side.
+ pub struct SsrSharedContext {
++    closed: AtomicBool,
+     id: AtomicUsize,
+     non_hydration_id: AtomicUsize,
+@@ -94,4 +95,17 @@ impl Debug for SsrSharedContext {
+
+ impl SharedContext for SsrSharedContext {
++    fn close(&self) {
++        if self.closed.swap(true, Ordering::SeqCst) {
++            return;
++        }
++        // Buffers can be shared with a dropped stream's outstanding wakers.
++        // Empty the actual buffers, rather than only dropping the context's
++        // Arc. Drop futures after releasing both locks: their owners can
++        // reenter this context during cleanup.
++        let serializers = mem::take(&mut *self.async_buf.write().or_poisoned());
++        let deferred = mem::take(&mut *self.deferred.lock().or_poisoned());
++        drop((serializers, deferred));
++    }
++
+     fn is_browser(&self) -> bool {
+         false
+@@ -109,5 +123,14 @@ impl SharedContext for SsrSharedContext {
+
+     fn write_async(&self, id: SerializedDataId, fut: PinnedFuture<String>) {
+-        self.async_buf.write().or_poisoned().push((id, fut))
++        let rejected = {
++            let mut buffer = self.async_buf.write().or_poisoned();
++            if self.closed.load(Ordering::SeqCst) {
++                Some(fut)
++            } else {
++                buffer.push((id, fut));
++                None
++            }
++        };
++        drop(rejected);
+     }
+
+@@ -238,5 +261,14 @@ impl SharedContext for SsrSharedContext {
+
+     fn defer_stream(&self, wait_for: PinnedFuture<()>) {
+-        self.deferred.lock().or_poisoned().push(wait_for);
++        let rejected = {
++            let mut buffer = self.deferred.lock().or_poisoned();
++            if self.closed.load(Ordering::SeqCst) {
++                Some(wait_for)
++            } else {
++                buffer.push(wait_for);
++                None
++            }
++        };
++        drop(rejected);
+     }
+
+@@ -341,4 +373,45 @@ mod tests {
+     use std::fmt;
+
++    #[test]
++    fn close_releases_pending_work_even_while_a_stream_retains_the_buffers() {
++        struct Probe(Arc<AtomicUsize>);
++        impl Drop for Probe {
++            fn drop(&mut self) {
++                self.0.fetch_add(1, Ordering::SeqCst);
++            }
++        }
++        let context = Arc::new(SsrSharedContext::new());
++        let weak = Arc::downgrade(&context);
++        let stream = context.pending_data().unwrap();
++        let dropped = Arc::new(AtomicUsize::new(0));
++        for closing in [false, true] {
++            if closing {
++                context.close();
++                context.close(); // Idempotent, including reentrant teardown.
++                assert_eq!(dropped.load(Ordering::SeqCst), 2);
++            }
++            let probe = Probe(dropped.clone());
++            let captured_context = context.clone();
++            context.write_async(
++                SerializedDataId::new(1),
++                Box::pin(async move {
++                    std::future::pending::<()>().await;
++                    drop((probe, captured_context));
++                    String::new()
++                }),
++            );
++            let probe = Probe(dropped.clone());
++            let captured_context = context.clone();
++            context.defer_stream(Box::pin(async move {
++                std::future::pending::<()>().await;
++                drop((probe, captured_context));
++            }));
++        }
++        assert_eq!(dropped.load(Ordering::SeqCst), 4);
++        drop(context);
++        assert!(weak.upgrade().is_none());
++        drop(stream);
++    }
++
+     #[derive(Debug)]
+     struct CustomError(&'static str);

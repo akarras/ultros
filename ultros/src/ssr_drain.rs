@@ -170,26 +170,17 @@ where
     StickyArena::new(async move { render.await.map(DrainOnDrop::wrap) })
 }
 
-/// Keeps a render's reactive arena active across its await points.
+/// Keeps a render's reactive context active across its await points.
 ///
-/// leptos' arena (where every signal lives) is a thread-local that a
-/// `Sandboxed` poll sets and nothing ever restores, so it only follows the
-/// request while one of the request's `Sandboxed` futures is being polled.
-/// `leptos_integration_utils::from_app` reads reactive values *between*
-/// those polls: `inject_meta_context` evaluates every `<Title>` closure
-/// after a `tick().await`. Whatever the worker thread ran in the meantime
-/// decides which arena that read sees — another request's ("you tried to
-/// access a reactive value … already disposed") or none ("the
-/// `sandboxed-arenas` feature is active, but no Arena is active") — and the
-/// render panics. GlitchTip #7382 / #7383 (the 404 page's title) and the
-/// item page's title (`xiv_data.rs` reading the locale).
+/// Leptos scopes its owner and arena around inner future polls, but
+/// `from_app` also reads reactive values between those polls: meta injection
+/// evaluates `<Title>` closures after a `tick().await`. A shared worker can
+/// otherwise resume that glue under another request's thread-local context.
 ///
-/// This wrapper re-activates, before every poll, the arena that was active
-/// when the previous poll returned: that is the request's own arena, set by
-/// the last `Sandboxed` poll inside the render. `Sandboxed` is the only
-/// public handle on the thread-local — constructing one captures the current
-/// arena, and polling it re-activates that arena before polling its inner
-/// future, which here is never ready.
+/// Capture the context established by each pending poll, then run the next
+/// whole handler poll inside that scope. `Sandboxed::with` restores the caller
+/// afterwards; polling a pending sandbox just for its side effects would no
+/// longer activate the context for the handler that follows it.
 struct StickyArena<F> {
     inner: Pin<Box<F>>,
     arena: Option<Sandboxed<std::future::Pending<()>>>,
@@ -209,16 +200,21 @@ impl<F: Future> Future for StickyArena<F> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        if let Some(arena) = this.arena.as_mut() {
-            // Only ever `Pending`; polled for its side effect of setting the
-            // arena. `Pending` registers no waker, so nothing leaks.
-            let _ = Pin::new(arena).poll(cx);
+        let previous = this.arena.take();
+        let mut poll = || {
+            let polled = this.inner.as_mut().poll(cx);
+            // Capture inside the scope, before its guard restores the caller.
+            // The first polls can await file IO before creating the root owner,
+            // so retain the context established by the latest pending poll.
+            if polled.is_pending() {
+                this.arena = Some(Sandboxed::new(std::future::pending()));
+            }
+            polled
+        };
+        match previous {
+            Some(arena) => arena.with(poll),
+            None => poll(),
         }
-        let polled = this.inner.as_mut().poll(cx);
-        if polled.is_pending() {
-            this.arena = Some(Sandboxed::new(std::future::pending()));
-        }
-        polled
     }
 }
 
@@ -1153,6 +1149,16 @@ mod tests {
                 0,
                 "concurrent item render {render} left values in its arena"
             );
+            let arena = root.arena_weak_reference();
+            drop(root_slot.lock().unwrap().take());
+            drop(root);
+            let released = tokio::time::timeout(Duration::from_secs(5), async {
+                while arena.upgrade().is_some() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await;
+            assert!(released.is_ok(), "render {render} retained its empty arena");
         }
     }
 }

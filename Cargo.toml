@@ -190,6 +190,7 @@ ironworks = { git = "https://github.com/ackwell/ironworks", rev = "3d5db8ff" }
 # panics SSR renders (`arc_memo.rs:334: called Option::unwrap() on a None
 # value`). Details and the upstream-shaped diff: vendor/reactive_graph/ULTROS_PATCH.md
 reactive_graph = { path = "vendor/reactive_graph" }
+hydration_context = { path = "vendor/hydration_context" }
 loro-kv-store = { path = "vendor/loro-kv-store" }
 #leptos = { path = "../leptos/leptos" }
 # leptos_reactive = { git = "https://github.com/leptos-rs/leptos.git" }

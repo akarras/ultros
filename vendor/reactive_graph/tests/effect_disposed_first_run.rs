@@ -289,3 +289,338 @@ async fn an_effect_body_never_starts_after_its_tree_is_torn_down() {
         "an effect body started after its tree was torn down"
     );
 }
+
+#[cfg(feature = "sandboxed-arenas")]
+#[tokio::test]
+async fn completed_resource_and_effect_release_arena() {
+    use reactive_graph::{computed::AsyncDerived, traits::Read};
+    _ = Executor::init_tokio();
+    let owner = Owner::new();
+    owner.set();
+    let resource = AsyncDerived::new(|| async { 42 });
+    Effect::new_isomorphic(move |_| {
+        let _ = resource.read();
+    });
+    settle().await;
+    owner.cleanup();
+    settle().await;
+    assert_eq!(owner.arena_len(), 0);
+    let arena = owner.arena_weak_reference();
+    drop(owner);
+    assert!(arena.upgrade().is_none());
+}
+
+/// SSR LocalResource uses a mock derived resource that stays pending forever.
+/// Its suspense waiter must end at teardown even though readiness never fires.
+#[cfg(feature = "sandboxed-arenas")]
+#[tokio::test]
+async fn mock_resource_waiter_releases_arena_after_cleanup() {
+    use reactive_graph::{
+        computed::{suspense::SuspenseContext, ArcAsyncDerived},
+        owner::{provide_context, StoredValue},
+        signal::ArcRwSignal,
+        traits::ReadUntracked,
+    };
+    _ = Executor::init_tokio();
+    for cycle in 0..32 {
+        let owner = Owner::new();
+        owner.set();
+        // Give this request a real backing buffer, as item-page signals do.
+        for value in 0..256 {
+            let _ = StoredValue::new(value);
+        }
+        let suspense = SuspenseContext {
+            tasks: ArcRwSignal::new(Default::default()),
+        };
+        provide_context(suspense.clone());
+        let resource = ArcAsyncDerived::<i32>::new_mock(std::future::pending);
+        let _ = resource.read_untracked();
+        // Cover cancellation both before the task is first polled and
+        // after it has registered its own waker.
+        if cycle % 2 != 0 {
+            settle().await;
+        }
+        assert_eq!(suspense.tasks.read_untracked().len(), 1);
+        drop(resource);
+        owner.cleanup();
+        settle().await;
+        assert_eq!(suspense.tasks.read_untracked().len(), 0);
+        assert_eq!(owner.arena_len(), 0);
+        let arena = owner.arena_weak_reference();
+        drop(owner);
+        assert!(
+            arena.upgrade().is_none(),
+            "a waiter for a mock resource retained the arena"
+        );
+    }
+}
+
+#[cfg(feature = "sandboxed-arenas")]
+#[tokio::test]
+async fn resolved_resource_waiter_releases_arena_before_cleanup() {
+    use reactive_graph::{
+        computed::{suspense::SuspenseContext, ArcAsyncDerived},
+        owner::provide_context,
+        signal::ArcRwSignal,
+        traits::ReadUntracked,
+    };
+    _ = Executor::init_tokio();
+    let owner = Owner::new();
+    owner.set();
+    let suspense = SuspenseContext {
+        tasks: ArcRwSignal::new(Default::default()),
+    };
+    provide_context(suspense.clone());
+    let (tx, rx) = futures::channel::oneshot::channel::<i32>();
+    let rx = Arc::new(std::sync::Mutex::new(Some(rx)));
+    let resource = ArcAsyncDerived::new(move || {
+        let rx = rx.lock().unwrap().take().unwrap();
+        async move { rx.await.unwrap() }
+    });
+    let _ = resource.read_untracked();
+    settle().await;
+    assert!(!suspense.tasks.read_untracked().is_empty());
+    tx.send(42).unwrap();
+    settle().await;
+    assert_eq!(*resource.read_untracked(), Some(42));
+    assert_eq!(suspense.tasks.read_untracked().len(), 0);
+    drop(resource);
+    owner.cleanup();
+    settle().await;
+    let arena = owner.arena_weak_reference();
+    drop(owner);
+    assert!(arena.upgrade().is_none());
+}
+#[cfg(feature = "sandboxed-arenas")]
+#[tokio::test]
+async fn reader_cleanup_releases_waiter_arena_without_cancelling_resource() {
+    use reactive_graph::{
+        computed::{suspense::SuspenseContext, ArcAsyncDerived},
+        owner::provide_context,
+        signal::ArcRwSignal,
+        traits::ReadUntracked,
+    };
+    _ = Executor::init_tokio();
+    let root = Owner::new();
+    root.set();
+    let (tx, rx) = futures::channel::oneshot::channel::<i32>();
+    let rx = Arc::new(std::sync::Mutex::new(Some(rx)));
+    let resource = ArcAsyncDerived::new(move || {
+        let rx = rx.lock().unwrap().take().unwrap();
+        async move { rx.await.unwrap() }
+    });
+    settle().await;
+    let reader = root.child();
+    let suspense = SuspenseContext {
+        tasks: ArcRwSignal::new(Default::default()),
+    };
+    reader.with(|| {
+        provide_context(suspense.clone());
+        let _ = resource.read_untracked();
+    });
+    settle().await;
+    assert_eq!(suspense.tasks.read_untracked().len(), 1);
+    reader.cleanup();
+    settle().await;
+    assert!(suspense.tasks.read_untracked().is_empty());
+    tx.send(42).unwrap();
+    settle().await;
+    assert_eq!(*resource.read_untracked(), Some(42));
+    drop(resource);
+    drop(reader);
+    root.cleanup();
+    settle().await;
+    let arena = root.arena_weak_reference();
+    drop(root);
+    assert!(arena.upgrade().is_none());
+}
+#[cfg(feature = "sandboxed-arenas")]
+#[test]
+fn cleanup_restores_outer_arena_before_spawning_waiters() {
+    use reactive_graph::owner::{on_cleanup, Sandboxed};
+    let cleaned = Owner::new();
+    cleaned.set();
+    on_cleanup(|| {});
+    let arena = cleaned.arena_weak_reference();
+    let outer = Owner::default();
+    let future = outer.with(|| {
+        cleaned.cleanup();
+        Sandboxed::new(std::future::pending::<()>())
+    });
+    drop(cleaned);
+    assert!(
+        arena.upgrade().is_none(),
+        "the next task captured the cleaned owner's arena"
+    );
+    drop(future);
+}
+#[cfg(feature = "sandboxed-arenas")]
+#[test]
+fn local_resource_notifier_cleanup_releases_waiting_arena() {
+    use futures::{
+        task::{waker, ArcWake},
+        FutureExt,
+    };
+    use reactive_graph::{
+        computed::suspense::LocalResourceNotifier, owner::provide_context,
+    };
+    use std::{future::Future, pin::Pin, task::Context};
+    struct RenderWaker(Owner);
+    impl ArcWake for RenderWaker {
+        fn wake_by_ref(this: &Arc<Self>) {
+            let _ = this.0.debug_id();
+        }
+    }
+    let owner = Owner::default();
+    owner.set();
+    let arena = owner.arena_weak_reference();
+    let (tx, mut rx) = futures::channel::oneshot::channel();
+    provide_context(LocalResourceNotifier::from(tx));
+    // Model a pending SSR stream whose waker keeps its scoped owner alive.
+    let waker = waker(Arc::new(RenderWaker(owner.clone())));
+    assert!(Pin::new(&mut rx)
+        .poll(&mut Context::from_waker(&waker))
+        .is_pending());
+    drop(waker);
+    owner.cleanup();
+    drop(owner);
+    assert!(
+        arena.upgrade().is_none(),
+        "the notifier context retained the render owner through its \
+         receiver's waker"
+    );
+    assert!(matches!(rx.now_or_never(), Some(Err(_))));
+}
+#[cfg(all(feature = "sandboxed-arenas", feature = "hydration"))]
+#[test]
+fn root_teardown_releases_late_hydration_resource_arena() {
+    use hydration_context::{
+        SerializedDataId, SharedContext, SsrSharedContext,
+    };
+    for forced in [false, true] {
+        let shared = Arc::new(SsrSharedContext::new());
+        let root = Owner::new_root(Some(shared.clone()));
+        // A stream or one of its wakers can retain the buffers independently
+        // of the SsrSharedContext Arc. Teardown must empty those buffers.
+        let stream = shared.pending_data().unwrap();
+        let arena = root.arena_weak_reference();
+        let child = root.with(Owner::new);
+        // A late resource serializer can remain buffered after the data stream
+        // ends. Its resource/fetcher owns a child owner with the same context.
+        shared.write_async(
+            SerializedDataId::new(0),
+            Box::pin(async move {
+                std::future::pending::<()>().await;
+                drop(child);
+                String::new()
+            }),
+        );
+        drop(shared);
+        if forced {
+            root.unset_with_forced_cleanup();
+        } else {
+            drop(root);
+        }
+        assert!(
+            arena.upgrade().is_none(),
+            "the hydration buffer and child owner retained each other after \
+             root teardown"
+        );
+        drop(stream);
+    }
+}
+#[cfg(all(feature = "sandboxed-arenas", feature = "hydration"))]
+#[test]
+fn ordinary_cleanup_keeps_shared_context_for_live_arena() {
+    use hydration_context::{SharedContext, SsrSharedContext};
+    let shared: Arc<dyn SharedContext + Send + Sync> =
+        Arc::new(SsrSharedContext::new());
+    let root = Owner::new_root(Some(shared.clone()));
+    let child = root.with(Owner::new);
+    root.cleanup();
+    child.clone().unset_with_forced_cleanup();
+    assert!(Arc::ptr_eq(&root.shared_context().unwrap(), &shared));
+    assert!(Arc::ptr_eq(&child.shared_context().unwrap(), &shared));
+    let survivor = root.clone();
+    root.unset_with_forced_cleanup();
+    assert!(Arc::ptr_eq(&survivor.shared_context().unwrap(), &shared));
+    assert!(Arc::ptr_eq(&child.shared_context().unwrap(), &shared));
+}
+#[cfg(feature = "sandboxed-arenas")]
+#[test]
+fn sandbox_poll_keeps_the_captured_owner_and_arena_together() {
+    use reactive_graph::owner::Sandboxed;
+    use std::{
+        future::{poll_fn, Future},
+        pin::Pin,
+        task::{Context, Poll},
+    };
+    let a = Owner::default();
+    let b = Owner::default();
+    let mut task = a.with(|| {
+        Sandboxed::new(poll_fn(|_| {
+            Poll::Ready(Owner::current().unwrap().debug_id())
+        }))
+    });
+    let result = b.with(|| {
+        let result = Pin::new(&mut task)
+            .poll(&mut Context::from_waker(futures::task::noop_waker_ref()));
+        assert_eq!(Owner::current().unwrap().debug_id(), b.debug_id());
+        result
+    });
+    assert_eq!(result, Poll::Ready(a.debug_id()));
+}
+
+#[cfg(feature = "sandboxed-arenas")]
+#[test]
+fn late_cleanup_cannot_create_a_cycle_in_a_closed_arena() {
+    use reactive_graph::owner::on_cleanup;
+    let root = Owner::default();
+    root.set();
+    let survivor = root.clone();
+    let arena = root.arena_weak_reference();
+    root.unset_with_forced_cleanup();
+    let ran = Arc::new(AtomicBool::new(false));
+    survivor.with(|| {
+        let captured_owner = survivor.clone();
+        let ran = ran.clone();
+        on_cleanup(move || {
+            drop(captured_owner);
+            ran.store(true, Ordering::SeqCst);
+        });
+    });
+    assert!(
+        ran.load(Ordering::SeqCst),
+        "cleanup registered after teardown must run immediately"
+    );
+    drop(survivor);
+    assert!(arena.upgrade().is_none());
+}
+#[cfg(feature = "sandboxed-arenas")]
+#[test]
+fn sandbox_panic_restores_the_callers_owner_and_arena() {
+    use reactive_graph::owner::Sandboxed;
+    use std::{
+        future::{poll_fn, Future},
+        pin::Pin,
+        task::{Context, Poll},
+    };
+    let a = Owner::default();
+    let b = Owner::default();
+    let _a_value = a.with(|| RwSignal::new(11));
+    let b_value = b.with(|| RwSignal::new(22));
+    let mut task = a.with(|| {
+        Sandboxed::new(poll_fn(|_| -> Poll<()> { panic!("sandbox probe") }))
+    });
+    b.with(|| {
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                Pin::new(&mut task).poll(&mut Context::from_waker(
+                    futures::task::noop_waker_ref(),
+                ))
+            }));
+        assert!(result.is_err());
+        assert_eq!(Owner::current().unwrap().debug_id(), b.debug_id());
+        assert_eq!(b_value.get(), 22);
+    });
+}

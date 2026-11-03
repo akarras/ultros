@@ -654,9 +654,23 @@ impl<T: 'static> ReadUntracked for ArcAsyncDerived<T> {
                 None => {
                     // otherwise, spawn a task to wait for it to be ready, then drop the handle,
                     // which will notify the suspense
+                    // A mock/client-only resource never becomes ready on the
+                    // server. Its waiter owns the waker list that holds the
+                    // waiter's task waker, so dropping the resource alone
+                    // cannot release this task (and its sandboxed arena).
+                    // End the waiter when its reading owner is cleaned up.
+                    let (abort, registration) =
+                        futures::future::AbortHandle::new_pair();
+                    Owner::on_cleanup(move || abort.abort());
                     crate::spawn(async move {
-                        ready.await;
-                        drop(handle);
+                        let _ = futures::future::Abortable::new(
+                            async move {
+                                ready.await;
+                                drop(handle);
+                            },
+                            registration,
+                        )
+                        .await;
                     });
                 }
             }

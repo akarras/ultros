@@ -1,22 +1,25 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 315f89a..5f338c9 100644
+index 315f89a9..1192ee90 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -46,6 +46,10 @@ serde = ["dep:serde"]
+@@ -46,6 +46,13 @@ serde = ["dep:serde"]
  subsecond = ["dep:subsecond"]
  tracing = ["dep:tracing"]
- 
+
 +# Standalone: this vendored copy is consumed through the root workspace's
 +# `[patch.crates-io]`, never as a member. Lets `cargo test` run here directly.
 +[workspace]
 +
++[patch.crates-io]
++hydration_context = { path = "../hydration_context" }
++
  [lib]
  name = "reactive_graph"
  path = "src/lib.rs"
-@@ -70,6 +74,10 @@ path = "tests/effect_immediate.rs"
+@@ -70,6 +77,10 @@ path = "tests/effect_immediate.rs"
  name = "memo"
  path = "tests/memo.rs"
- 
+
 +[[test]]
 +name = "memo_concurrent"
 +path = "tests/memo_concurrent.rs"
@@ -24,7 +27,7 @@ index 315f89a..5f338c9 100644
  [[test]]
  name = "signal"
  path = "tests/signal.rs"
-@@ -184,3 +192,11 @@ check-cfg = [
+@@ -184,3 +195,11 @@ check-cfg = [
      "cfg(leptos_debuginfo)",
      "cfg(rustc_nightly)",
  ]
@@ -37,13 +40,13 @@ index 315f89a..5f338c9 100644
 +name = "effect_disposed_first_run"
 +path = "tests/effect_disposed_first_run.rs"
 diff --git a/src/computed/arc_memo.rs b/src/computed/arc_memo.rs
-index 007b06d..5a69db5 100644
+index 007b06de..5a69db55 100644
 --- a/src/computed/arc_memo.rs
 +++ b/src/computed/arc_memo.rs
 @@ -328,12 +328,57 @@ where
      fn try_read_untracked(&self) -> Option<Self::Value> {
          self.update_if_necessary();
- 
+
 -        Mapped::try_new(Arc::clone(&self.inner.value), |t| {
 -            // safe to unwrap here because update_if_necessary
 -            // guarantees the value is Some
@@ -103,7 +106,7 @@ index 007b06d..5a69db5 100644
 +        }
      }
  }
- 
+
 @@ -356,3 +401,120 @@ where
          ArcMemo::new(move |_| value.get())
      }
@@ -225,8 +228,62 @@ index 007b06d..5a69db5 100644
 +        assert!(result.unwrap() > 0);
 +    }
 +}
+diff --git a/src/computed/async_derived/arc_async_derived.rs b/src/computed/async_derived/arc_async_derived.rs
+index 717f29c7..d87791e8 100644
+--- a/src/computed/async_derived/arc_async_derived.rs
++++ b/src/computed/async_derived/arc_async_derived.rs
+@@ -654,9 +654,23 @@ impl<T: 'static> ReadUntracked for ArcAsyncDerived<T> {
+                 None => {
+                     // otherwise, spawn a task to wait for it to be ready, then drop the handle,
+                     // which will notify the suspense
++                    // A mock/client-only resource never becomes ready on the
++                    // server. Its waiter owns the waker list that holds the
++                    // waiter's task waker, so dropping the resource alone
++                    // cannot release this task (and its sandboxed arena).
++                    // End the waiter when its reading owner is cleaned up.
++                    let (abort, registration) =
++                        futures::future::AbortHandle::new_pair();
++                    Owner::on_cleanup(move || abort.abort());
+                     crate::spawn(async move {
+-                        ready.await;
+-                        drop(handle);
++                        let _ = futures::future::Abortable::new(
++                            async move {
++                                ready.await;
++                                drop(handle);
++                            },
++                            registration,
++                        )
++                        .await;
+                     });
+                 }
+             }
+diff --git a/src/computed/async_derived/mod.rs b/src/computed/async_derived/mod.rs
+index f6e0c12d..0761187f 100644
+--- a/src/computed/async_derived/mod.rs
++++ b/src/computed/async_derived/mod.rs
+@@ -142,7 +142,18 @@ pub mod suspense {
+
+     impl From<Sender<()>> for LocalResourceNotifier {
+         fn from(value: Sender<()>) -> Self {
+-            Self(Arc::new(Mutex::new(Some(value))))
++            let inner = Arc::new(Mutex::new(Some(value)));
++            let weak = Arc::downgrade(&inner);
++            crate::owner::on_cleanup(move || {
++                if let Some(inner) = weak.upgrade() {
++                    // A pending receiver can hold a render waker that owns
++                    // this context's owner. Close the channel at cleanup,
++                    // rather than waiting for that owner to drop its contexts.
++                    let sender = inner.lock().or_poisoned().take();
++                    drop(sender);
++                }
++            });
++            Self(inner)
+         }
+     }
+
 diff --git a/src/computed/inner.rs b/src/computed/inner.rs
-index 1bb9057..33857ca 100644
+index 1bb90573..33857ca1 100644
 --- a/src/computed/inner.rs
 +++ b/src/computed/inner.rs
 @@ -8,7 +8,8 @@ use crate::{
@@ -237,7 +294,7 @@ index 1bb9057..33857ca 100644
 +    sync::{Arc, Condvar, Mutex, RwLock, RwLockWriteGuard},
 +    thread::{self, ThreadId},
  };
- 
+
  pub struct MemoInner<T, S>
 @@ -21,6 +22,76 @@ where
      pub(crate) fun: Arc<dyn Fn(Option<T>) -> (T, bool) + Send + Sync>,
@@ -314,7 +371,7 @@ index 1bb9057..33857ca 100644
 +        self.lock.released.notify_all();
 +    }
  }
- 
+
  pub(crate) struct MemoInnerReactivity {
 @@ -58,6 +129,7 @@ where
                  subscribers: SubscriberSet::new(),
@@ -326,7 +383,7 @@ index 1bb9057..33857ca 100644
  }
 @@ -124,8 +196,48 @@ where
          }
- 
+
          if needs_update(&self.reactivity) {
 +            // Another thread may already be recomputing this memo. Wait for
 +            // it rather than racing it: once it finishes, the memo is `Clean`
@@ -370,7 +427,7 @@ index 1bb9057..33857ca 100644
 +            self.reactivity.write().or_poisoned().state =
 +                ReactiveNodeState::Clean;
 +            let _unwind = RecomputeUnwindGuard(&self.reactivity);
- 
+
              /// codegen optimisation:
              fn inner_1(
 @@ -155,10 +267,10 @@ where
@@ -394,7 +451,7 @@ index 1bb9057..33857ca 100644
 +            // Only now -- with the value stored and the state `Clean` -- may
 +            // waiting readers proceed.
 +            drop(compute_guard);
- 
+
              changed
          } else {
              /// codegen optimisation:
@@ -411,11 +468,11 @@ index 1bb9057..33857ca 100644
              }
              inner(&self.reactivity)
 diff --git a/src/effect/effect.rs b/src/effect/effect.rs
-index f05f34b..52f21e9 100644
+index f05f34b5..52f21e99 100644
 --- a/src/effect/effect.rs
 +++ b/src/effect/effect.rs
 @@ -190,11 +190,18 @@ impl Effect<LocalStorage> {
- 
+
                              let old_value =
                                  mem::take(&mut *value.write().or_poisoned());
 -                            let new_value = owner.with_cleanup(|| {
@@ -440,7 +497,7 @@ index f05f34b..52f21e9 100644
 @@ -339,6 +346,12 @@ impl Effect<LocalStorage> {
                          {
                              subscriber.clear_sources(&subscriber);
- 
+
 +                            // Both closures run under one in-flight guard;
 +                            // see `Owner::run_effect_body`.
 +                            let Some(_run) = owner.effect_body_guard() else {
@@ -452,14 +509,14 @@ index f05f34b..52f21e9 100644
                              );
 @@ -365,6 +378,7 @@ impl Effect<LocalStorage> {
                                  Some(new_dep_value);
- 
+
                              first_run = false;
 +                            drop(_run);
                          }
                      }
                  }
 @@ -426,11 +440,16 @@ impl Effect<SyncStorage> {
- 
+
                          let old_value =
                              mem::take(&mut *value.write().or_poisoned());
 -                        let new_value = owner.with_cleanup(|| {
@@ -482,7 +539,7 @@ index f05f34b..52f21e9 100644
 @@ -477,6 +496,12 @@ impl Effect<SyncStorage> {
                          {
                              subscriber.clear_sources(&subscriber);
- 
+
 +                            // Both closures run under one in-flight guard;
 +                            // see `Owner::run_effect_body`.
 +                            let Some(_run) = owner.effect_body_guard() else {
@@ -494,20 +551,20 @@ index f05f34b..52f21e9 100644
                              );
 @@ -503,6 +528,7 @@ impl Effect<SyncStorage> {
                                  Some(new_dep_value);
- 
+
                              first_run = false;
 +                            drop(_run);
                          }
                      }
                  }
 diff --git a/src/owner.rs b/src/owner.rs
-index b32ea75..fd2f352 100644
+index b32ea756..e481c607 100644
 --- a/src/owner.rs
 +++ b/src/owner.rs
 @@ -12,6 +12,7 @@ use std::{
      sync::{Arc, RwLock, Weak},
  };
- 
+
 +mod activity;
  mod arc_stored_value;
  mod arena;
@@ -529,7 +586,7 @@ index b32ea75..fd2f352 100644
  pub use arena_item::*;
  pub use context::*;
  pub use storage::*;
-@@ -174,6 +179,11 @@ impl Owner {
+@@ -174,7 +179,14 @@ impl Owner {
                      .and_then(|parent| parent.upgrade())
                      .map(|parent| parent.read().or_poisoned().arena.clone())
                      .unwrap_or_default(),
@@ -539,17 +596,24 @@ index b32ea75..fd2f352 100644
 +                    .map(|parent| parent.read().or_poisoned().activity.clone())
 +                    .unwrap_or_default(),
                  paused: false,
++                #[cfg(feature = "hydration")]
++                root_shared_context: None,
              })),
              #[cfg(feature = "hydration")]
-@@ -208,6 +218,7 @@ impl Owner {
+             shared_context,
+@@ -208,7 +220,11 @@ impl Owner {
                  children: Default::default(),
                  #[cfg(feature = "sandboxed-arenas")]
                  arena: Default::default(),
 +                activity: Default::default(),
                  paused: false,
++                root_shared_context: shared_context
++                    .as_ref()
++                    .map(Arc::downgrade),
              })),
              #[cfg(feature = "hydration")]
-@@ -242,6 +253,7 @@ impl Owner {
+             shared_context,
+@@ -242,6 +258,7 @@ impl Owner {
          let mut inner = self.inner.write().or_poisoned();
          #[cfg(feature = "sandboxed-arenas")]
          let arena = inner.arena.clone();
@@ -557,18 +621,21 @@ index b32ea75..fd2f352 100644
          let paused = inner.paused;
          let child = Self {
              inner: Arc::new(RwLock::new(OwnerInner {
-@@ -252,6 +264,7 @@ impl Owner {
+@@ -252,7 +269,10 @@ impl Owner {
                  children: Default::default(),
                  #[cfg(feature = "sandboxed-arenas")]
                  arena,
 +                activity,
                  paused,
++                #[cfg(feature = "hydration")]
++                root_shared_context: None,
              })),
              #[cfg(feature = "hydration")]
-@@ -261,6 +274,23 @@ impl Owner {
+             shared_context: self.shared_context.clone(),
+@@ -261,6 +281,32 @@ impl Owner {
          child
      }
- 
+
 +    /// The arena this owner's nodes are stored in and removed from at
 +    /// cleanup.
 +    #[cfg(feature = "sandboxed-arenas")]
@@ -586,10 +653,19 @@ index b32ea75..fd2f352 100644
 +        self.arena().read().or_poisoned().len()
 +    }
 +
++    /// A weak lifetime probe for this owner's arena allocation.
++    /// Does not keep either the owner or its arena alive.
++    #[cfg(feature = "sandboxed-arenas")]
++    #[doc(hidden)]
++    pub fn arena_weak_reference(&self) -> Weak<dyn Send + Sync> {
++        let arena: Arc<dyn Send + Sync> = self.arena();
++        Arc::downgrade(&arena)
++    }
++
      /// Sets this as the current `Owner`.
      pub fn set(&self) {
          OWNER.with_borrow_mut(|owner| *owner = Some(self.downgrade()));
-@@ -271,17 +301,43 @@ impl Owner {
+@@ -271,17 +317,43 @@ impl Owner {
      /// Runs the given function with this as the current `Owner`.
      pub fn with<T>(&self, fun: impl FnOnce() -> T) -> T {
          // codegen optimisation:
@@ -619,9 +695,9 @@ index b32ea75..fd2f352 100644
 +            OWNER.with_borrow_mut(|o| o.replace(self_.downgrade()))
          }
          let prev = inner_1(self);
- 
+
          let val = fun();
- 
+
          // monomorphisation optimisation:
 +        #[cfg(feature = "sandboxed-arenas")]
 +        fn inner_2(
@@ -637,7 +713,31 @@ index b32ea75..fd2f352 100644
          fn inner_2(prev: Option<WeakOwner>) {
              OWNER.with_borrow_mut(|o| *o = prev);
          }
-@@ -368,9 +424,40 @@ impl Owner {
+@@ -317,12 +389,20 @@ impl Owner {
+             let fun = {
+                 let arena = Arc::clone(&inner.arena);
+                 move || {
+-                    Arena::set(&arena);
+-                    fun()
++                    let previous = Arena::replace(&arena);
++                    fun();
++                    Arena::restore(previous);
+                 }
+             };
+
+-            inner.cleanups.push(Box::new(fun));
++            if inner.activity.is_closed() {
++                // Render glue may register a keep-alive after the final
++                // cleanup pass. Storing it now can retain an owner forever.
++                drop(inner);
++                fun();
++            } else {
++                inner.cleanups.push(Box::new(fun));
++            }
+         }
+     }
+
+@@ -368,7 +448,47 @@ impl Owner {
                  mem::take(owner);
              }
          });
@@ -656,8 +756,17 @@ index b32ea75..fd2f352 100644
 +            activity.wait_idle();
 +        }
          self.cleanup();
-     }
- 
++        #[cfg(feature = "hydration")]
++        if is_root {
++            // The stream may have finished before a late resource registered
++            // its serializer. Release those futures, which can hold owners
++            // and stream wakers pointing back into the shared data buffers.
++            if let Some(context) = &self.shared_context {
++                context.close();
++            }
++        }
++    }
++
 +    /// Runs an effect body, marking it as in flight for this owner's tree so
 +    /// a forced teardown of the tree waits for it — see `activity`. Returns
 +    /// `None` without running it once the tree's root has been torn down.
@@ -673,22 +782,50 @@ index b32ea75..fd2f352 100644
 +    /// guard drops — see [`Owner::run_effect_body`].
 +    pub(crate) fn effect_body_guard(&self) -> Option<RunGuard> {
 +        self.inner.read().or_poisoned().activity.enter()
-+    }
-+
+     }
+
      /// Returns the current [`SharedContext`], if any.
-     #[cfg(feature = "hydration")]
-     pub fn current_shared_context(
-@@ -502,6 +589,8 @@ pub(crate) struct OwnerInner {
+@@ -379,7 +499,7 @@ impl Owner {
+             o.borrow()
+                 .as_ref()
+                 .and_then(|o| o.upgrade())
+-                .and_then(|current| current.shared_context.clone())
++                .and_then(|current| current.shared_context())
+         })
+     }
+
+@@ -393,7 +513,7 @@ impl Owner {
+             let sc = OWNER.with_borrow(|o| {
+                 o.as_ref()
+                     .and_then(|o| o.upgrade())
+-                    .and_then(|current| current.shared_context.clone())
++                    .and_then(|current| current.shared_context())
+             });
+             match sc {
+                 None => fun(),
+@@ -419,7 +539,7 @@ impl Owner {
+             let sc = OWNER.with_borrow(|o| {
+                 o.as_ref()
+                     .and_then(|o| o.upgrade())
+-                    .and_then(|current| current.shared_context.clone())
++                    .and_then(|current| current.shared_context())
+             });
+             match sc {
+                 None => fun(),
+@@ -502,7 +622,11 @@ pub(crate) struct OwnerInner {
      pub children: Vec<Weak<RwLock<OwnerInner>>>,
      #[cfg(feature = "sandboxed-arenas")]
      arena: Arc<RwLock<ArenaMap>>,
 +    /// Shared by every owner in the tree; see `activity`.
 +    activity: Arc<activity::Activity>,
      paused: bool,
++    #[cfg(feature = "hydration")]
++    root_shared_context: Option<Weak<dyn SharedContext + Send + Sync>>,
  }
- 
-@@ -518,6 +607,11 @@ impl Debug for OwnerInner {
- 
+
+ impl Debug for OwnerInner {
+@@ -518,6 +642,11 @@ impl Debug for OwnerInner {
+
  impl Drop for OwnerInner {
      fn drop(&mut self) {
 +        // A root dropped without a forced cleanup (an abandoned render) tears
@@ -699,7 +836,7 @@ index b32ea75..fd2f352 100644
          for child in std::mem::take(&mut self.children) {
              if let Some(child) = child.upgrade() {
                  child.cleanup();
-@@ -541,7 +635,21 @@ impl Drop for OwnerInner {
+@@ -541,10 +670,30 @@ impl Drop for OwnerInner {
              {
                  let mut arena = self.arena.write().or_poisoned();
                  for node in nodes {
@@ -722,7 +859,16 @@ index b32ea75..fd2f352 100644
                  }
              }
          }
-@@ -584,7 +692,21 @@ impl Cleanup for RwLock<OwnerInner> {
++        #[cfg(feature = "hydration")]
++        if let Some(context) =
++            self.root_shared_context.as_ref().and_then(Weak::upgrade)
++        {
++            context.close();
++        }
+     }
+ }
+
+@@ -584,7 +733,21 @@ impl Cleanup for RwLock<OwnerInner> {
                  let arena = self.read().or_poisoned().arena.clone();
                  let mut arena = arena.write().or_poisoned();
                  for node in nodes {
@@ -747,10 +893,10 @@ index b32ea75..fd2f352 100644
          }
 diff --git a/src/owner/activity.rs b/src/owner/activity.rs
 new file mode 100644
-index 0000000..77f5157
+index 00000000..02011937
 --- /dev/null
 +++ b/src/owner/activity.rs
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,126 @@
 +//! Tracks effect bodies that are currently running somewhere in an owner
 +//! tree, so a forced teardown of the tree can wait for them.
 +//!
@@ -805,6 +951,10 @@ index 0000000..77f5157
 +}
 +
 +impl Activity {
++    pub(crate) fn is_closed(&self) -> bool {
++        self.state.lock().or_poisoned().closed
++    }
++
 +    fn id(self: &Arc<Self>) -> usize {
 +        Arc::as_ptr(self) as usize
 +    }
@@ -874,7 +1024,7 @@ index 0000000..77f5157
 +    }
 +}
 diff --git a/src/owner/arena.rs b/src/owner/arena.rs
-index ae9b25e..ce4f2d7 100644
+index ae9b25e0..4fbff81c 100644
 --- a/src/owner/arena.rs
 +++ b/src/owner/arena.rs
 @@ -9,9 +9,40 @@ use std::sync::Weak;
@@ -887,7 +1037,7 @@ index ae9b25e..ce4f2d7 100644
 +        Arc, RwLock,
 +    },
  };
- 
+
 +/// Diagnostic counters for arena bookkeeping, used to chase SSR arena
 +/// retention (see `ULTROS_PATCH.md`). Cheap relaxed atomics; read them with
 +/// [`arena_diagnostics`].
@@ -922,7 +1072,7 @@ index ae9b25e..ce4f2d7 100644
 @@ -41,6 +72,43 @@ impl Arena {
          }
      }
- 
+
 +    /// Sets the current arena, returning the previously-active one so the
 +    /// caller can restore it with [`Arena::restore`]. Scoped setters
 +    /// (`Owner::with`, `Sandboxed` polls) use this so an arena activated
@@ -963,44 +1113,106 @@ index ae9b25e..ce4f2d7 100644
      #[track_caller]
      pub fn with<U>(fun: impl FnOnce(&ArenaMap) -> U) -> U {
          #[cfg(not(feature = "sandboxed-arenas"))]
-@@ -165,11 +233,13 @@ pub mod sandboxed {
+@@ -117,7 +185,10 @@ impl Arena {
+
+ #[cfg(feature = "sandboxed-arenas")]
+ pub mod sandboxed {
+-    use super::{Arena, ArenaMap, MAP};
++    use super::{
++        super::{WeakOwner, OWNER},
++        Arena, ArenaMap, MAP,
++    };
+     use futures::Stream;
+     use pin_project_lite::pin_project;
+     use std::{
+@@ -127,9 +198,23 @@ pub mod sandboxed {
+         task::{Context, Poll},
+     };
+
++    struct Restore {
++        owner: Option<WeakOwner>,
++        arena: Option<Option<Weak<RwLock<ArenaMap>>>>,
++    }
++
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            OWNER.with_borrow_mut(|owner| *owner = self.owner.take());
++            if let Some(arena) = self.arena.take() {
++                Arena::restore(arena);
++            }
++        }
++    }
++
+     pin_project! {
+-        /// A [`Future`] that restores its associated arena as the current arena whenever it is
+-        /// polled.
++        /// A [`Future`] that restores its associated owner and arena whenever
++        /// it is polled, then restores the caller's scope, including on unwind.
+         ///
+         /// Sandboxed arenas are used to ensure that data created in response to e.g., different
+         /// HTTP requests can be handled separately, while providing stable identifiers for their
+@@ -137,6 +222,7 @@ pub mod sandboxed {
+         /// same arena that it was created under.
+         pub struct Sandboxed<T> {
+             arena: Option<Arc<RwLock<ArenaMap>>>,
++            owner: Option<WeakOwner>,
+             #[pin]
+             inner: T,
+         }
+@@ -151,7 +237,28 @@ pub mod sandboxed {
+         #[track_caller]
+         pub fn new(inner: T) -> Self {
+             let arena = MAP.with_borrow(|n| n.as_ref().and_then(Weak::upgrade));
+-            Self { arena, inner }
++            let owner = OWNER.with_borrow(Clone::clone);
++            Self {
++                arena,
++                owner,
++                inner,
++            }
++        }
++
++        fn enter(&self) -> Restore {
++            let owner = OWNER.with_borrow_mut(|current| {
++                std::mem::replace(current, self.owner.clone())
++            });
++            let arena = self.arena.as_ref().map(|arena| Arena::replace(arena));
++            Restore { owner, arena }
++        }
++
++        /// Runs a closure in the captured owner/arena scope without polling
++        /// the inner future. Restores the caller's scope afterwards.
++        #[doc(hidden)]
++        pub fn with<R>(&self, fun: impl FnOnce() -> R) -> R {
++            let _restore = self.enter();
++            fun()
+         }
+     }
+
+@@ -165,9 +272,7 @@ pub mod sandboxed {
              self: Pin<&mut Self>,
              cx: &mut Context<'_>,
          ) -> Poll<Self::Output> {
 -            if let Some(arena) = self.arena.as_ref() {
 -                Arena::set(arena);
 -            }
-+            let prev = self.arena.as_ref().map(|arena| Arena::replace(arena));
++            let _restore = self.as_ref().get_ref().enter();
              let this = self.project();
--            this.inner.poll(cx)
-+            let result = this.inner.poll(cx);
-+            if let Some(prev) = prev {
-+                Arena::restore(prev);
-+            }
-+            result
+             this.inner.poll(cx)
          }
-     }
- 
-@@ -183,11 +253,13 @@ pub mod sandboxed {
+@@ -183,9 +288,7 @@ pub mod sandboxed {
              self: Pin<&mut Self>,
              cx: &mut Context<'_>,
          ) -> Poll<Option<Self::Item>> {
 -            if let Some(arena) = self.arena.as_ref() {
 -                Arena::set(arena);
 -            }
-+            let prev = self.arena.as_ref().map(|arena| Arena::replace(arena));
++            let _restore = self.as_ref().get_ref().enter();
              let this = self.project();
--            this.inner.poll_next(cx)
-+            let result = this.inner.poll_next(cx);
-+            if let Some(prev) = prev {
-+                Arena::restore(prev);
-+            }
-+            result
+             this.inner.poll_next(cx)
          }
-     }
- }
 diff --git a/src/owner/arena_item.rs b/src/owner/arena_item.rs
-index 0c286dd..5986b9b 100644
+index 0c286dd4..5986b9ba 100644
 --- a/src/owner/arena_item.rs
 +++ b/src/owner/arena_item.rs
 @@ -1,10 +1,13 @@
@@ -1016,7 +1228,7 @@ index 0c286dd..5986b9b 100644
  use send_wrapper::SendWrapper;
 -use std::{any::Any, hash::Hash, marker::PhantomData};
 +use std::{any::Any, hash::Hash, marker::PhantomData, sync::atomic::Ordering};
- 
+
  /// A copyable, stable reference for any value, stored on the arena whose ownership is managed by the
  /// reactive ownership tree.
 @@ -52,9 +55,12 @@ where
@@ -1031,9 +1243,9 @@ index 0c286dd..5986b9b 100644
 +                ARENA_INSERTS_UNREGISTERED.fetch_add(1, Ordering::Relaxed);
              }
          });
- 
+
 @@ -131,7 +137,15 @@ impl<T, S> IsDisposed for ArenaItem<T, S> {
- 
+
  impl<T, S> Dispose for ArenaItem<T, S> {
      fn dispose(self) {
 -        Arena::with_mut(|arena| arena.remove(self.node));
@@ -1048,9 +1260,9 @@ index 0c286dd..5986b9b 100644
 +        drop(removed);
      }
  }
- 
+
 diff --git a/src/owner/storage.rs b/src/owner/storage.rs
-index 07c6749..d8e1cfd 100644
+index 07c67497..d8e1cfd7 100644
 --- a/src/owner/storage.rs
 +++ b/src/owner/storage.rs
 @@ -1,5 +1,6 @@
@@ -1058,7 +1270,7 @@ index 07c6749..d8e1cfd 100644
 +use super::arena::{Arena, NodeId, ARENA_EXPLICIT_REMOVES};
  use send_wrapper::SendWrapper;
 +use std::sync::atomic::Ordering as AtomicOrdering;
- 
+
  /// A trait for borrowing and taking data.
  pub trait StorageAccess<T> {
 @@ -111,6 +112,7 @@ where
@@ -1078,7 +1290,7 @@ index 07c6749..d8e1cfd 100644
                  Ok(inner) => Some(inner.take()),
                  Err(_) => None,
 diff --git a/src/signal/guards.rs b/src/signal/guards.rs
-index 51628b5..fda393a 100644
+index 51628b5d..fda393a3 100644
 --- a/src/signal/guards.rs
 +++ b/src/signal/guards.rs
 @@ -12,6 +12,7 @@ use std::{
@@ -1087,11 +1299,11 @@ index 51628b5..fda393a 100644
      sync::{Arc, RwLock},
 +    time::{Duration, Instant},
  };
- 
+
  /// A wrapper type for any kind of guard returned by [`Read`](crate::traits::Read).
 @@ -102,11 +103,50 @@ impl<T: 'static> Debug for Plain<T> {
  }
- 
+
  impl<T: 'static> Plain<T> {
 +    /// How long a read waits for a writer on another thread to let go of the
 +    /// lock before giving up. A `set`/`update` holds the lock only for the
@@ -1142,10 +1354,10 @@ index 51628b5..fda393a 100644
 +        }
      }
  }
- 
+
 diff --git a/tests/async_source_walk.rs b/tests/async_source_walk.rs
 new file mode 100644
-index 0000000..e52350c
+index 00000000..e52350ca
 --- /dev/null
 +++ b/tests/async_source_walk.rs
 @@ -0,0 +1,183 @@
@@ -1334,10 +1546,10 @@ index 0000000..e52350c
 +shape_test!(all_readers_fresh, true, true, true, false);
 diff --git a/tests/effect_disposed_first_run.rs b/tests/effect_disposed_first_run.rs
 new file mode 100644
-index 0000000..29e33e9
+index 00000000..4819949f
 --- /dev/null
 +++ b/tests/effect_disposed_first_run.rs
-@@ -0,0 +1,291 @@
+@@ -0,0 +1,626 @@
 +//! Regression test for the SSR panics that survived akarras/ultros#1520
 +//! (GlitchTip #7388 `cookies.rs:174`, and the `leptos_i18n context.rs:213`
 +//! tail of #7382): an effect whose owner is cleaned up before its spawned
@@ -1629,9 +1841,344 @@ index 0000000..29e33e9
 +        "an effect body started after its tree was torn down"
 +    );
 +}
++
++#[cfg(feature = "sandboxed-arenas")]
++#[tokio::test]
++async fn completed_resource_and_effect_release_arena() {
++    use reactive_graph::{computed::AsyncDerived, traits::Read};
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++    let resource = AsyncDerived::new(|| async { 42 });
++    Effect::new_isomorphic(move |_| {
++        let _ = resource.read();
++    });
++    settle().await;
++    owner.cleanup();
++    settle().await;
++    assert_eq!(owner.arena_len(), 0);
++    let arena = owner.arena_weak_reference();
++    drop(owner);
++    assert!(arena.upgrade().is_none());
++}
++
++/// SSR LocalResource uses a mock derived resource that stays pending forever.
++/// Its suspense waiter must end at teardown even though readiness never fires.
++#[cfg(feature = "sandboxed-arenas")]
++#[tokio::test]
++async fn mock_resource_waiter_releases_arena_after_cleanup() {
++    use reactive_graph::{
++        computed::{suspense::SuspenseContext, ArcAsyncDerived},
++        owner::{provide_context, StoredValue},
++        signal::ArcRwSignal,
++        traits::ReadUntracked,
++    };
++    _ = Executor::init_tokio();
++    for cycle in 0..32 {
++        let owner = Owner::new();
++        owner.set();
++        // Give this request a real backing buffer, as item-page signals do.
++        for value in 0..256 {
++            let _ = StoredValue::new(value);
++        }
++        let suspense = SuspenseContext {
++            tasks: ArcRwSignal::new(Default::default()),
++        };
++        provide_context(suspense.clone());
++        let resource = ArcAsyncDerived::<i32>::new_mock(std::future::pending);
++        let _ = resource.read_untracked();
++        // Cover cancellation both before the task is first polled and
++        // after it has registered its own waker.
++        if cycle % 2 != 0 {
++            settle().await;
++        }
++        assert_eq!(suspense.tasks.read_untracked().len(), 1);
++        drop(resource);
++        owner.cleanup();
++        settle().await;
++        assert_eq!(suspense.tasks.read_untracked().len(), 0);
++        assert_eq!(owner.arena_len(), 0);
++        let arena = owner.arena_weak_reference();
++        drop(owner);
++        assert!(
++            arena.upgrade().is_none(),
++            "a waiter for a mock resource retained the arena"
++        );
++    }
++}
++
++#[cfg(feature = "sandboxed-arenas")]
++#[tokio::test]
++async fn resolved_resource_waiter_releases_arena_before_cleanup() {
++    use reactive_graph::{
++        computed::{suspense::SuspenseContext, ArcAsyncDerived},
++        owner::provide_context,
++        signal::ArcRwSignal,
++        traits::ReadUntracked,
++    };
++    _ = Executor::init_tokio();
++    let owner = Owner::new();
++    owner.set();
++    let suspense = SuspenseContext {
++        tasks: ArcRwSignal::new(Default::default()),
++    };
++    provide_context(suspense.clone());
++    let (tx, rx) = futures::channel::oneshot::channel::<i32>();
++    let rx = Arc::new(std::sync::Mutex::new(Some(rx)));
++    let resource = ArcAsyncDerived::new(move || {
++        let rx = rx.lock().unwrap().take().unwrap();
++        async move { rx.await.unwrap() }
++    });
++    let _ = resource.read_untracked();
++    settle().await;
++    assert!(!suspense.tasks.read_untracked().is_empty());
++    tx.send(42).unwrap();
++    settle().await;
++    assert_eq!(*resource.read_untracked(), Some(42));
++    assert_eq!(suspense.tasks.read_untracked().len(), 0);
++    drop(resource);
++    owner.cleanup();
++    settle().await;
++    let arena = owner.arena_weak_reference();
++    drop(owner);
++    assert!(arena.upgrade().is_none());
++}
++#[cfg(feature = "sandboxed-arenas")]
++#[tokio::test]
++async fn reader_cleanup_releases_waiter_arena_without_cancelling_resource() {
++    use reactive_graph::{
++        computed::{suspense::SuspenseContext, ArcAsyncDerived},
++        owner::provide_context,
++        signal::ArcRwSignal,
++        traits::ReadUntracked,
++    };
++    _ = Executor::init_tokio();
++    let root = Owner::new();
++    root.set();
++    let (tx, rx) = futures::channel::oneshot::channel::<i32>();
++    let rx = Arc::new(std::sync::Mutex::new(Some(rx)));
++    let resource = ArcAsyncDerived::new(move || {
++        let rx = rx.lock().unwrap().take().unwrap();
++        async move { rx.await.unwrap() }
++    });
++    settle().await;
++    let reader = root.child();
++    let suspense = SuspenseContext {
++        tasks: ArcRwSignal::new(Default::default()),
++    };
++    reader.with(|| {
++        provide_context(suspense.clone());
++        let _ = resource.read_untracked();
++    });
++    settle().await;
++    assert_eq!(suspense.tasks.read_untracked().len(), 1);
++    reader.cleanup();
++    settle().await;
++    assert!(suspense.tasks.read_untracked().is_empty());
++    tx.send(42).unwrap();
++    settle().await;
++    assert_eq!(*resource.read_untracked(), Some(42));
++    drop(resource);
++    drop(reader);
++    root.cleanup();
++    settle().await;
++    let arena = root.arena_weak_reference();
++    drop(root);
++    assert!(arena.upgrade().is_none());
++}
++#[cfg(feature = "sandboxed-arenas")]
++#[test]
++fn cleanup_restores_outer_arena_before_spawning_waiters() {
++    use reactive_graph::owner::{on_cleanup, Sandboxed};
++    let cleaned = Owner::new();
++    cleaned.set();
++    on_cleanup(|| {});
++    let arena = cleaned.arena_weak_reference();
++    let outer = Owner::default();
++    let future = outer.with(|| {
++        cleaned.cleanup();
++        Sandboxed::new(std::future::pending::<()>())
++    });
++    drop(cleaned);
++    assert!(
++        arena.upgrade().is_none(),
++        "the next task captured the cleaned owner's arena"
++    );
++    drop(future);
++}
++#[cfg(feature = "sandboxed-arenas")]
++#[test]
++fn local_resource_notifier_cleanup_releases_waiting_arena() {
++    use futures::{
++        task::{waker, ArcWake},
++        FutureExt,
++    };
++    use reactive_graph::{
++        computed::suspense::LocalResourceNotifier, owner::provide_context,
++    };
++    use std::{future::Future, pin::Pin, task::Context};
++    struct RenderWaker(Owner);
++    impl ArcWake for RenderWaker {
++        fn wake_by_ref(this: &Arc<Self>) {
++            let _ = this.0.debug_id();
++        }
++    }
++    let owner = Owner::default();
++    owner.set();
++    let arena = owner.arena_weak_reference();
++    let (tx, mut rx) = futures::channel::oneshot::channel();
++    provide_context(LocalResourceNotifier::from(tx));
++    // Model a pending SSR stream whose waker keeps its scoped owner alive.
++    let waker = waker(Arc::new(RenderWaker(owner.clone())));
++    assert!(Pin::new(&mut rx)
++        .poll(&mut Context::from_waker(&waker))
++        .is_pending());
++    drop(waker);
++    owner.cleanup();
++    drop(owner);
++    assert!(
++        arena.upgrade().is_none(),
++        "the notifier context retained the render owner through its \
++         receiver's waker"
++    );
++    assert!(matches!(rx.now_or_never(), Some(Err(_))));
++}
++#[cfg(all(feature = "sandboxed-arenas", feature = "hydration"))]
++#[test]
++fn root_teardown_releases_late_hydration_resource_arena() {
++    use hydration_context::{
++        SerializedDataId, SharedContext, SsrSharedContext,
++    };
++    for forced in [false, true] {
++        let shared = Arc::new(SsrSharedContext::new());
++        let root = Owner::new_root(Some(shared.clone()));
++        // A stream or one of its wakers can retain the buffers independently
++        // of the SsrSharedContext Arc. Teardown must empty those buffers.
++        let stream = shared.pending_data().unwrap();
++        let arena = root.arena_weak_reference();
++        let child = root.with(Owner::new);
++        // A late resource serializer can remain buffered after the data stream
++        // ends. Its resource/fetcher owns a child owner with the same context.
++        shared.write_async(
++            SerializedDataId::new(0),
++            Box::pin(async move {
++                std::future::pending::<()>().await;
++                drop(child);
++                String::new()
++            }),
++        );
++        drop(shared);
++        if forced {
++            root.unset_with_forced_cleanup();
++        } else {
++            drop(root);
++        }
++        assert!(
++            arena.upgrade().is_none(),
++            "the hydration buffer and child owner retained each other after \
++             root teardown"
++        );
++        drop(stream);
++    }
++}
++#[cfg(all(feature = "sandboxed-arenas", feature = "hydration"))]
++#[test]
++fn ordinary_cleanup_keeps_shared_context_for_live_arena() {
++    use hydration_context::{SharedContext, SsrSharedContext};
++    let shared: Arc<dyn SharedContext + Send + Sync> =
++        Arc::new(SsrSharedContext::new());
++    let root = Owner::new_root(Some(shared.clone()));
++    let child = root.with(Owner::new);
++    root.cleanup();
++    child.clone().unset_with_forced_cleanup();
++    assert!(Arc::ptr_eq(&root.shared_context().unwrap(), &shared));
++    assert!(Arc::ptr_eq(&child.shared_context().unwrap(), &shared));
++    let survivor = root.clone();
++    root.unset_with_forced_cleanup();
++    assert!(Arc::ptr_eq(&survivor.shared_context().unwrap(), &shared));
++    assert!(Arc::ptr_eq(&child.shared_context().unwrap(), &shared));
++}
++#[cfg(feature = "sandboxed-arenas")]
++#[test]
++fn sandbox_poll_keeps_the_captured_owner_and_arena_together() {
++    use reactive_graph::owner::Sandboxed;
++    use std::{
++        future::{poll_fn, Future},
++        pin::Pin,
++        task::{Context, Poll},
++    };
++    let a = Owner::default();
++    let b = Owner::default();
++    let mut task = a.with(|| {
++        Sandboxed::new(poll_fn(|_| {
++            Poll::Ready(Owner::current().unwrap().debug_id())
++        }))
++    });
++    let result = b.with(|| {
++        let result = Pin::new(&mut task)
++            .poll(&mut Context::from_waker(futures::task::noop_waker_ref()));
++        assert_eq!(Owner::current().unwrap().debug_id(), b.debug_id());
++        result
++    });
++    assert_eq!(result, Poll::Ready(a.debug_id()));
++}
++
++#[cfg(feature = "sandboxed-arenas")]
++#[test]
++fn late_cleanup_cannot_create_a_cycle_in_a_closed_arena() {
++    use reactive_graph::owner::on_cleanup;
++    let root = Owner::default();
++    root.set();
++    let survivor = root.clone();
++    let arena = root.arena_weak_reference();
++    root.unset_with_forced_cleanup();
++    let ran = Arc::new(AtomicBool::new(false));
++    survivor.with(|| {
++        let captured_owner = survivor.clone();
++        let ran = ran.clone();
++        on_cleanup(move || {
++            drop(captured_owner);
++            ran.store(true, Ordering::SeqCst);
++        });
++    });
++    assert!(
++        ran.load(Ordering::SeqCst),
++        "cleanup registered after teardown must run immediately"
++    );
++    drop(survivor);
++    assert!(arena.upgrade().is_none());
++}
++#[cfg(feature = "sandboxed-arenas")]
++#[test]
++fn sandbox_panic_restores_the_callers_owner_and_arena() {
++    use reactive_graph::owner::Sandboxed;
++    use std::{
++        future::{poll_fn, Future},
++        pin::Pin,
++        task::{Context, Poll},
++    };
++    let a = Owner::default();
++    let b = Owner::default();
++    let _a_value = a.with(|| RwSignal::new(11));
++    let b_value = b.with(|| RwSignal::new(22));
++    let mut task = a.with(|| {
++        Sandboxed::new(poll_fn(|_| -> Poll<()> { panic!("sandbox probe") }))
++    });
++    b.with(|| {
++        let result =
++            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++                Pin::new(&mut task).poll(&mut Context::from_waker(
++                    futures::task::noop_waker_ref(),
++                ))
++            }));
++        assert!(result.is_err());
++        assert_eq!(Owner::current().unwrap().debug_id(), b.debug_id());
++        assert_eq!(b_value.get(), 22);
++    });
++}
 diff --git a/tests/memo_concurrent.rs b/tests/memo_concurrent.rs
 new file mode 100644
-index 0000000..9a9cd73
+index 00000000..9a9cd73b
 --- /dev/null
 +++ b/tests/memo_concurrent.rs
 @@ -0,0 +1,203 @@

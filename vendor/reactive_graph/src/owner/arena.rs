@@ -185,7 +185,10 @@ impl Arena {
 
 #[cfg(feature = "sandboxed-arenas")]
 pub mod sandboxed {
-    use super::{Arena, ArenaMap, MAP};
+    use super::{
+        super::{WeakOwner, OWNER},
+        Arena, ArenaMap, MAP,
+    };
     use futures::Stream;
     use pin_project_lite::pin_project;
     use std::{
@@ -195,9 +198,23 @@ pub mod sandboxed {
         task::{Context, Poll},
     };
 
+    struct Restore {
+        owner: Option<WeakOwner>,
+        arena: Option<Option<Weak<RwLock<ArenaMap>>>>,
+    }
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            OWNER.with_borrow_mut(|owner| *owner = self.owner.take());
+            if let Some(arena) = self.arena.take() {
+                Arena::restore(arena);
+            }
+        }
+    }
+
     pin_project! {
-        /// A [`Future`] that restores its associated arena as the current arena whenever it is
-        /// polled.
+        /// A [`Future`] that restores its associated owner and arena whenever
+        /// it is polled, then restores the caller's scope, including on unwind.
         ///
         /// Sandboxed arenas are used to ensure that data created in response to e.g., different
         /// HTTP requests can be handled separately, while providing stable identifiers for their
@@ -205,6 +222,7 @@ pub mod sandboxed {
         /// same arena that it was created under.
         pub struct Sandboxed<T> {
             arena: Option<Arc<RwLock<ArenaMap>>>,
+            owner: Option<WeakOwner>,
             #[pin]
             inner: T,
         }
@@ -219,7 +237,28 @@ pub mod sandboxed {
         #[track_caller]
         pub fn new(inner: T) -> Self {
             let arena = MAP.with_borrow(|n| n.as_ref().and_then(Weak::upgrade));
-            Self { arena, inner }
+            let owner = OWNER.with_borrow(Clone::clone);
+            Self {
+                arena,
+                owner,
+                inner,
+            }
+        }
+
+        fn enter(&self) -> Restore {
+            let owner = OWNER.with_borrow_mut(|current| {
+                std::mem::replace(current, self.owner.clone())
+            });
+            let arena = self.arena.as_ref().map(|arena| Arena::replace(arena));
+            Restore { owner, arena }
+        }
+
+        /// Runs a closure in the captured owner/arena scope without polling
+        /// the inner future. Restores the caller's scope afterwards.
+        #[doc(hidden)]
+        pub fn with<R>(&self, fun: impl FnOnce() -> R) -> R {
+            let _restore = self.enter();
+            fun()
         }
     }
 
@@ -233,13 +272,9 @@ pub mod sandboxed {
             self: Pin<&mut Self>,
             cx: &mut Context<'_>,
         ) -> Poll<Self::Output> {
-            let prev = self.arena.as_ref().map(|arena| Arena::replace(arena));
+            let _restore = self.as_ref().get_ref().enter();
             let this = self.project();
-            let result = this.inner.poll(cx);
-            if let Some(prev) = prev {
-                Arena::restore(prev);
-            }
-            result
+            this.inner.poll(cx)
         }
     }
 
@@ -253,13 +288,9 @@ pub mod sandboxed {
             self: Pin<&mut Self>,
             cx: &mut Context<'_>,
         ) -> Poll<Option<Self::Item>> {
-            let prev = self.arena.as_ref().map(|arena| Arena::replace(arena));
+            let _restore = self.as_ref().get_ref().enter();
             let this = self.project();
-            let result = this.inner.poll_next(cx);
-            if let Some(prev) = prev {
-                Arena::restore(prev);
-            }
-            result
+            this.inner.poll_next(cx)
         }
     }
 }
