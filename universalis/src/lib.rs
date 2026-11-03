@@ -69,8 +69,25 @@ impl Error {
         match self {
             Error::Status { status, .. } => *status == 429 || (500..600).contains(status),
             Error::HttpError(e) => e.is_timeout() || e.is_connect() || e.is_request(),
+            Error::TungsteniteError(e) => tungstenite_is_transient(e),
             _ => false,
         }
+    }
+}
+
+/// The websocket half of [`Error::is_transient`]. The handshake is an HTTP
+/// request through Cloudflare, so the same `429`/`5xx` rule applies to its
+/// response (a `520` "origin returned an unknown error" is the usual one), and
+/// a socket-level I/O failure is the websocket's connect/timeout.
+fn tungstenite_is_transient(e: &async_tungstenite::tungstenite::Error) -> bool {
+    use async_tungstenite::tungstenite::Error as WsError;
+    match e {
+        WsError::Http(response) => {
+            let status = response.status().as_u16();
+            status == 429 || (500..600).contains(&status)
+        }
+        WsError::Io(_) | WsError::ConnectionClosed | WsError::AlreadyClosed => true,
+        _ => false,
     }
 }
 
@@ -773,6 +790,43 @@ mod status_test {
             .into();
         assert!(!schema_err.is_transient(), "{schema_err}");
         assert!(!schema_err.is_not_found(), "{schema_err}");
+    }
+
+    /// The websocket handshake goes through Cloudflare, which answers `520`
+    /// when Universalis' origin hiccups (GlitchTip-8052). The reconnect loop
+    /// retries every couple of seconds, so that must not be reported.
+    #[test]
+    fn websocket_handshake_5xx_is_transient() {
+        use async_tungstenite::tungstenite::{self, http};
+        let handshake = |status: u16| -> Error {
+            let response = http::Response::builder()
+                .status(status)
+                .body(Some(
+                    b"error code: 520
+"
+                    .to_vec(),
+                ))
+                .unwrap();
+            tungstenite::Error::Http(Box::new(response)).into()
+        };
+        for status in [429, 502, 520, 530] {
+            assert!(
+                handshake(status).is_transient(),
+                "{status} should be transient"
+            );
+        }
+        for status in [400, 401, 403, 404] {
+            assert!(
+                !handshake(status).is_transient(),
+                "{status} should be permanent"
+            );
+        }
+        let io: Error =
+            tungstenite::Error::Io(std::io::Error::from(std::io::ErrorKind::ConnectionReset))
+                .into();
+        assert!(io.is_transient(), "{io}");
+        let url: Error = tungstenite::Error::Url(tungstenite::error::UrlError::NoHostName).into();
+        assert!(!url.is_transient(), "{url}");
     }
 
     #[test]
