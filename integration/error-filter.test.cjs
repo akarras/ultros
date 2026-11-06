@@ -958,6 +958,71 @@ const cases = [
     },
     expectDrop: true,
   },
+  // Lightpanda (headless scraping engine, AWS egress) rejects its own aborted
+  // fetches with a frameless `TypeError: Abort` when it tears the page down —
+  // no real browser uses that message. GlitchTip #8066, #8067, #8068.
+  {
+    name: "Frameless unhandled-rejection 'TypeError: Abort' (Lightpanda teardown) is dropped",
+    ua: "Lightpanda/1.0",
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Abort",
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "'TypeError: Abort' with an Ultros stack frame is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Abort",
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+            stacktrace: {
+              frames: [
+                {
+                  filename: "https://www.ultros.app/pkg/abc1234/ultros.js",
+                  function: "eF",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  {
+    name: "Frameless 'TypeError: Abort' reported via onerror (not a rejection) is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Abort",
+            mechanism: { type: "auto.browser.global_handlers.onerror" },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
   {
     name: "Non-Error promise rejection carrying a real object is preserved",
     ua: CURRENT_CHROME,
