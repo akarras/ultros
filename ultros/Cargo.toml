@@ -13,7 +13,7 @@ ultros-list-doc = { path = "../ultros-list-doc" }
 ultros-calc = { path = "../ultros-frontend/ultros-calc" }
 uuid = { version = "1", features = ["v4"] }
 getrandom = "0.4.2"
-tempfile = "3.6.0"
+tempfile = "3.27.0"
 ultros-clickhouse = { path = "../ultros-clickhouse" }
 clickhouse = { workspace = true }
 sea-orm = { workspace = true }
@@ -57,7 +57,7 @@ itertools = "0.15.0"
 # a `jiff::Zoned`. We keep chrono everywhere else (sea-orm rows are chrono) and
 # convert at this one call site, so jiff is a direct dep of exactly this crate.
 sitemap-rs = "0.7.0"
-jiff = "0.2.38"
+jiff = "0.2.41"
 ultros-api-types = { path = "../ultros-api-types", features = ["rkyv"] }
 # The `history` feature (on by default) is what makes the full changelog
 # available to `/api/v1/changelog`; the wasm client builds without it.
@@ -67,7 +67,7 @@ leptos = { workspace = true, features = ["ssr", "nightly"] }
 leptos_axum.workspace = true
 leptos_router = { workspace = true, features = ["ssr"] }
 ultros-app = { path = "../ultros-frontend/ultros-app", features = ["ssr"] }
-hyper = "1.9.0"
+hyper = "1.12.0"
 tokio-stream = { version = "0.1.18", features = ["sync"] }
 ultros-charts = { path = "../ultros-frontend/ultros-charts", features = [
     "image",
