@@ -82,7 +82,7 @@ impl PriceBucket {
     /// Volume-weighted average price. `None` when the bucket moved no units,
     /// which the caller should render as a gap rather than a zero.
     pub fn vwap(&self) -> Option<f64> {
-        (self.units > 0).then(|| self.gil as f64 / self.units as f64)
+        (self.units > 0).then_some(self.gil as f64 / self.units as f64)
     }
 }
 
