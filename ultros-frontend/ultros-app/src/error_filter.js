@@ -120,6 +120,9 @@
 //      `/cdn-cgi/` on our own origin (the challenge-platform precursor that
 //      throws "Unexpected token '<'" when Cloudflare answers it with HTML,
 //      GlitchTip #7996) count as third-party: the edge serves that path itself.
+//   9. A frameless unhandled rejection of exactly `TypeError: Abort` — the
+//      Lightpanda headless engine's own fetch-abort on page teardown (no real
+//      browser uses that message). GlitchTip #8066, #8067, #8068.
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
   // Third-party analytics / ads / consent / CDN-telemetry hosts. Ultros loads
@@ -794,6 +797,27 @@
     return false;
   }
 
+  // Lightpanda (a headless scraping engine, seen from AWS egress with UA
+  // "Lightpanda/1.0") rejects its own in-flight fetches with a bare
+  // `TypeError: Abort` when it tears the page down. No real browser uses that
+  // message (Chromium/WebKit/Gecko reject with an AbortError DOMException), the
+  // rejection carries no stack, and nothing in Ultros throws it. Narrowed to
+  // the exact value, an unhandled-rejection mechanism and an empty stack, so a
+  // rejection with any frame still reaches GlitchTip. GlitchTip #8066-#8068.
+  function isHeadlessFetchAbortRejection(event) {
+    try {
+      var ex = firstException(event);
+      if (!ex || ex.type !== "TypeError" || ex.value !== "Abort") return false;
+      var mech = (ex.mechanism && ex.mechanism.type) || "";
+      if (mech.indexOf("onunhandledrejection") === -1) return false;
+      var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
+      return frames.length === 0;
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return false;
+  }
+
   // Attach the injection snapshot to hydration-class panics so the invisible
   // injector behind the #6831 residual flood (see domInjectionSnapshot) becomes
   // diagnosable on the events that still reach GlitchTip. Called from the
@@ -847,7 +871,8 @@
       isInjectedTachysHydrationPanic(event) ||
       isExecutorReentryCascade(event) ||
       isThirdPartyScriptError(event) ||
-      isEmptyPromiseRejection(event)
+      isEmptyPromiseRejection(event) ||
+      isHeadlessFetchAbortRejection(event)
     );
   };
 })();
