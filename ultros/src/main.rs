@@ -40,9 +40,10 @@ use std::sync::Arc;
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 use tikv_jemallocator::Jemalloc;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{Level, error, info, warn};
 use tracing_subscriber::EnvFilter;
-use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::filter::{LevelFilter, filter_fn};
+use tracing_subscriber::layer::{Layer, SubscriberExt};
 use tracing_subscriber::util::SubscriberInitExt;
 use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_api_types::world::WorldData;
@@ -623,7 +624,19 @@ async fn main() -> Result<()> {
                 .with_line_number(true)
                 .pretty(),
         )
-        .with(sentry_tracing::layer())
+        // sentry-tracing 0.49.5 deprecated the combined `layer()`; these three
+        // layers reproduce its defaults exactly (the `logs` feature is off, so
+        // there is no `LogLayer`): INFO-and-above spans become Sentry spans,
+        // WARN/INFO events become breadcrumbs, and ERROR events become
+        // GlitchTip issues. BreadcrumbLayer is installed before ErrorLayer as
+        // the migration docs direct.
+        .with(sentry_tracing::SpanLayer::new().with_filter(LevelFilter::INFO))
+        .with(
+            sentry_tracing::BreadcrumbLayer::new().with_filter(filter_fn(|metadata| {
+                matches!(*metadata.level(), Level::WARN | Level::INFO)
+            })),
+        )
+        .with(sentry_tracing::ErrorLayer::new().with_filter(LevelFilter::ERROR))
         .init();
     // Before anything opens a socket. Docker hands the container the daemon's
     // default RLIMIT_NOFILE soft limit of 1024, which a crawl burst exhausts —

@@ -22,7 +22,7 @@ bson = { version = "3.1.0", features = ["serde"] }
 async-tungstenite = {version = "0.35", default-features = false, features = ["tokio-runtime", "tokio-rustls-webpki-roots"], optional = true}
 tokio = { workspace = true, optional = true }
 futures = { workspace = true }
-serde_with = {version = "3.20.0", features = ["chrono"]}
+serde_with = {version = "3.24.0", features = ["chrono"]}
 chrono = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
@@ -30,7 +30,7 @@ tracing-subscriber = { workspace = true }
 # reqwest 0.12's `Response: From<http::Response<_>>` — builds fake responses for
 # the metrics label tests without touching the network.
 http = "1"
-clap = {version = "4.0.18", features = ["derive"]}
+clap = {version = "4.6.7", features = ["derive"]}
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 
 [features]

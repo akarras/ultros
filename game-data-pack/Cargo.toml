@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-toml = "1.1"
+toml = "1.2"
 # `IconSize` is shared with the consumer so the packed entry names cannot drift
 # from `ultros-xiv-icons`' runtime parser.
 ultros-api-types = { path = "../ultros-api-types" }
