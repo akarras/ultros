@@ -1751,6 +1751,26 @@ function snapshotDocument(opts) {
   };
 }
 
+// ── Google rendering crawlers count as an injecting population (#8064) ──
+
+test("a tachys hydration panic from Mediapartners-Google on a current Chrome is dropped", () => {
+  const shouldDrop = loadFilter(
+    "Mozilla/5.0 (Linux; Android 4.0.4; Galaxy Nexus Build/IMM76B) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko; Mediapartners-Google) Chrome/999.0.0.0 Mobile Safari/537.36",
+  );
+  assert.strictEqual(shouldDrop(rustPanic(HYDRATION_LOC, {})), true);
+});
+
+test("a non-hydration panic from Mediapartners-Google is kept", () => {
+  const shouldDrop = loadFilter(
+    "Mozilla/5.0 (KHTML, like Gecko; Mediapartners-Google) Chrome/999.0.0.0 Mobile Safari/537.36",
+  );
+  const APP_LOC =
+    "/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/" +
+    "leptos-0.8.20/src/foo.rs:10:1";
+  assert.strictEqual(shouldDrop(rustPanic(APP_LOC, {})), false);
+});
+
 test("annotate attaches contexts.dom_injection to a hydration-class panic", () => {
   const win = loadWindow(
     CURRENT_CHROME,

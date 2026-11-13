@@ -218,6 +218,43 @@ test("#7964's frames from a clean current browser are still SENT", async () => {
   assert.strictEqual(await outcome(env, trap([30, 31, 32, 33])), "sent");
 });
 
+// GlitchTip #8064 (2026-11-05, release 5e627f0): Google's AdSense crawler on a
+// current Chrome major, no <font>, no translated-* class, a structurally intact
+// body. It trapped in `Cursor::next_placeholder` under a leptos_meta TitleView
+// on `/item/Odin/43961?lang=en`, a URL that hydrates cleanly in a real browser.
+// A crawler's own render is not something users see, so its hydration panic is
+// the injecting population's, not ours.
+const ADSENSE_CRAWLER =
+  "Mozilla/5.0 (Linux; Android 4.0.4; Galaxy Nexus Build/IMM76B) AppleWebKit/537.36 (KHTML, like Gecko; Mediapartners-Google) Chrome/153.0.8010.52 Mobile Safari/537.36";
+
+test("#8064: the AdSense crawler's hydration trap on a current Chrome is DROPPED", async () => {
+  const env = load({ ua: ADSENSE_CRAWLER, document: doc() });
+  assert.strictEqual(await outcome(env, trap([11, 14, 23, 33])), "dropped");
+});
+
+test("#8064: an app panic from the AdSense crawler is still SENT", async () => {
+  const env = load({ ua: ADSENSE_CRAWLER, document: doc() });
+  assert.strictEqual(await outcome(env, trap([21, 20, 23])), "sent");
+});
+
+test("Googlebot and AdsBot hydration traps are DROPPED too", async () => {
+  for (const ua of [
+    "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/999.0.0.0 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+    "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/999.0.0.0 Mobile Safari/537.36 (compatible; AdsBot-Google-Mobile; +http://www.google.com/mobile/adsbot.html)",
+  ]) {
+    const env = load({ ua, document: doc() });
+    assert.strictEqual(await outcome(env, trap([11, 14, 23])), "dropped", ua);
+  }
+});
+
+test("a Google app user (GSA) is not mistaken for a crawler", async () => {
+  const env = load({
+    ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) GSA/999.0.0 Mobile/15E148 Safari/604.1",
+    document: doc(),
+  });
+  assert.strictEqual(await outcome(env, trap([11, 14, 23])), "sent");
+});
+
 test("tachys code on top but no hydration in the top three frames is SENT", async () => {
   const env = load({ ua: STALE_CHROME, document: doc() });
   assert.strictEqual(await outcome(env, trap([15, 24, 20, 13])), "sent");

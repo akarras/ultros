@@ -58,8 +58,9 @@
 //      translate regardless of wrapper element or Chrome version), the
 //      page-stability breadcrumb, or an implausibly stale Chrome major
 //      (<= 124 — stuck in-app WebViews and version-pinned crawler fleets,
-//      never self-updating real users; spans the 108/111/112/120 flood).
-//      Genuine hydration mismatches on a clean, current browser have none
+//      never self-updating real users; spans the 108/111/112/120 flood),
+//      or one of Google's rendering crawlers (Mediapartners-Google,
+//      AdsBot-Google, Googlebot), which run a current Chrome. Genuine hydration mismatches on a clean, current browser have none
 //      of these and still reach GlitchTip. Issues #4, #678, #707, #770,
 //      #1307, #2277, #2775, #3005, #4905, #4911, #6406, #6456 and the
 //      per-URL #65xx /item/<world>/<id> cluster.
@@ -220,6 +221,25 @@
 
   function isStaleChromeMajor(major) {
     return major > 0 && major <= staleChromeMaxMajor();
+  }
+
+  // Google's rendering crawlers: AdSense (Mediapartners-Google), Ads landing-
+  // page checks (AdsBot-Google[-Mobile]), Search (Googlebot) and the URL
+  // inspection tool. They run a current Chrome, so the stale-major gate
+  // misses them, but they render on their own time budget with no user
+  // watching, and their hydration traps don't reproduce in a real browser
+  // (#6848 and #8064, both Mediapartners-Google on an /item/ page). A real
+  // mismatch would also hit real users, who are still reported. `GSA/` (the
+  // Google app) is a person, and it isn't matched.
+  var ULTROS_GOOGLE_CRAWLER_UA_RE =
+    /\b(?:Mediapartners-Google|AdsBot-Google(?:-Mobile)?|Googlebot|Google-InspectionTool)\b/;
+
+  function isGoogleCrawlerUA(str) {
+    try {
+      return ULTROS_GOOGLE_CRAWLER_UA_RE.test(str || "");
+    } catch (_) {
+      return false;
+    }
   }
 
   function firstException(event) {
@@ -618,6 +638,10 @@
       var tags = event.tags || {};
       if (isStaleChromeMajor(chromeMajor(tags.browser))) return true;
       if (isStaleChromeMajor(chromeMajor(userAgent()))) return true;
+
+      // Google's rendering crawlers (AdSense, AdsBot, Googlebot), which run
+      // a current Chrome.
+      if (isGoogleCrawlerUA(userAgent())) return true;
     } catch (_) {
       /* never let the filter throw */
     }
