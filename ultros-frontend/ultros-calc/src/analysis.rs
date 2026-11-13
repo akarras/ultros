@@ -325,7 +325,7 @@ pub fn price_drift_pct(prices: &[i32]) -> Option<f32> {
 /// so `first == 0` means nothing traded anywhere in the window: no baseline
 /// exists, and 0 is not a price.
 pub fn first_to_last_pct(first: u32, last: u32) -> Option<f32> {
-    (first > 0).then(|| (last as f32 - first as f32) / first as f32 * 100.0)
+    (first > 0).then_some((last as f32 - first as f32) / first as f32 * 100.0)
 }
 
 /// Return on investment as a percentage, computed in f64 and clamped to

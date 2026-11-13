@@ -36,7 +36,7 @@ fn summarize(sales: Option<&PriceSeries>, floor: Option<&FloorHistory>) -> Marke
             .zip(latest_floor)
             .filter(|(first, _)| *first > 0.0)
             .map(|(first, last)| (last / first - 1.0) * 100.0),
-        sale_average: (units > 0).then(|| gil as f64 / units as f64),
+        sale_average: (units > 0).then_some(gil as f64 / units as f64),
         units,
         transactions,
     }
