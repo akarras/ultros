@@ -58,8 +58,9 @@
 //      translate regardless of wrapper element or Chrome version), the
 //      page-stability breadcrumb, or an implausibly stale Chrome major
 //      (<= 124 — stuck in-app WebViews and version-pinned crawler fleets,
-//      never self-updating real users; spans the 108/111/112/120 flood).
-//      Genuine hydration mismatches on a clean, current browser have none
+//      never self-updating real users; spans the 108/111/112/120 flood),
+//      or one of Google's rendering crawlers (Mediapartners-Google,
+//      AdsBot-Google, Googlebot), which run a current Chrome. Genuine hydration mismatches on a clean, current browser have none
 //      of these and still reach GlitchTip. Issues #4, #678, #707, #770,
 //      #1307, #2277, #2775, #3005, #4905, #4911, #6406, #6456 and the
 //      per-URL #65xx /item/<world>/<id> cluster.
@@ -120,6 +121,9 @@
 //      `/cdn-cgi/` on our own origin (the challenge-platform precursor that
 //      throws "Unexpected token '<'" when Cloudflare answers it with HTML,
 //      GlitchTip #7996) count as third-party: the edge serves that path itself.
+//   9. A frameless unhandled rejection of exactly `TypeError: Abort` — the
+//      Lightpanda headless engine's own fetch-abort on page teardown (no real
+//      browser uses that message). GlitchTip #8066, #8067, #8068.
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
   // Third-party analytics / ads / consent / CDN-telemetry hosts. Ultros loads
@@ -217,6 +221,25 @@
 
   function isStaleChromeMajor(major) {
     return major > 0 && major <= staleChromeMaxMajor();
+  }
+
+  // Google's rendering crawlers: AdSense (Mediapartners-Google), Ads landing-
+  // page checks (AdsBot-Google[-Mobile]), Search (Googlebot) and the URL
+  // inspection tool. They run a current Chrome, so the stale-major gate
+  // misses them, but they render on their own time budget with no user
+  // watching, and their hydration traps don't reproduce in a real browser
+  // (#6848 and #8064, both Mediapartners-Google on an /item/ page). A real
+  // mismatch would also hit real users, who are still reported. `GSA/` (the
+  // Google app) is a person, and it isn't matched.
+  var ULTROS_GOOGLE_CRAWLER_UA_RE =
+    /\b(?:Mediapartners-Google|AdsBot-Google(?:-Mobile)?|Googlebot|Google-InspectionTool)\b/;
+
+  function isGoogleCrawlerUA(str) {
+    try {
+      return ULTROS_GOOGLE_CRAWLER_UA_RE.test(str || "");
+    } catch (_) {
+      return false;
+    }
   }
 
   function firstException(event) {
@@ -615,6 +638,10 @@
       var tags = event.tags || {};
       if (isStaleChromeMajor(chromeMajor(tags.browser))) return true;
       if (isStaleChromeMajor(chromeMajor(userAgent()))) return true;
+
+      // Google's rendering crawlers (AdSense, AdsBot, Googlebot), which run
+      // a current Chrome.
+      if (isGoogleCrawlerUA(userAgent())) return true;
     } catch (_) {
       /* never let the filter throw */
     }
@@ -794,6 +821,27 @@
     return false;
   }
 
+  // Lightpanda (a headless scraping engine, seen from AWS egress with UA
+  // "Lightpanda/1.0") rejects its own in-flight fetches with a bare
+  // `TypeError: Abort` when it tears the page down. No real browser uses that
+  // message (Chromium/WebKit/Gecko reject with an AbortError DOMException), the
+  // rejection carries no stack, and nothing in Ultros throws it. Narrowed to
+  // the exact value, an unhandled-rejection mechanism and an empty stack, so a
+  // rejection with any frame still reaches GlitchTip. GlitchTip #8066-#8068.
+  function isHeadlessFetchAbortRejection(event) {
+    try {
+      var ex = firstException(event);
+      if (!ex || ex.type !== "TypeError" || ex.value !== "Abort") return false;
+      var mech = (ex.mechanism && ex.mechanism.type) || "";
+      if (mech.indexOf("onunhandledrejection") === -1) return false;
+      var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
+      return frames.length === 0;
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return false;
+  }
+
   // Attach the injection snapshot to hydration-class panics so the invisible
   // injector behind the #6831 residual flood (see domInjectionSnapshot) becomes
   // diagnosable on the events that still reach GlitchTip. Called from the
@@ -847,7 +895,8 @@
       isInjectedTachysHydrationPanic(event) ||
       isExecutorReentryCascade(event) ||
       isThirdPartyScriptError(event) ||
-      isEmptyPromiseRejection(event)
+      isEmptyPromiseRejection(event) ||
+      isHeadlessFetchAbortRejection(event)
     );
   };
 })();

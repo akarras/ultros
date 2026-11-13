@@ -255,7 +255,11 @@ pub async fn start_discord(
                     return;
                 }
                 if let Err(error) = poise::builtins::on_error(error).await {
-                    tracing::error!(%error, "Discord framework error handler failed");
+                    if is_expired_interaction(&error) {
+                        tracing::warn!(%error, "Discord interaction expired before the error reply was sent");
+                    } else {
+                        tracing::error!(%error, "Discord framework error handler failed");
+                    }
                 }
             }),
             event_handler: |framework, event| {
@@ -326,6 +330,29 @@ pub async fn start_discord(
     client.start().await.unwrap();
 }
 
+/// Discord JSON error codes for an interaction whose token can no longer be
+/// answered: `10062` once the 3-second initial-response window has passed,
+/// `10015` once the 15-minute follow-up webhook has expired.
+const UNKNOWN_INTERACTION: isize = 10062;
+const UNKNOWN_WEBHOOK: isize = 10015;
+
+/// Whether `error` is Discord refusing a reply because the interaction already
+/// expired. poise's fallback `on_error` replies to the user with the command's
+/// error; when the command failed because it was slow (a stalled database
+/// pushes it past Discord's deadline), that reply fails too, and there is
+/// nothing left to fix or retry — the user simply never gets the message.
+fn is_expired_interaction(error: &serenity::Error) -> bool {
+    matches!(
+        error,
+        serenity::Error::Http(serenity::HttpError::UnsuccessfulRequest(response))
+            if is_expired_interaction_code(response.error.code)
+    )
+}
+
+fn is_expired_interaction_code(code: isize) -> bool {
+    matches!(code, UNKNOWN_INTERACTION | UNKNOWN_WEBHOOK)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,6 +389,19 @@ mod tests {
         for name in ["character", "analyze", "list", "prices", "alert"] {
             assert!(ffxiv.subcommands.iter().any(|c| c.name == name));
         }
+    }
+
+    /// A command that outlives Discord's reply window leaves poise's error
+    /// reply with nothing to answer; that is expected under load, not a bug
+    /// to report. (`serenity::ErrorResponse` is `#[non_exhaustive]` and only
+    /// built from a live HTTP response, so the code check is tested directly.)
+    #[test]
+    fn an_expired_interaction_is_not_reported_as_a_handler_failure() {
+        assert!(is_expired_interaction_code(10062)); // Unknown interaction
+        assert!(is_expired_interaction_code(10015)); // Unknown Webhook
+        assert!(!is_expired_interaction_code(50013)); // Missing Permissions
+        assert!(!is_expired_interaction_code(-1)); // undecodable error body
+        assert!(!is_expired_interaction(&serenity::Error::Other("boom")));
     }
 
     fn user(overrides: serde_json::Value) -> serenity::User {

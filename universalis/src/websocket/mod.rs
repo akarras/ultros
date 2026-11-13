@@ -153,6 +153,17 @@ impl SubscriptionTracker {
     }
 }
 
+/// A failed (re)connect is retried by the worker loop a couple of seconds
+/// later, so an upstream hiccup only warrants a warning; anything else (a bad
+/// URL, a TLS failure) still reports.
+fn log_connect_failure(context: &str, e: &crate::Error) {
+    if e.is_transient() {
+        warn!("{context}, will retry: {e:?}");
+    } else {
+        error!("{context}: {e:?}");
+    }
+}
+
 impl WebsocketClient {
     pub fn get_receiver(&mut self) -> &mut Receiver<SocketRx> {
         &mut self.listing_receiver
@@ -163,7 +174,7 @@ impl WebsocketClient {
         let mut websocket: Option<WebSocketStream<ConnectStream>> =
             Self::start_websocket(&user_agent)
                 .await
-                .map_err(|e| error!("{e:?}"))
+                .map_err(|e| log_connect_failure("Error connecting socket", &e))
                 .ok();
         let (socket_sender, mut socket_receiver) = channel(100);
         let (listing_sender, listing_receiver) = channel(100);
@@ -227,7 +238,7 @@ impl WebsocketClient {
                     tokio::time::sleep(Duration::from_secs(cooldown_seconds)).await;
                     websocket = Self::start_websocket(&user_agent)
                         .await
-                        .map_err(|e| error!("Error restarting socket? {e:?}"))
+                        .map_err(|e| log_connect_failure("Error restarting socket", &e))
                         .ok();
                     if let Some(mut ws) = websocket {
                         // send a ping first

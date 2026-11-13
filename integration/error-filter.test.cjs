@@ -958,6 +958,71 @@ const cases = [
     },
     expectDrop: true,
   },
+  // Lightpanda (headless scraping engine, AWS egress) rejects its own aborted
+  // fetches with a frameless `TypeError: Abort` when it tears the page down —
+  // no real browser uses that message. GlitchTip #8066, #8067, #8068.
+  {
+    name: "Frameless unhandled-rejection 'TypeError: Abort' (Lightpanda teardown) is dropped",
+    ua: "Lightpanda/1.0",
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Abort",
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "'TypeError: Abort' with an Ultros stack frame is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Abort",
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+            stacktrace: {
+              frames: [
+                {
+                  filename: "https://www.ultros.app/pkg/abc1234/ultros.js",
+                  function: "eF",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  {
+    name: "Frameless 'TypeError: Abort' reported via onerror (not a rejection) is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Abort",
+            mechanism: { type: "auto.browser.global_handlers.onerror" },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
   {
     name: "Non-Error promise rejection carrying a real object is preserved",
     ua: CURRENT_CHROME,
@@ -1685,6 +1750,26 @@ function snapshotDocument(opts) {
     },
   };
 }
+
+// ── Google rendering crawlers count as an injecting population (#8064) ──
+
+test("a tachys hydration panic from Mediapartners-Google on a current Chrome is dropped", () => {
+  const shouldDrop = loadFilter(
+    "Mozilla/5.0 (Linux; Android 4.0.4; Galaxy Nexus Build/IMM76B) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko; Mediapartners-Google) Chrome/999.0.0.0 Mobile Safari/537.36",
+  );
+  assert.strictEqual(shouldDrop(rustPanic(HYDRATION_LOC, {})), true);
+});
+
+test("a non-hydration panic from Mediapartners-Google is kept", () => {
+  const shouldDrop = loadFilter(
+    "Mozilla/5.0 (KHTML, like Gecko; Mediapartners-Google) Chrome/999.0.0.0 Mobile Safari/537.36",
+  );
+  const APP_LOC =
+    "/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/" +
+    "leptos-0.8.20/src/foo.rs:10:1";
+  assert.strictEqual(shouldDrop(rustPanic(APP_LOC, {})), false);
+});
 
 test("annotate attaches contexts.dom_injection to a hydration-class panic", () => {
   const win = loadWindow(

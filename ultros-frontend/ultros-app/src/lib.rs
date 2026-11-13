@@ -947,6 +947,9 @@ mod error_filter_wiring {
         // (the browser tag is server-derived and absent in beforeSend), so the
         // navigator read is the load-bearing part.
         assert!(FILTER_JS.contains("isStaleChromeMajor"));
+        // Google's rendering crawlers run a current Chrome, so they're matched
+        // by UA instead (#8064).
+        assert!(FILTER_JS.contains("isGoogleCrawlerUA"));
         assert!(FILTER_JS.contains("navigator.userAgent"));
         assert!(FILTER_JS.contains("hydration.rs"));
         // The cascade shapes are recognized WITHOUT the tachys breadcrumb (it

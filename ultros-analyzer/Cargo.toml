@@ -15,7 +15,7 @@ itertools = { workspace = true }
 metrics = "0.24.5"
 rkyv = { version = "0.7.42", features = ["validation", "arrayvec", "size_32"], default-features = false }
 serde = { workspace = true }
-smallvec = { version = "1.10.0", features = ["const_generics", "const_new", "union"] }
+smallvec = { version = "1.16.5", features = ["const_generics", "const_new", "union"] }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { version = "0.7.18" }
@@ -29,5 +29,5 @@ xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }
 
 [dev-dependencies]
 clickhouse = { workspace = true }
-tempfile = "3.6.0"
+tempfile = "3.27.0"
 tokio = { workspace = true, features = ["test-util"] }
