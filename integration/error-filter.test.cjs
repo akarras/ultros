@@ -162,6 +162,18 @@ const cases = [
     }),
     expectDrop: true,
   },
+  // The Sentry SDK hands beforeSend the in-flight event, whose breadcrumbs are
+  // a BARE array. An array's `.values` is Array.prototype.values (a function),
+  // so a lookup that tries `.values` first never sees these breadcrumbs. Every
+  // case above uses the envelope `{ values: [...] }` shape, which hid that.
+  {
+    name: "injector breadcrumb in the SDK's bare-array shape drops a current-Chrome hydration panic",
+    ua: CURRENT_CHROME,
+    event: rustPanic(HYDRATION_LOC, {
+      breadcrumbs: [{ category: "console", message: "检测页面稳定 ok" }],
+    }),
+    expectDrop: true,
+  },
   {
     name: "hydration panic on a CURRENT browser with NO injected <font> is preserved (real bugs still reach GlitchTip)",
     ua: CURRENT_CHROME,
@@ -1555,6 +1567,91 @@ const cases = [
       },
     },
     expectDrop: true,
+  },
+  // Baidu's render crawler (UA "android", Baidu referer) eval-injects hooks
+  // around addEventListener / history / onerror and logs each hooked call as a
+  // `[jshost]\t<api>\t...` console line. Its addEventListener hook throws, so
+  // leptos_hotkeys' `add_event_listener_with_callback(..).expect(..)` panics
+  // and traps (GlitchTip #8159). The stuck borrow it leaves then traps a second
+  // time in `RefCell::borrow_mut` (#8160). Neither reproduces in a real browser.
+  {
+    name: "a bare wasm trap on a page instrumented by the [jshost] crawler is dropped",
+    ua: "android",
+    event: {
+      exception: {
+        values: [
+          {
+            type: "RuntimeError",
+            value: "unreachable",
+            mechanism: { type: "auto.browser.global_handlers.onerror", handled: false },
+            stacktrace: {
+              frames: [
+                { filename: "/pkg/0a7e6a5/ultros.js", function: "c" },
+                { filename: "/pkg/0a7e6a5/ultros.wasm:wasm-function[49805]:0xcf499b", function: "?" },
+                { filename: "/pkg/0a7e6a5/ultros.wasm:wasm-function[5640]:0x523187", function: "?" },
+              ],
+            },
+          },
+        ],
+      },
+      breadcrumbs: [
+        { category: "console", message: "[jshost]\twindow.onpopstate\tKCk9Pnt9\t\tRXJyb3I6IEdFVEpTVVJM" },
+        { category: "console", message: "onerror,Uncaught TypeError: Cannot read properties of null (reading 'tagName')::::675" },
+        { category: "console", message: "app run!" },
+      ],
+    },
+    expectDrop: true,
+  },
+  {
+    name: "a symbolicated app panic on a [jshost]-instrumented page is dropped (envelope shape)",
+    ua: "android",
+    event: {
+      exception: {
+        values: [
+          {
+            type: "RuntimeError",
+            value: "unreachable in <core::cell::RefCell<_>>::borrow_mut",
+            stacktrace: {
+              frames: [
+                { filename: "/pkg/0a7e6a5/ultros.wasm:wasm-function[48191]:0xcd6db7", function: "?" },
+              ],
+            },
+          },
+        ],
+      },
+      breadcrumbs: {
+        values: [{ category: "console", message: "[jshost]\treplacestate\tL2l0ZW0=\t\t" }],
+      },
+    },
+    expectDrop: true,
+  },
+  // SAFETY: the tag must be the crawler logger's exact line prefix. An app
+  // log that merely mentions "[jshost]" (or a real user's trap with ordinary
+  // breadcrumbs) still reports.
+  {
+    name: "a bare wasm trap whose breadcrumbs only mention [jshost] mid-line is kept",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "RuntimeError",
+            value: "unreachable",
+            mechanism: { type: "auto.browser.global_handlers.onerror", handled: false },
+            stacktrace: {
+              frames: [
+                { filename: "/pkg/0a7e6a5/ultros.wasm:wasm-function[5640]:0x523187", function: "?" },
+              ],
+            },
+          },
+        ],
+      },
+      breadcrumbs: [
+        { category: "console", message: "app run!" },
+        { category: "console", message: "searching for [jshost]\tfoo" },
+      ],
+    },
+    expectDrop: false,
   },
   // SAFETY: `<anonymous>` frames alone prove nothing about origin — at least
   // one frame must be on a known third-party host.
