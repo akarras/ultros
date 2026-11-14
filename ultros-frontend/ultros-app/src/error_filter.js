@@ -124,6 +124,17 @@
 //   9. A frameless unhandled rejection of exactly `TypeError: Abort` — the
 //      Lightpanda headless engine's own fetch-abort on page teardown (no real
 //      browser uses that message). GlitchTip #8066, #8067, #8068.
+//  10. Anything from a page instrumented by Baidu's render crawler. It
+//      eval-injects hooks around addEventListener, history, window.onerror and
+//      eval, and logs each hooked call as a `[jshost]\t<api>\t...` console
+//      line. Those hooks throw on their own (`Cannot read properties of null
+//      (reading 'tagName')` inside `addEL_hook`), so a wasm-bindgen
+//      `add_event_listener_with_callback(..).expect(..)` in our code panics
+//      with nothing wrong on a real browser. GlitchTip #8159 is the
+//      `leptos_hotkeys` listener effect trapping that way, and #8160 is the
+//      `RefCell` double-borrow the abandoned trap leaves behind. Keyed on the
+//      exact `[jshost]\t` prefix that the crawler's own logger writes. A real
+//      browser never logs it, so no user event is swept up.
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
   // Third-party analytics / ads / consent / CDN-telemetry hosts. Ultros loads
@@ -165,6 +176,8 @@
   var ULTROS_JSSYS_EXECUTOR_RE =
     /\/js-sys-[\d.]+\/src\/futures\/task\/singlethread\.rs:/;
   var ULTROS_INJECTOR_BREADCRUMB = "检测页面稳定";
+  // Baidu render crawler's hook logger: `[jshost]\t<hooked api>\t<b64 args>`.
+  var ULTROS_CRAWLER_HOOK_BREADCRUMB_PREFIX = "[jshost]\t";
   // The stale-Chrome population behind the hydration flood: stuck in-app
   // WebViews (Tencent QQ / UC / WeChat, frozen near Chrome 112) and
   // version-pinned crawler fleets, none of them self-updating real users.
@@ -421,12 +434,14 @@
 
   function breadcrumbList(event) {
     // The Sentry SDK passes in-flight breadcrumbs as a bare array; the
-    // server/envelope shape nests them under `.values`. Handle both.
-    return (
-      (event && event.breadcrumbs && event.breadcrumbs.values) ||
-      (event && event.breadcrumbs) ||
-      []
-    );
+    // server/envelope shape nests them under `.values`. Handle both. Check
+    // for the bare array FIRST: an array's `.values` is
+    // Array.prototype.values, a function, so reading it would hide every
+    // in-flight breadcrumb from the checks that use this.
+    var crumbs = event && event.breadcrumbs;
+    if (Array.isArray(crumbs)) return crumbs;
+    if (crumbs && Array.isArray(crumbs.values)) return crumbs.values;
+    return [];
   }
 
   // Is this event the tachys hydration panic, in any of its shapes? One
@@ -842,6 +857,27 @@
     return false;
   }
 
+  // Category 10: the page is instrumented by Baidu's render crawler, whose
+  // hooks break DOM APIs under our code. See the header.
+  function isCrawlerHookedPage(event) {
+    try {
+      var crumbs = breadcrumbList(event);
+      if (!Array.isArray(crumbs)) return false;
+      for (var i = 0; i < crumbs.length; i++) {
+        var msg = crumbs[i] && crumbs[i].message;
+        if (
+          typeof msg === "string" &&
+          msg.indexOf(ULTROS_CRAWLER_HOOK_BREADCRUMB_PREFIX) === 0
+        ) {
+          return true;
+        }
+      }
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return false;
+  }
+
   // Attach the injection snapshot to hydration-class panics so the invisible
   // injector behind the #6831 residual flood (see domInjectionSnapshot) becomes
   // diagnosable on the events that still reach GlitchTip. Called from the
@@ -896,7 +932,8 @@
       isExecutorReentryCascade(event) ||
       isThirdPartyScriptError(event) ||
       isEmptyPromiseRejection(event) ||
-      isHeadlessFetchAbortRejection(event)
+      isHeadlessFetchAbortRejection(event) ||
+      isCrawlerHookedPage(event)
     );
   };
 })();
