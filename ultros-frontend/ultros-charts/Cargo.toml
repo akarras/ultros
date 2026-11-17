@@ -20,6 +20,6 @@ base64 = { version = "0.23", optional = true }
 leptos = { workspace = true, optional = true }
 
 [dev-dependencies]
-resvg = "0.49.0"
+resvg = "0.50.0"
 image = { workspace = true }
 leptos = { workspace = true, features = ["ssr"] }
