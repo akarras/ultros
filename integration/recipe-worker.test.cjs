@@ -82,3 +82,30 @@ test('shares compiled runtime and falls back when a browser cannot clone modules
   assert.equal(await result,'ok');
   queue.dispose();
 });
+
+test('falls back when a module clone fails with a non-standard error', async () => {
+  // Lightpanda (headless scraper) throws a plain `Error: Unable to deserialize
+  // cloned data.` from postMessage instead of a DataCloneError DOMException.
+  const { PlannerQueue } = await load();
+  const compiled = { sentinel: 'compiled module' };
+  const sent = [];
+  const worker = { terminate(){}, postMessage(message) {
+    sent.push(message);
+    if (message.compiled) throw new Error('Unable to deserialize cloned data.');
+  }};
+  const queue = new PlannerQueue({compiled,assets:()=>({js:'/pkg/ultros.js',wasm:'/pkg/ultros.wasm'}),spawn:()=>worker});
+  const result = queue.submit('plan');
+  assert.equal(sent.length,2);
+  assert.equal(sent[1].compiled,undefined);
+  worker.onmessage({data:{id:sent[1].id,result:'ok'}});
+  assert.equal(await result,'ok');
+  queue.dispose();
+});
+
+test('a postMessage failure without a compiled module still rejects', async () => {
+  const { PlannerQueue } = await load();
+  const worker = { terminate(){}, postMessage() { throw new Error('boom'); } };
+  const queue = new PlannerQueue({assets:()=>({js:'/pkg/ultros.js',wasm:'/pkg/ultros.wasm'}),spawn:()=>worker});
+  await assert.rejects(queue.submit('plan'), /boom/);
+  queue.dispose();
+});
