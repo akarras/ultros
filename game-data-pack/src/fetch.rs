@@ -302,7 +302,7 @@ mod tests {
     fn sheet_patterns_are_language_scoped_csv_paths() {
         let patterns = sheet_patterns("/csv/en");
         assert_eq!(patterns.len(), SHEETS.len());
-        assert!(patterns.contains(&"/csv/en/Item.csv".to_string()));
+        assert!(patterns.iter().any(|p| p == "/csv/en/Item.csv"));
         for pattern in &patterns {
             assert!(
                 pattern.starts_with("/csv/en/") && pattern.ends_with(".csv"),
@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn sheet_patterns_with_empty_prefix_are_repo_root_relative() {
         let patterns = sheet_patterns("");
-        assert!(patterns.contains(&"/Item.csv".to_string()));
+        assert!(patterns.iter().any(|p| p == "/Item.csv"));
     }
 
     #[test]
@@ -330,15 +330,21 @@ mod tests {
     fn per_language_forks_use_their_own_depth() {
         // The ko fork keeps its CSVs one level deeper than cn/tc do.
         assert!(
-            sparse_paths_for("ffxiv-datamining-ko").contains(&"/csv/Item.csv".to_string()),
+            sparse_paths_for("ffxiv-datamining-ko")
+                .iter()
+                .any(|p| p == "/csv/Item.csv"),
             "ko patterns should be nested under /csv"
         );
         assert!(
-            sparse_paths_for("ffxiv-datamining-cn").contains(&"/Item.csv".to_string()),
+            sparse_paths_for("ffxiv-datamining-cn")
+                .iter()
+                .any(|p| p == "/Item.csv"),
             "cn patterns should be repo-root relative"
         );
         assert!(
-            sparse_paths_for("ffxiv-datamining-tc").contains(&"/Item.csv".to_string()),
+            sparse_paths_for("ffxiv-datamining-tc")
+                .iter()
+                .any(|p| p == "/Item.csv"),
             "tc patterns should be repo-root relative"
         );
     }

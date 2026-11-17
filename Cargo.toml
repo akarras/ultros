@@ -168,7 +168,7 @@ icondata_core = "0.1"
 leptos_i18n = { version = "0.6.3", features = ["cookie"] }
 leptos_i18n_build = "0.6.3"
 cfg-if = "1.0.5"
-gloo-net = { version = "0.7.0", features = ["http", "websocket"] }
+gloo-net = { version = "0.8.0", features = ["http", "websocket"] }
 dotenvy = "0.15.7"
 clickhouse = { version = "0.15.3", features = [
     "chrono",
