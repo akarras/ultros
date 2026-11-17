@@ -62,7 +62,10 @@ export class PlannerQueue {
       catch (error) {
         // A browser that cannot clone modules can still fetch the same runtime
         // in its worker; it never falls back to calculating on the UI thread.
-        if (message.compiled && error.name === 'DataCloneError') {
+        // Any throw counts, not only DataCloneError: Lightpanda throws a plain
+        // `Error: Unable to deserialize cloned data.` here. The retry carries
+        // only strings and numbers, so a real failure still surfaces from it.
+        if (message.compiled) {
           this.worker.postMessage({ ...message, compiled: undefined });
         } else { throw error; }
       }

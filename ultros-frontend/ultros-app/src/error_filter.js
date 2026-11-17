@@ -121,9 +121,10 @@
 //      `/cdn-cgi/` on our own origin (the challenge-platform precursor that
 //      throws "Unexpected token '<'" when Cloudflare answers it with HTML,
 //      GlitchTip #7996) count as third-party: the edge serves that path itself.
-//   9. A frameless unhandled rejection of exactly `TypeError: Abort` — the
-//      Lightpanda headless engine's own fetch-abort on page teardown (no real
-//      browser uses that message). GlitchTip #8066, #8067, #8068.
+//   9. A frameless unhandled rejection of exactly `TypeError: Abort` or
+//      `TypeError: fetch error` — the Lightpanda headless engine's own
+//      fetch-abort on page teardown and failed fetch (no real browser uses
+//      either message). GlitchTip #8066, #8067, #8068, #8163.
 //  10. Anything from a page instrumented by Baidu's render crawler. It
 //      eval-injects hooks around addEventListener, history, window.onerror and
 //      eval, and logs each hooked call as a `[jshost]\t<api>\t...` console
@@ -840,13 +841,26 @@
   // "Lightpanda/1.0") rejects its own in-flight fetches with a bare
   // `TypeError: Abort` when it tears the page down. No real browser uses that
   // message (Chromium/WebKit/Gecko reject with an AbortError DOMException), the
-  // rejection carries no stack, and nothing in Ultros throws it. Narrowed to
-  // the exact value, an unhandled-rejection mechanism and an empty stack, so a
+  // rejection carries no stack, and nothing in Ultros throws it. Its failed
+  // (not aborted) fetches reject the same way with `TypeError: fetch error`,
+  // where real browsers say "Failed to fetch", "Load failed" or "NetworkError
+  // when attempting to fetch resource." (#8163). Narrowed to those exact
+  // values, an unhandled-rejection mechanism and an empty stack, so a
   // rejection with any frame still reaches GlitchTip. GlitchTip #8066-#8068.
+  var ULTROS_HEADLESS_FETCH_REJECTIONS = { Abort: true, "fetch error": true };
+
   function isHeadlessFetchAbortRejection(event) {
     try {
       var ex = firstException(event);
-      if (!ex || ex.type !== "TypeError" || ex.value !== "Abort") return false;
+      if (!ex || ex.type !== "TypeError") return false;
+      if (
+        !Object.prototype.hasOwnProperty.call(
+          ULTROS_HEADLESS_FETCH_REJECTIONS,
+          ex.value,
+        )
+      ) {
+        return false;
+      }
       var mech = (ex.mechanism && ex.mechanism.type) || "";
       if (mech.indexOf("onunhandledrejection") === -1) return false;
       var frames = (ex.stacktrace && ex.stacktrace.frames) || [];

@@ -992,6 +992,47 @@ const cases = [
     },
     expectDrop: true,
   },
+  // Same engine, failed (not aborted) fetch: frameless `TypeError: fetch
+  // error`. Real browsers say "Failed to fetch" / "Load failed" /
+  // "NetworkError when attempting to fetch resource.". GlitchTip #8163.
+  {
+    name: "Frameless unhandled-rejection 'TypeError: fetch error' (Lightpanda) is dropped",
+    ua: "Lightpanda/1.0",
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "fetch error",
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "Frameless 'TypeError: Failed to fetch' rejection from a real browser is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Failed to fetch",
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
   {
     name: "'TypeError: Abort' with an Ultros stack frame is preserved",
     ua: CURRENT_CHROME,
