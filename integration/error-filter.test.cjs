@@ -1014,6 +1014,120 @@ const cases = [
     },
     expectDrop: true,
   },
+  // Category 11: a scraper served an emptied module body. The hydration
+  // bootstrap's `mod.default(...)` then finds no default export. The only
+  // frame is the inline bootstrap on the page itself. GlitchTip #8166-#8169.
+  {
+    name: "Hydration bootstrap 'mod.default is not a function' (stubbed ultros.js) is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "mod.default is not a function",
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+            stacktrace: {
+              frames: [
+                {
+                  filename:
+                    "https://ultros.app/item/%E5%A4%AA%E9%98%B3%E6%B5%B7%E5%B2%B8/19524?lang=cn",
+                  function: "?",
+                  lineno: 1435,
+                  colno: 16,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "'mod.default is not a function' with a pkg-bundle frame is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "mod.default is not a function",
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+            stacktrace: {
+              frames: [
+                { filename: "https://ultros.app/pkg/8217061/ultros.js", function: "e" },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  {
+    name: "Handled 'mod.default is not a function' (not the bootstrap rejection) is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "mod.default is not a function",
+            mechanism: { type: "generic", handled: true },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  // ultros.js linking an emptied snippet module. GlitchTip #8165.
+  {
+    name: "Missing named export from an emptied ./snippets/ultros-* module is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "SyntaxError",
+            value:
+              "The requested module './snippets/ultros-app-f848e9b19e56e516/../../ultros/static/recipe-worker-client.mjs' does not provide an export named 'planRecipe'",
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "Missing named export from a non-Ultros module is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "SyntaxError",
+            value:
+              "The requested module 'https://cdn.example.com/lib.mjs' does not provide an export named 'thing'",
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
   {
     name: "Frameless 'TypeError: Failed to fetch' rejection from a real browser is preserved",
     ua: CURRENT_CHROME,

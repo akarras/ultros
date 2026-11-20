@@ -136,6 +136,23 @@
 //      `RefCell` double-borrow the abandoned trap leaves behind. Keyed on the
 //      exact `[jshost]\t` prefix that the crawler's own logger writes. A real
 //      browser never logs it, so no user event is swept up.
+//  11. A bundle module whose body was replaced before it ran. Some scraping
+//      clients answer script requests with an empty or non-module body so they
+//      don't have to download them. Our own modules always carry their exports:
+//      wasm-bindgen emits `export { … as default }` in ultros.js and links each
+//      snippet's named imports at build time. And every one sits under a
+//      commit-hashed, immutable /pkg/<hash>/ path. So when one of these turns
+//      up missing, the body we served was swapped out. Two shapes:
+//      - `TypeError: mod.default is not a function`: the hydration bootstrap's
+//        `import(ultros.js).then(mod => mod.default(...))`. #8166-#8169: Chrome
+//        154/Windows, en-US with an Asia/Manila clock, four unrelated IPs, all
+//        on one release whose ultros.js does export `default`.
+//      - `SyntaxError: The requested module './snippets/ultros-…' does not
+//        provide an export named '…'`: ultros.js linking an emptied snippet
+//        (#8165). The served snippet does export it.
+//      Both are reproduced by importing an empty module. Scoped to an unhandled
+//      rejection with no frame inside the pkg bundle, so a genuine failure in
+//      our code still reports.
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
   // Third-party analytics / ads / consent / CDN-telemetry hosts. Ultros loads
@@ -892,6 +909,39 @@
     return false;
   }
 
+  // Category 11: one of our bundle modules arrived with its body replaced. See
+  // the header. `mod` is the hydration bootstrap's own variable name.
+  var ULTROS_STUBBED_ENTRY_VALUE = "mod.default is not a function";
+  var ULTROS_STUBBED_SNIPPET_RE =
+    /^The requested module '\.\/snippets\/ultros-[^']*' does not provide an export named '[^']+'$/;
+
+  function isStubbedBundleModule(event) {
+    try {
+      var ex = firstException(event);
+      if (!ex || typeof ex.value !== "string") return false;
+      var entry = ex.type === "TypeError" && ex.value === ULTROS_STUBBED_ENTRY_VALUE;
+      var snippet =
+        ex.type === "SyntaxError" && ULTROS_STUBBED_SNIPPET_RE.test(ex.value);
+      if (!entry && !snippet) return false;
+      var mech = (ex.mechanism && ex.mechanism.type) || "";
+      if (mech.indexOf("onunhandledrejection") === -1) return false;
+      var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
+      for (var i = 0; i < frames.length; i++) {
+        var f = frames[i] || {};
+        if (
+          (typeof f.filename === "string" && ULTROS_PKG_BUNDLE_RE.test(f.filename)) ||
+          (typeof f.abs_path === "string" && ULTROS_PKG_BUNDLE_RE.test(f.abs_path))
+        ) {
+          return false;
+        }
+      }
+      return true;
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return false;
+  }
+
   // Attach the injection snapshot to hydration-class panics so the invisible
   // injector behind the #6831 residual flood (see domInjectionSnapshot) becomes
   // diagnosable on the events that still reach GlitchTip. Called from the
@@ -947,7 +997,8 @@
       isThirdPartyScriptError(event) ||
       isEmptyPromiseRejection(event) ||
       isHeadlessFetchAbortRejection(event) ||
-      isCrawlerHookedPage(event)
+      isCrawlerHookedPage(event) ||
+      isStubbedBundleModule(event)
     );
   };
 })();
