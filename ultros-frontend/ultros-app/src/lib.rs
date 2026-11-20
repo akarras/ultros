@@ -998,6 +998,10 @@ mod error_filter_wiring {
         assert!(FILTER_JS.contains("ULTROS_THIRD_PARTY_SCRIPT_HOST_RE"));
         // Cloudflare's edge scripts under /cdn-cgi/ on our own origin (#7996).
         assert!(FILTER_JS.contains("ULTROS_CLOUDFLARE_EDGE_PATH_RE"));
+        // Category 11: a bundle module whose body a scraper emptied
+        // (#8165-#8169).
+        assert!(FILTER_JS.contains("isStubbedBundleModule"));
+        assert!(FILTER_JS.contains("mod.default is not a function"));
     }
 
     /// Same contract for the wasm symbolicator: beforeSend calls
