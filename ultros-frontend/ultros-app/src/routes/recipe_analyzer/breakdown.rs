@@ -11,7 +11,7 @@
 use super::{RecipeRow, short_signal};
 use crate::analyzer_kit::formula::{PriceSignal, per_unit_cost};
 use crate::analyzer_kit::stat_columns::Window;
-use crate::components::add_recipe_to_list::AddRecipeToListModal;
+use crate::components::add_recipe_to_list::AddRecipeToListForm;
 use crate::components::crafting_cost::{CostBreakdown, PriceSource, ShardsMode, SubcraftInfo};
 use crate::components::{gil::*, icon::Icon, item_icon::*};
 use crate::global_state::xiv_data::tracked_data;
@@ -20,7 +20,7 @@ use icondata as i;
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
 use thousands::Separable;
-use xiv_gen::{ItemId, Recipe};
+use xiv_gen::ItemId;
 
 /// What a breakdown line's badge says about where its price came from.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -228,20 +228,38 @@ pub(super) fn RecipeBreakdownDrawer(
             focus_selector(&format!("[data-recipe-breakdown-toggle=\"{id}\"]"));
         }
     };
-    // The add-to-list modal lives outside the drawer's reactive body: that
-    // body rebuilds whenever the row recomputes, and a modal inside it would
-    // be rebuilt too, dropping every quantity the user had typed.
-    let (modal_visible, set_modal_visible) = signal(false);
-    let modal_recipe = RwSignal::new(None::<&'static Recipe>);
-
+    // Keep Close visible while the cost details and ingredient editor scroll.
+    let header = move || {
+        let recipe = row.get()?.recipe;
+        let name = tracked_data()
+            .items
+            .get(&ItemId(recipe.item_result))
+            .map(|item| item.name.to_string())
+            .unwrap_or_default();
+        Some(view! {
+                <header class="recipe-breakdown-header">
+                    <ItemIcon item_id=recipe.item_result icon_size=IconSize::Medium />
+                    <div class="min-w-0 flex-1">
+                        <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">
+                            {t!(i18n, recipe_breakdown_title)}
+                        </div>
+                        <div class="font-bold truncate">{name}</div>
+                    </div>
+                    <button
+                        type="button"
+                        class="recipe-breakdown-close"
+                        aria-label=t_string!(i18n, recipe_breakdown_close_aria).to_string()
+                        on:click=move |_| close()
+                    >
+                        <Icon icon=i::AiCloseOutlined />
+                    </button>
+                </header>
+        })
+    };
     let drawer = move || {
         let row = row.get()?;
         let items = &tracked_data().items;
         let recipe = row.recipe;
-        let name = items
-            .get(&ItemId(recipe.item_result))
-            .map(|i| i.name.to_string())
-            .unwrap_or_default();
         let model = breakdown_model(&row.breakdown, recipe.amount_result, shards.get());
         let lines = model
             .lines
@@ -278,10 +296,10 @@ pub(super) fn RecipeBreakdownDrawer(
                         </td>
                         <td class="text-right tabular-nums">{line.quantity}</td>
                         <td class="text-right tabular-nums">
-                            <div class="flex justify-end"><Gil amount=unit_price /></div>
+                            {unit_price.separate_with_commas()}
                         </td>
                         <td class="text-right tabular-nums">
-                            <div class="flex justify-end"><GilOrDash amount=total /></div>
+                            {total.map(|n| n.separate_with_commas()).unwrap_or_else(|| "—".into())}
                         </td>
                     </tr>
                 }
@@ -365,49 +383,8 @@ pub(super) fn RecipeBreakdownDrawer(
         };
 
         Some(view! {
-            <aside
-                class="recipe-breakdown"
-                data-recipe-breakdown=recipe.key_id.0
-                aria-label=t_string!(i18n, recipe_breakdown_title).to_string()
-                on:keydown=move |e| {
-                    // The modal does not take focus, so its Escape can
-                    // arrive here too: that one closes the modal alone.
-                    if e.key() == "Escape" && !modal_visible.get_untracked() {
-                        close();
-                    }
-                }
-            >
-                <header class="recipe-breakdown-header">
-                    <ItemIcon item_id=recipe.item_result icon_size=IconSize::Medium />
-                    <div class="min-w-0 flex-1">
-                        <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">
-                            {t!(i18n, recipe_breakdown_title)}
-                        </div>
-                        <div class="font-bold truncate">{name}</div>
-                    </div>
-                    <button
-                        type="button"
-                        class="recipe-breakdown-close"
-                        aria-label=t_string!(i18n, recipe_breakdown_close_aria).to_string()
-                        on:click=move |_| close()
-                    >
-                        <Icon icon=i::AiCloseOutlined />
-                    </button>
-                </header>
+            <div>
                 <div class="recipe-breakdown-body">
-                    <button
-                        type="button"
-                        class="btn-primary w-full justify-center"
-                        data-recipe-breakdown-add
-                        on:click=move |_| {
-                            modal_recipe.set(Some(recipe));
-                            set_modal_visible(true);
-                        }
-                    >
-                        <Icon icon=i::AiOrderedListOutlined />
-                        <span>{t!(i18n, recipe_breakdown_add_to_craft_list)}</span>
-                    </button>
-
                     <section>
                         <h3 class="recipe-breakdown-heading">{t!(i18n, recipe_breakdown_ingredients)}</h3>
                         <table class="recipe-breakdown-table">
@@ -415,8 +392,8 @@ pub(super) fn RecipeBreakdownDrawer(
                                 <tr>
                                     <th scope="col" class="text-left">{t!(i18n, recipe_breakdown_col_ingredient)}</th>
                                     <th scope="col" class="text-right">{t!(i18n, recipe_breakdown_col_qty)}</th>
-                                    <th scope="col" class="text-right">{t!(i18n, recipe_breakdown_col_unit)}</th>
-                                    <th scope="col" class="text-right">{t!(i18n, recipe_breakdown_col_total)}</th>
+                                    <th scope="col" class="text-right">"Unit price (gil)"</th>
+                                    <th scope="col" class="text-right">"Total (gil)"</th>
                                 </tr>
                             </thead>
                             <tbody>{lines}</tbody>
@@ -438,28 +415,40 @@ pub(super) fn RecipeBreakdownDrawer(
                         {ledger}
                     </section>
                 </div>
-            </aside>
+            </div>
         })
     };
 
     view! {
-        {drawer}
-        <Show when=modal_visible>
-            {move || {
-                modal_recipe.get_untracked().map(|recipe| {
-                    view! {
-                        <AddRecipeToListModal
-                            recipe
-                            initial_hq=require_hq.get_untracked()
-                            set_visible=set_modal_visible
-                        />
-                    }
-                })
-            }}
+        <Show when=move || selected.get().is_some()>
+            <aside class="recipe-breakdown"
+                data-recipe-breakdown=move || selected.get()
+                aria-label=t_string!(i18n, recipe_breakdown_title).to_string()
+                on:keydown=move |e| { if e.key() == "Escape" { e.stop_propagation(); close(); } }>
+                {header}
+                <div class="recipe-breakdown-scroll">
+                    {drawer}
+                    // Key only by recipe: repricing must not replace the ingredient draft.
+                    <For
+                        each=move || { selected.get().into_iter().collect::<Vec<_>>() }
+                        key=|id| *id
+                        children=move |id| {
+                            let recipe = rows.with_untracked(|rows| rows.iter().find(|(_, row)| row.recipe.key_id.0 == id).map(|(_, row)| row.recipe));
+                            recipe.map(|recipe| view! {
+                                <section class="recipe-breakdown-body">
+                                    <AddRecipeToListForm recipe
+                                        initial_hq=require_hq.get_untracked()
+                                        initial_include_crystals={shards.get_untracked() == ShardsMode::IncludeMarket}
+                                        on_added=Callback::new(move |()| close()) />
+                                </section>
+                            })
+                        }
+                    />
+                </div>
+            </aside>
         </Show>
     }
 }
-
 /// Every sub-craft the winning run made, nested ones included — the table
 /// only shows the top level, so this is where a depth-two craft is said.
 fn sub_craft_lines(
