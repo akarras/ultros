@@ -13,7 +13,7 @@ use crate::analyzer_kit::filters::register_filters;
 use crate::analyzer_kit::market::{MarketGrid, MarketSubject, use_market_data};
 use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
-use crate::components::ad::Ad;
+use crate::components::ad::{Ad, slots as ad_slots};
 use crate::components::control_bar::ControlBar;
 use crate::components::icon::Icon;
 use crate::components::item_actions::ItemActions;
@@ -942,7 +942,9 @@ pub fn CurrencySelection() -> impl IntoView {
 pub fn CurrencyExchange() -> impl IntoView {
     view! {
         <div class="app-inline-ad">
-            <Ad class="w-full h-[100px]" />
+            <div class="w-full flex justify-center py-2">
+                <Ad class="ad-banner-ins" ad_slot=ad_slots::CURRENCY_INLINE />
+            </div>
         </div>
         <div class="main-content p-2 sm:p-6">
             <Outlet />

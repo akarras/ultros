@@ -369,8 +369,18 @@ fn boot_progress_script() -> String {
 }
 
 pub fn shell(options: LeptosOptions, bootstrap_script: String, plugin_page: bool) -> impl IntoView {
+    shell_with_ads(options, bootstrap_script, plugin_page, !plugin_page)
+}
+
+pub fn shell_with_ads(
+    options: LeptosOptions,
+    bootstrap_script: String,
+    plugin_page: bool,
+    preload_ads: bool,
+) -> impl IntoView {
     let sheet_url = ["/", options.site_pkg_dir.as_ref(), "/ultros.css"].concat();
     let error_reporting_script = (!plugin_page).then(error_reporting_script).flatten();
+    let preload_ads = preload_ads && !plugin_page;
     view! {
         <!DOCTYPE html>
         // Chrome's Google Translate rewrites text nodes into `<font>` wrappers
@@ -427,6 +437,27 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String, plugin_page: bool
                 <AutoReload options=options.clone() />
                 <HydrationScripts options />
                 <MetaTags />
+                {preload_ads.then(|| view! {
+                    // Warm the AdSense connection and fetch the loader script in
+                    // parallel with WASM without executing it before hydration:
+                    // `Ad` still injects the `<script>` from a post-hydration
+                    // Effect so AdSense never mutates the SSR DOM under tachys.
+                    <link
+                        rel="preconnect"
+                        href="https://pagead2.googlesyndication.com"
+                        crossorigin="anonymous"
+                    />
+                    <link
+                        rel="dns-prefetch"
+                        href="https://googleads.g.doubleclick.net"
+                    />
+                    <link
+                        rel="preload"
+                        r#as="script"
+                        href=crate::components::ad::ADSENSE_LOADER_URL
+                        crossorigin="anonymous"
+                    />
+                })}
                 {(!plugin_page).then(|| view! {
                     <script async src="https://www.googletagmanager.com/gtag/js?id=G-WYVZLM39M3"></script>
                     <script>
@@ -913,6 +944,46 @@ mod translation_boundary_tests {
                 t_string!(i18n, npc_location_unknown).to_string(),
                 "Location unavailable"
             );
+        });
+    }
+
+    #[test]
+    fn ad_renders_configured_slot_format_and_clean_chrome() {
+        use crate::components::ad::{Ad, DesktopAdRail};
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<
+                ultros_i18n::i18n::Locale,
+            >());
+            provide_context(axum::http::Request::new(()).into_parts().0);
+            provide_context(crate::global_state::cookies::Cookies::new());
+
+            let html = view! {
+                <Ad
+                    class="ad-banner-ins"
+                    ad_slot="9999999999"
+                    format="horizontal"
+                    full_width_responsive=true
+                />
+            }
+            .to_html();
+            assert!(html.contains("data-ad-slot=\"9999999999\""), "{html}");
+            assert!(html.contains("data-ad-format=\"horizontal\""), "{html}");
+            assert!(
+                html.contains("data-full-width-responsive=\"true\""),
+                "{html}"
+            );
+            assert!(html.contains("ad-banner-ins"), "{html}");
+            assert!(
+                !html.contains("href=\"/settings\""),
+                "ad wrapper should not advertise disabling ads underneath every creative: {html}"
+            );
+
+            let rail_html = view! { <DesktopAdRail /> }.to_html();
+            assert!(rail_html.contains("sticky top-4"), "{rail_html}");
+            assert!(!rail_html.contains("top-24"), "{rail_html}");
+            assert!(rail_html.contains("ad-rail-ins"), "{rail_html}");
         });
     }
 }

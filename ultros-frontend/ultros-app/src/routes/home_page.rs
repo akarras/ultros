@@ -10,7 +10,7 @@ use leptos::prelude::*;
 use leptos_meta::Script;
 
 use crate::components::{
-    ad::Ad,
+    ad::{Ad, slots as ad_slots},
     live_sale_ticker::LiveSaleTicker,
     market_heat::MarketHeat,
     market_movers::MarketMovers,
@@ -406,7 +406,9 @@ pub fn HomePage() -> impl IntoView {
                         </div>
                     </section>
 
-                    <Ad class="w-full max-w-96 aspect-[21/9] rounded-2xl overflow-hidden" />
+                    <div class="w-full flex justify-center">
+                        <Ad class="ad-banner-ins" ad_slot=ad_slots::HOME_BANNER />
+                    </div>
                 </div>
 
                 // Right sidebar. Sticky only from `lg`, where it is an actual
@@ -416,7 +418,9 @@ pub fn HomePage() -> impl IntoView {
                 <div class="flex flex-col w-full lg:w-[424px] gap-6 lg:sticky lg:top-4">
                     <LiveSaleTicker scope=feed_scope />
                     <RecentlyViewed />
-                    <Ad class="w-full aspect-square rounded-2xl overflow-hidden" />
+                    <div class="w-full flex justify-center">
+                        <Ad class="ad-rect-ins" ad_slot=ad_slots::HOME_SIDEBAR />
+                    </div>
                 </div>
             </div>
         </div>
