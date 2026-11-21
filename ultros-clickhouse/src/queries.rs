@@ -616,6 +616,7 @@ pub async fn active_listing_count(
     }
     let worlds = id_list(world_ids);
     let seed_table = crate::schema::LISTING_EVENTS_SEED_MARKER_TABLE;
+    let refresh_table = crate::schema::LISTING_ALIVE_REFRESH_MARKER_TABLE;
     let row = ch
         .client()
         .query(&format!(
@@ -623,7 +624,10 @@ pub async fn active_listing_count(
                  toUInt64(sum(alive_count)) AS total,
                  toUInt8((SELECT count() > 0 FROM {seed_table})) AS is_seeded,
                  toInt64(toUnixTimestamp((SELECT max(seeded_at) FROM {seed_table}))) AS seeded_at_unix,
-                 toInt64(toUnixTimestamp((SELECT max(computed_at) FROM listing_alive))) AS last_refresh_unix,
+                 greatest(
+                     toInt64(toUnixTimestamp((SELECT max(refreshed_at) FROM {refresh_table}))),
+                     toInt64(toUnixTimestamp((SELECT max(computed_at) FROM listing_alive)))
+                 ) AS last_refresh_unix,
                  toInt64(toUnixTimestamp(now())) AS now_unix
              FROM listing_alive FINAL
              WHERE world_id IN ({worlds})"

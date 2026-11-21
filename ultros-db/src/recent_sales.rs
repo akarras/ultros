@@ -14,6 +14,7 @@ use universalis::{ItemId, WorldId};
 
 pub const RECENT_SALE_LIMIT: usize = 6;
 const COLUMNS: &str = "sold_item_id,hq,price_per_item,sold_date,world_id";
+const PROJECTION_COLUMNS: &str = "pg_id,sold_item_id,hq,price_per_item,sold_date,world_id";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, FromQueryResult)]
 pub struct BackfillStatus {
@@ -160,11 +161,10 @@ impl UltrosDb {
         status_on(&self.db).await
     }
 
-    pub(crate) fn sales_since_statement(&self, since: NaiveDateTime) -> Statement {
-        Statement::from_sql_and_values(
+    pub(crate) fn projection_rows_statement(&self) -> Statement {
+        Statement::from_string(
             DbBackend::Postgres,
-            format!("SELECT {COLUMNS} FROM recent_sale_history WHERE sold_date >= $1"),
-            [since.into()],
+            format!("SELECT {PROJECTION_COLUMNS} FROM recent_sale_history"),
         )
     }
 

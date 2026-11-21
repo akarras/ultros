@@ -166,7 +166,14 @@ pub(crate) async fn get_movers(
     )
     .increment(1);
     if !loaded.cacheable {
-        return Ok(crate::web::uncached_json(loaded.body.raw().clone()));
+        return Ok(loaded
+            .body
+            .into_json_response(
+                &headers,
+                axum::http::HeaderValue::from_static("no-store"),
+                &[],
+            )
+            .await);
     }
     Ok(cached_encoded_json(&loaded, &headers, ttl).await)
 }

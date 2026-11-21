@@ -169,7 +169,7 @@ Once Phase 0 and the 2-role split are live, apply self-built Rust optimizations 
   * Keep SSR HTML `private, no-store`; activate Cloudflare Cache Rules 1 & 2 (`bypass_by_default`) + Tiered Cache.
 * **Phase 1A — High-Leverage Local Fixes (In-Process, Zero Distributed Risk)**
   * Move ClickHouse `SaleRow` writes off the analyzer broadcast onto a transactional Postgres outbox covering both Universalis WS and `UpdateService` catch-up, with ClickHouse retry deduplication for `sales`, `sale_receipts`, and `listing_events` (fixes 1,342 dropped sales/day).
-  * Move the 19.5s analyzer snapshot off SIGTERM (periodic level-1 gzip snapshots; skip the shutdown write only when a verified, restorable snapshot generation is still intact on disk within the skip window, and backfill post-snapshot sales from `recent_sale_history` on restore so graceful deploys and restart loops lose zero sales).
+  * Move the 19.5s analyzer snapshot off SIGTERM (periodic level-1 gzip snapshots; skip the shutdown write only when a verified, restorable snapshot generation is still intact on disk within the skip window, and reconcile `recent_sale_history` on restore with `pg_id`-deduplicated live handoff so graceful deploys and restart loops lose zero sales).
   * Upgrade `HomeFeedCache` to stale-while-revalidate and replace `market_pulse`'s Postgres `COUNT(*)` (fixes 9.75s p95 tail).
   * Add `Arc<EncodedBody>` pre-compressed caching for bulk market endpoints and measure/tune `POSTGRES_MAX_CONNECTIONS`.
 * **Phase 1B — Two-Role Split (`ULTROS_ROLES=web` ×N vs `ULTROS_ROLES=ingest,market,bot` ×1)**

@@ -162,6 +162,24 @@ pub struct SaleSummary {
     pub sale_date: NaiveDateTime,
 }
 
+impl From<&ultros_db::sales::RecentProjectionSale> for ItemKey {
+    fn from(sale: &ultros_db::sales::RecentProjectionSale) -> Self {
+        Self {
+            item_id: sale.sold_item_id,
+            hq: sale.hq,
+        }
+    }
+}
+
+impl From<&ultros_db::sales::RecentProjectionSale> for SaleSummary {
+    fn from(sale: &ultros_db::sales::RecentProjectionSale) -> Self {
+        Self {
+            sale_date: sale.sold_date,
+            price_per_item: sale.price_per_item,
+        }
+    }
+}
+
 impl From<&ultros_db::sales::AbbreviatedSaleData> for SaleSummary {
     fn from(sale: &ultros_db::sales::AbbreviatedSaleData) -> Self {
         Self {
@@ -214,22 +232,42 @@ impl SaleHistory {
         entries.sort_by_key(|sale| Reverse(sale.sale_date));
     }
 
-    /// Merge a backfilled sale from Postgres after snapshot restore, skipping
-    /// exact `(sale_date, price_per_item)` duplicates already captured in the
-    /// snapshot overlap window. Returns `true` when the sale was added.
-    fn merge_backfill_sale(&mut self, sale: &ultros_db::sales::AbbreviatedSaleData) -> bool {
-        let key: ItemKey = sale.into();
-        let summary: SaleSummary = sale.into();
-        if self.item_map.get(&key).is_some_and(|entries| {
-            entries.iter().any(|existing| {
-                existing.sale_date == summary.sale_date
-                    && existing.price_per_item == summary.price_per_item
-            })
-        }) {
-            return false;
+    /// Multiset-preserving merge of one `(item_id, hq)` board's projection
+    /// rows into a snapshot-restored history (used when historical backfill of
+    /// `recent_sale_history` is not yet marked complete).
+    ///
+    /// Counts how many copies of each `(sale_date, price_per_item)` pair were
+    /// already present in the restored snapshot and decrements that count once
+    /// per matching projection row. Two genuine purchases with identical
+    /// timestamp and price therefore preserve exact multiplicity, while
+    /// already-restored overlap rows are not duplicated.
+    fn merge_projection_board(
+        &mut self,
+        key: ItemKey,
+        sales: &[ultros_db::sales::RecentProjectionSale],
+    ) -> usize {
+        let mut existing_counts: std::collections::HashMap<(NaiveDateTime, i32), usize> =
+            std::collections::HashMap::new();
+        if let Some(entries) = self.item_map.get(&key) {
+            for entry in entries {
+                *existing_counts
+                    .entry((entry.sale_date, entry.price_per_item))
+                    .or_insert(0) += 1;
+            }
         }
-        self.add_sale(sale);
-        true
+        let mut added = 0;
+        for sale in sales {
+            let sig = (sale.sold_date, sale.price_per_item);
+            if let Some(remaining) = existing_counts.get_mut(&sig)
+                && *remaining > 0
+            {
+                *remaining -= 1;
+                continue;
+            }
+            self.add_sale(sale);
+            added += 1;
+        }
+        added
     }
 }
 
@@ -543,10 +581,58 @@ const INITIAL_SNAPSHOT_DELAY: std::time::Duration = std::time::Duration::from_se
 /// backfills sales recorded after `snapshot_ts` from `recent_sale_history`.
 const SHUTDOWN_SNAPSHOT_MAX_AGE: Duration = Duration::minutes(20);
 
-/// Overlap cushion subtracted from a restored snapshot's timestamp when
-/// backfilling sales from Postgres so sales committed during the snapshot
-/// write or with slight clock skew are never missed.
-const SNAPSHOT_BACKFILL_OVERLAP: Duration = Duration::seconds(60);
+/// How long `history_worker` retains Postgres `pg_id`s loaded at startup to
+/// deduplicate live sale events broadcast across the boot-to-live handoff.
+const BOOT_SALE_DEDUP_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Short-lived deduplication set bridging startup Postgres loads/reconciles
+/// and the live `event_receivers.history` stream so a sale committed during
+/// startup is never double-counted. Automatically clears and frees its memory
+/// once `expires_at` passes.
+struct BootSaleDedup {
+    loaded_pg_ids: std::collections::HashSet<i32>,
+    expires_at: tokio::time::Instant,
+}
+
+impl BootSaleDedup {
+    fn new(loaded_pg_ids: std::collections::HashSet<i32>, ttl: std::time::Duration) -> Self {
+        Self {
+            loaded_pg_ids,
+            expires_at: tokio::time::Instant::now() + ttl,
+        }
+    }
+
+    /// Returns `true` when `pg_id` was already loaded from Postgres during
+    /// startup and should be skipped by the live consumer.
+    fn should_skip(&mut self, pg_id: i32, now: tokio::time::Instant) -> bool {
+        if self.loaded_pg_ids.is_empty() {
+            return false;
+        }
+        if now >= self.expires_at {
+            self.loaded_pg_ids.clear();
+            self.loaded_pg_ids.shrink_to_fit();
+            return false;
+        }
+        self.loaded_pg_ids.remove(&pg_id)
+    }
+}
+
+/// Drain any broadcast events already queued before the startup Postgres query
+/// begins: ingest always commits to Postgres before broadcasting on the event
+/// bus, so every pre-query event is already visible to the query.
+fn drain_pending_history(
+    rx: &mut crate::event::EventBus<ultros_api_types::websocket::SaleEventData>,
+) {
+    loop {
+        match rx.try_recv() {
+            Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+            Err(
+                tokio::sync::broadcast::error::TryRecvError::Empty
+                | tokio::sync::broadcast::error::TryRecvError::Closed,
+            ) => break,
+        }
+    }
+}
 
 /// Metadata for a snapshot generation that this process either wrote cleanly
 /// via [`snapshot::write`] + atomic rename or decoded cleanly via
@@ -1255,26 +1341,39 @@ impl AnalyzerService {
     ) {
         let restored_snapshot_ts = self.try_restore_from_snapshot().await;
         let mut history_ready = false;
+        let mut loaded_pg_ids = std::collections::HashSet::new();
         loop {
+            if !history_ready {
+                // Drain events broadcast before our Postgres query starts so
+                // already-committed sales are not replayed after the query.
+                drain_pending_history(&mut event_receivers.history);
+            }
             let load = async {
                 if !history_ready {
-                    if let Some(snapshot_ts) = restored_snapshot_ts {
-                        // A skipped shutdown snapshot can leave up to
-                        // `SHUTDOWN_SNAPSHOT_MAX_AGE` of sales missing from the
-                        // restored file. Replay only the compact delta since
-                        // `snapshot_ts - SNAPSHOT_BACKFILL_OVERLAP` from
-                        // `recent_sale_history` so graceful deploys and restart
-                        // loops lose zero sales.
-                        let since = (snapshot_ts - SNAPSHOT_BACKFILL_OVERLAP).naive_utc();
-                        let stream = ultros_db.sales_since(since).await?;
-                        let merged =
-                            rebuild::merge_history_since(&self.recent_sale_history, stream).await?;
+                    let (projection_complete, projection_stream) =
+                        ultros_db.recent_sale_projection().await?;
+                    if restored_snapshot_ts.is_some() || projection_complete {
+                        // Reconcile from the compact `recent_sale_history`
+                        // projection without a `sold_date` cutoff so both
+                        // post-snapshot sales and late-arriving sales with
+                        // older timestamps are captured with exact
+                        // multiplicity, and capture `pg_id`s so any live event
+                        // broadcast during this read is skipped idempotently.
+                        let (applied, pg_ids) = rebuild::reconcile_projection_history(
+                            &self.recent_sale_history,
+                            projection_complete,
+                            projection_stream,
+                        )
+                        .await?;
+                        loaded_pg_ids = pg_ids;
                         info!(
-                            merged_sales = merged,
-                            %since,
-                            "backfilled post-snapshot sales into analyzer history"
+                            applied_sales = applied,
+                            projection_complete,
+                            restored_snapshot = restored_snapshot_ts.is_some(),
+                            "reconciled analyzer sale history from recent_sale_history"
                         );
                     } else {
+                        drop(projection_stream);
                         let stream = ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32).await?;
                         let history =
                             rebuild::load_history(self.recent_sale_history.keys().copied(), stream)
@@ -1312,6 +1411,7 @@ impl AnalyzerService {
         let second_worker_instance = self.clone();
         let history_token = token.child_token();
         let history_shutdown = history_token.clone();
+        let mut boot_dedup = BootSaleDedup::new(loaded_pg_ids, BOOT_SALE_DEDUP_WINDOW);
         let history_worker = tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -1323,7 +1423,11 @@ impl AnalyzerService {
                             BusRecv::Msg(history) => match history {
                                 crate::event::EventType::Remove(_) => {}
                                 crate::event::EventType::Add(sales) => {
+                                    let now = tokio::time::Instant::now();
                                     for (sale, _) in sales.sales.iter() {
+                                        if boot_dedup.should_skip(sale.id, now) {
+                                            continue;
+                                        }
                                         second_worker_instance.add_sale(sale).await;
                                     }
                                 }
@@ -4241,12 +4345,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restore_from_snapshot_then_backfill_merges_newer_sales_without_duplicates() {
+    async fn restore_from_snapshot_then_reconcile_preserves_multiplicity_late_sales_and_live_dedup()
+    {
         let dir = tempfile::tempdir().unwrap();
         let source = populated_analyzer(ultros_clickhouse::ClickHouseClient::from_env());
         source.serialize_state_in(dir.path(), false).await.unwrap();
 
-        let target = AnalyzerService {
+        let make_target = || AnalyzerService {
             recent_sale_history: Arc::new(BTreeMap::from([(54, RwLock::default())])),
             cheapest_items: Arc::new(BTreeMap::from([(
                 AnySelector::World(54),
@@ -4260,6 +4365,12 @@ mod tests {
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
 
+        // 1. Incomplete projection mode: snapshot provides baseline; reconcile
+        // must preserve exact multiplicity (including a second distinct sale
+        // with identical timestamp & price to an existing snapshot sale),
+        // capture late-arriving sales older than the snapshot, and return
+        // `loaded_pg_ids` for idempotent live-event handoff.
+        let target = make_target();
         let restored_ts = target
             .try_restore_from_snapshot_in(dir.path(), Utc::now() + chrono::Duration::seconds(1))
             .await
@@ -4283,41 +4394,135 @@ mod tests {
             }][0]
         };
 
-        // Simulate post-restore backfill returning one overlapping sale already
-        // in the snapshot plus one newer sale recorded after the snapshot.
         let newer_date = existing_sale.sale_date + chrono::Duration::minutes(5);
-        let backfill_rows = [
-            Ok::<_, &str>(ultros_db::sales::AbbreviatedSaleData {
+        let late_arriving_old_date = existing_sale.sale_date - chrono::Duration::hours(4);
+        let projection_rows = [
+            // Overlap with existing snapshot sale (1 copy already in snapshot).
+            Ok::<_, &str>(ultros_db::sales::RecentProjectionSale {
+                pg_id: 101,
                 sold_item_id: 1,
                 hq: false,
                 price_per_item: existing_sale.price_per_item,
                 sold_date: existing_sale.sale_date,
                 world_id: 54,
             }),
-            Ok(ultros_db::sales::AbbreviatedSaleData {
+            // Second distinct purchase at the EXACT same second & price.
+            Ok(ultros_db::sales::RecentProjectionSale {
+                pg_id: 102,
+                sold_item_id: 1,
+                hq: false,
+                price_per_item: existing_sale.price_per_item,
+                sold_date: existing_sale.sale_date,
+                world_id: 54,
+            }),
+            // Newer sale after snapshot.
+            Ok(ultros_db::sales::RecentProjectionSale {
+                pg_id: 103,
                 sold_item_id: 1,
                 hq: false,
                 price_per_item: 2_500,
                 sold_date: newer_date,
                 world_id: 54,
             }),
+            // Late-arriving sale whose `sold_date` predates the snapshot by
+            // hours (e.g. catch-up ingest committed after the snapshot).
+            Ok(ultros_db::sales::RecentProjectionSale {
+                pg_id: 104,
+                sold_item_id: 1,
+                hq: false,
+                price_per_item: 4_200,
+                sold_date: late_arriving_old_date,
+                world_id: 54,
+            }),
         ];
-        let merged = rebuild::merge_history_since(
+        let (applied, loaded_pg_ids) = rebuild::reconcile_projection_history(
             &target.recent_sale_history,
-            futures::stream::iter(backfill_rows),
+            false,
+            futures::stream::iter(projection_rows),
         )
         .await
         .unwrap();
-        assert_eq!(merged, 1, "overlapping sale must be deduplicated");
+        // 1 overlapping row subtracted once; 3 new rows (2nd same-second copy,
+        // newer sale, and late-arriving old sale) added!
+        assert_eq!(applied, 3);
+        assert!(loaded_pg_ids.contains(&101));
+        assert!(loaded_pg_ids.contains(&102));
+        assert!(loaded_pg_ids.contains(&103));
+        assert!(loaded_pg_ids.contains(&104));
 
-        let guard = target.recent_sale_history[&54].read().await;
-        let sales = &guard.item_map[&ItemKey {
-            item_id: 1,
-            hq: false,
-        }];
-        assert_eq!(sales.len(), 4);
-        assert_eq!(sales[0].price_per_item, 2_500);
-        assert_eq!(sales[0].sale_date, newer_date);
-        assert_eq!(sales[1].price_per_item, existing_sale.price_per_item);
+        {
+            let guard = target.recent_sale_history[&54].read().await;
+            let sales = &guard.item_map[&ItemKey {
+                item_id: 1,
+                hq: false,
+            }];
+            assert_eq!(sales.len(), 6);
+            assert_eq!(sales[0].price_per_item, 2_500);
+            let same_ts_count = sales
+                .iter()
+                .filter(|s| {
+                    s.sale_date == existing_sale.sale_date
+                        && s.price_per_item == existing_sale.price_per_item
+                })
+                .count();
+            assert_eq!(
+                same_ts_count, 2,
+                "both distinct same-second/same-price sales must be preserved"
+            );
+            assert!(
+                sales
+                    .iter()
+                    .any(|s| s.sale_date == late_arriving_old_date && s.price_per_item == 4_200),
+                "late-arriving sale older than snapshot must not be dropped"
+            );
+        }
+
+        // 2. Complete projection mode: authoritative wholesale replacement
+        // preserves identical-timestamp duplicates cleanly.
+        let complete_target = make_target();
+        let complete_rows = [
+            Ok::<_, &str>(ultros_db::sales::RecentProjectionSale {
+                pg_id: 201,
+                sold_item_id: 1,
+                hq: false,
+                price_per_item: 9_999,
+                sold_date: newer_date,
+                world_id: 54,
+            }),
+            Ok(ultros_db::sales::RecentProjectionSale {
+                pg_id: 202,
+                sold_item_id: 1,
+                hq: false,
+                price_per_item: 9_999,
+                sold_date: newer_date,
+                world_id: 54,
+            }),
+        ];
+        let (applied_complete, _) = rebuild::reconcile_projection_history(
+            &complete_target.recent_sale_history,
+            true,
+            futures::stream::iter(complete_rows),
+        )
+        .await
+        .unwrap();
+        assert_eq!(applied_complete, 2);
+        {
+            let guard = complete_target.recent_sale_history[&54].read().await;
+            let sales = &guard.item_map[&ItemKey {
+                item_id: 1,
+                hq: false,
+            }];
+            assert_eq!(sales.len(), 2);
+            assert!(sales.iter().all(|s| s.price_per_item == 9_999));
+        }
+
+        // 3. Boot-to-live handoff deduplication skips already-loaded `pg_id`s
+        // once, allows fresh live events, and clears after TTL expiry.
+        let mut dedup = BootSaleDedup::new(loaded_pg_ids, std::time::Duration::from_secs(60));
+        let now = tokio::time::Instant::now();
+        assert!(dedup.should_skip(103, now));
+        assert!(!dedup.should_skip(999, now));
+        assert!(!dedup.should_skip(102, now + std::time::Duration::from_secs(61)));
+        assert!(dedup.loaded_pg_ids.is_empty());
     }
 }

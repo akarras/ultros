@@ -136,17 +136,26 @@ pub(crate) async fn cheapest_per_world(
         "disposition" => cached.disposition.as_str()
     )
     .increment(1);
-    let cache_control = super::public_cache_control_for_age(
-        Duration::from_secs(15),
-        Duration::from_secs(60),
-        super::PUBLIC_STALE_IF_ERROR_SECS,
-        cached.disposition == SwrDisposition::Stale,
-        cached.age,
-        cached.remaining_stale,
-    );
+    let is_stale = cached.disposition == SwrDisposition::Stale;
+    let stored_at = cached.stored_at;
+    let stale_until = cached.stale_until;
     Ok(cached
         .body
-        .into_json_response(&headers, cache_control, &[])
+        .into_json_response_with_cache_control(
+            &headers,
+            move || {
+                let now = std::time::Instant::now();
+                super::public_cache_control_for_age(
+                    Duration::from_secs(15),
+                    Duration::from_secs(60),
+                    super::PUBLIC_STALE_IF_ERROR_SECS,
+                    is_stale,
+                    now.saturating_duration_since(stored_at),
+                    stale_until.saturating_duration_since(now),
+                )
+            },
+            &[],
+        )
         .await)
 }
 

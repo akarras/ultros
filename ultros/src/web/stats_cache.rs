@@ -62,34 +62,38 @@ impl CacheDisposition {
 pub(crate) struct CacheValue {
     pub body: Arc<EncodedBody>,
     pub disposition: CacheDisposition,
-    /// Elapsed time since this generation was stored (`Duration::ZERO` on
-    /// `Loaded`).
-    pub age: Duration,
-    /// Remaining stale lifetime on origin.
-    pub remaining_stale: Duration,
+    /// Origin timestamp when this cached generation was stored.
+    pub stored_at: Instant,
+    /// Origin deadline after which this generation is no longer servable stale.
+    pub stale_until: Instant,
 }
 
 /// The response every cached bulk-stat endpoint returns: pre-compressed JSON
-/// negotiated from `headers`, age-adjusted `Cache-Control` (so stale origin
-/// hits never start a fresh CDN window), and the disposition exposed for
-/// debugging.
+/// negotiated from `headers`, age-adjusted `Cache-Control` computed *after*
+/// encoding finishes (so compression wait time never extends downstream SWR),
+/// and the disposition exposed for debugging.
 pub(crate) async fn cached_response(
     cached: &CacheValue,
     headers: &HeaderMap,
 ) -> axum::response::Response {
-    let cache_control = super::api::public_cache_control_for_age(
-        Duration::from_secs(5 * 60),
-        Duration::from_secs(30 * 60),
-        super::api::PUBLIC_STALE_IF_ERROR_SECS,
-        cached.disposition == CacheDisposition::Stale,
-        cached.age,
-        cached.remaining_stale,
-    );
+    let is_stale = cached.disposition == CacheDisposition::Stale;
+    let stored_at = cached.stored_at;
+    let stale_until = cached.stale_until;
     cached
         .body
-        .into_json_response(
+        .into_json_response_with_cache_control(
             headers,
-            cache_control,
+            move || {
+                let now = Instant::now();
+                super::api::public_cache_control_for_age(
+                    Duration::from_secs(5 * 60),
+                    Duration::from_secs(30 * 60),
+                    super::api::PUBLIC_STALE_IF_ERROR_SECS,
+                    is_stale,
+                    now.saturating_duration_since(stored_at),
+                    stale_until.saturating_duration_since(now),
+                )
+            },
             &[(
                 HeaderName::from_static("x-ultros-cache"),
                 HeaderValue::from_static(cached.disposition.as_str()),
@@ -324,29 +328,21 @@ impl<K: CacheKind> StatsCache<K> {
             if state.fresh_until.is_some_and(|until| until > now)
                 && let Some(body) = &state.body
             {
-                let age = state
-                    .stored_at
-                    .map_or(Duration::ZERO, |t| now.saturating_duration_since(t));
-                let remaining_stale = state
-                    .stale_until
-                    .map_or(Duration::ZERO, |u| u.saturating_duration_since(now));
+                let stored_at = state.stored_at.unwrap_or(now);
+                let stale_until = state.stale_until.unwrap_or(now);
                 return Ok(CacheValue {
                     body: body.clone(),
                     disposition: CacheDisposition::Fresh,
-                    age,
-                    remaining_stale,
+                    stored_at,
+                    stale_until,
                 });
             }
 
             if state.stale_until.is_some_and(|until| until > now)
                 && let Some(body) = state.body.clone()
             {
-                let age = state
-                    .stored_at
-                    .map_or(Duration::ZERO, |t| now.saturating_duration_since(t));
-                let remaining_stale = state
-                    .stale_until
-                    .map_or(Duration::ZERO, |u| u.saturating_duration_since(now));
+                let stored_at = state.stored_at.unwrap_or(now);
+                let stale_until = state.stale_until.unwrap_or(now);
                 if !state.refreshing {
                     state.refreshing = true;
                     drop(state);
@@ -355,8 +351,8 @@ impl<K: CacheKind> StatsCache<K> {
                 return Ok(CacheValue {
                     body,
                     disposition: CacheDisposition::Stale,
-                    age,
-                    remaining_stale,
+                    stored_at,
+                    stale_until,
                 });
             }
 
@@ -383,11 +379,12 @@ impl<K: CacheKind> StatsCache<K> {
                 .spawn_refresh(slot.clone(), loader.take().expect("loader used once"))
                 .await
                 .map_err(|error| anyhow::anyhow!("{} refresh task failed: {error}", K::LABEL))?;
+            let now = Instant::now();
             return result.map(|body| CacheValue {
                 body,
                 disposition: CacheDisposition::Loaded,
-                age: Duration::ZERO,
-                remaining_stale: self.inner.stale_ttl,
+                stored_at: now,
+                stale_until: now + self.inner.stale_ttl,
             });
         }
     }
@@ -448,27 +445,15 @@ impl<K: CacheKind> StatsCache<K> {
     async fn finish_refresh(&self, slot: &Arc<Slot>, body: Option<&Arc<EncodedBody>>) {
         let mut state = slot.state.lock().await;
         state.refreshing = false;
-        let admitted = if let Some(body) = body
+        let mut admitted = false;
+        if let Some(body) = body
             && body.raw_len() <= self.inner.max_bytes
-            && slot.cached.load(Ordering::Acquire)
-        {
-            let now = Instant::now();
-            state.body = Some(body.clone());
-            state.stored_at = Some(now);
-            state.fresh_until = Some(now + self.inner.fresh_ttl);
-            state.stale_until = Some(now + self.inner.stale_ttl);
-            state.failed_until = None;
-            Some(body.clone())
-        } else {
-            state.failed_until = Some(Instant::now() + Duration::from_secs(2));
-            None
-        };
-        drop(state);
-
-        if let Some(body) = admitted
             && let Ok(mut slots) = self.inner.slots.lock()
             && slot.cached.load(Ordering::Acquire)
         {
+            // Charge raw bytes and attach the compressed-variant accountant
+            // BEFORE publishing `state.body` so no concurrent reader can
+            // finish compressing a variant before accounting is wired up.
             let len = body.raw_len();
             let old_len = slot.body_bytes.swap(len, Ordering::AcqRel);
             if len >= old_len {
@@ -504,7 +489,20 @@ impl<K: CacheKind> StatsCache<K> {
                 Self::prune_locked(&inner, &mut slots, &slot);
             }));
             Self::prune_locked(&self.inner, &mut slots, slot);
+            drop(slots);
+
+            let now = Instant::now();
+            state.body = Some(body.clone());
+            state.stored_at = Some(now);
+            state.fresh_until = Some(now + self.inner.fresh_ttl);
+            state.stale_until = Some(now + self.inner.stale_ttl);
+            state.failed_until = None;
+            admitted = true;
         }
+        if !admitted {
+            state.failed_until = Some(Instant::now() + Duration::from_secs(2));
+        }
+        drop(state);
         slot.changed.notify_waiters();
     }
 }
@@ -847,11 +845,12 @@ mod tests {
 
     #[tokio::test]
     async fn stale_cached_response_emits_zero_max_age() {
+        let now = Instant::now();
         let val = CacheValue {
             body: EncodedBody::new(b"{}".as_slice()),
             disposition: CacheDisposition::Stale,
-            age: Duration::from_secs(1750),
-            remaining_stale: Duration::from_secs(50),
+            stored_at: now - Duration::from_secs(1750),
+            stale_until: now + Duration::from_millis(50_500),
         };
         let resp = cached_response(&val, &HeaderMap::new()).await;
         let cc = resp

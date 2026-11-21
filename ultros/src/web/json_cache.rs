@@ -60,11 +60,10 @@ pub(crate) struct SwrValue {
     pub body: Arc<EncodedBody>,
     pub cacheable: bool,
     pub disposition: SwrDisposition,
-    /// Elapsed time since this cached generation was stored (`Duration::ZERO`
-    /// when freshly loaded).
-    pub age: Duration,
-    /// Remaining stale lifetime on origin.
-    pub remaining_stale: Duration,
+    /// Origin timestamp when this cached generation was stored.
+    pub stored_at: Instant,
+    /// Origin deadline after which this generation is no longer servable stale.
+    pub stale_until: Instant,
 }
 
 type JobOutput = Result<(Arc<EncodedBody>, bool), Arc<WebError>>;
@@ -344,14 +343,14 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
                         body: entry.body.clone(),
                         cacheable: true,
                         disposition: SwrDisposition::Fresh,
-                        age: now.saturating_duration_since(entry.stored_at),
-                        remaining_stale: entry.stale_until.saturating_duration_since(now),
+                        stored_at: entry.stored_at,
+                        stale_until: entry.stale_until,
                     });
                 }
                 if entry.stale_until > now {
                     let body = entry.body.clone();
-                    let age = now.saturating_duration_since(entry.stored_at);
-                    let remaining_stale = entry.stale_until.saturating_duration_since(now);
+                    let stored_at = entry.stored_at;
+                    let stale_until = entry.stale_until;
                     let retry_allowed = entry.refresh_retry_after.is_none_or(|until| until <= now);
                     if retry_allowed && !state.jobs.contains_key(&key) {
                         let _ = self.spawn_job(&mut state, key, fresh_ttl, stale_ttl, loader);
@@ -360,8 +359,8 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
                         body,
                         cacheable: true,
                         disposition: SwrDisposition::Stale,
-                        age,
-                        remaining_stale,
+                        stored_at,
+                        stale_until,
                     });
                 }
             }
@@ -383,6 +382,7 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
                 // loader directly so cold bursts degrade to uncoalesced loads
                 // rather than 503ing visitors, and store the result if healthy.
                 let result = Self::run_loader_guarded(self.inner.deadline, loader).await;
+                let now = Instant::now();
                 if let Ok((body, true)) = &result {
                     let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
                     self.store(&mut state, key, body.clone(), fresh_ttl, stale_ttl);
@@ -392,8 +392,8 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
                         body,
                         cacheable,
                         disposition: SwrDisposition::Loaded,
-                        age: Duration::ZERO,
-                        remaining_stale: stale_ttl,
+                        stored_at: now,
+                        stale_until: now + stale_ttl,
                     })
                     .map_err(SharedWebError);
             }
@@ -402,13 +402,14 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
         loop {
             let completed = status.borrow_and_update().clone();
             if let Some(result) = completed {
+                let now = Instant::now();
                 return result
                     .map(|(body, cacheable)| SwrValue {
                         body,
                         cacheable,
                         disposition: SwrDisposition::Loaded,
-                        age: Duration::ZERO,
-                        remaining_stale: stale_ttl,
+                        stored_at: now,
+                        stale_until: now + stale_ttl,
                     })
                     .map_err(SharedWebError);
             }

@@ -70,15 +70,14 @@ pub(crate) fn public_cache_control_for_age(
     age: Duration,
     remaining_stale: Duration,
 ) -> HeaderValue {
+    let age_secs = age.as_secs();
     let (max_age_secs, swr_secs) = if is_stale {
-        let elapsed_past_fresh = age.saturating_sub(configured_max_age);
-        let swr_budget = configured_swr
-            .saturating_sub(elapsed_past_fresh)
-            .min(remaining_stale);
-        (0, swr_budget.as_secs())
+        let elapsed_past_fresh = age_secs.saturating_sub(configured_max_age.as_secs());
+        let swr_budget = configured_swr.as_secs().saturating_sub(elapsed_past_fresh);
+        (0, swr_budget.min(remaining_stale.as_secs()))
     } else {
-        let remaining_fresh = configured_max_age.saturating_sub(age);
-        (remaining_fresh.as_secs(), configured_swr.as_secs())
+        let remaining_fresh = configured_max_age.as_secs().saturating_sub(age_secs);
+        (remaining_fresh, configured_swr.as_secs())
     };
     public_cache_control(max_age_secs, swr_secs, sie_secs)
 }

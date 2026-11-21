@@ -125,7 +125,14 @@ pub(crate) async fn get_market_pulse(
     )
     .increment(1);
     if !loaded.cacheable {
-        return Ok(crate::web::uncached_json(loaded.body.raw().clone()));
+        return Ok(loaded
+            .body
+            .into_json_response(
+                &headers,
+                axum::http::HeaderValue::from_static("no-store"),
+                &[],
+            )
+            .await);
     }
     Ok(cached_encoded_json(&loaded, &headers, ttl).await)
 }
@@ -537,6 +544,10 @@ mod tests {
             .expect("listing_alive query issued");
         assert!(listing_req.contains("listing_alive FINAL"));
         assert!(
+            listing_req.contains("_listing_alive_refresh"),
+            "readiness query must check _listing_alive_refresh marker so empty boards succeed: {listing_req}"
+        );
+        assert!(
             listing_req.contains("world_id IN (54,55)")
                 || listing_req.contains("world_id IN (55,54)"),
             "multi-world scope must fold all member worlds: {listing_req}"
@@ -545,12 +556,13 @@ mod tests {
 
     #[tokio::test]
     async fn stale_swr_response_emits_zero_max_age() {
+        let now = std::time::Instant::now();
         let stale_val = SwrValue {
             body: EncodedBody::new(br#"{"world_id":54}"#.as_slice()),
             cacheable: true,
             disposition: SwrDisposition::Stale,
-            age: Duration::from_secs(299),
-            remaining_stale: Duration::from_secs(1),
+            stored_at: now - Duration::from_secs(299),
+            stale_until: now + Duration::from_secs(1),
         };
         let resp =
             crate::web::cached_encoded_json(&stale_val, &HeaderMap::new(), Duration::from_secs(30))
@@ -559,5 +571,73 @@ mod tests {
             resp.headers().get(header::CACHE_CONTROL).unwrap(),
             "public, max-age=0, stale-if-error=600"
         );
+    }
+
+    #[tokio::test]
+    async fn degraded_market_pulse_honors_accept_encoding_and_406() {
+        use std::io::Read;
+
+        // Both KPI and active_listing_count fail -> tiny placeholder JSON
+        // (< 256 bytes) must still honor `gzip, identity;q=0` and `*;q=0`.
+        let (ch, _seen, server) = spawn_mock_clickhouse(None, MockListings::Error).await;
+        let cache = HomeFeedCache::new(16);
+        let mut gzip_only = HeaderMap::new();
+        gzip_only.insert(
+            header::ACCEPT_ENCODING,
+            header::HeaderValue::from_static("gzip, identity;q=0"),
+        );
+        let resp = get_market_pulse(
+            State(ch),
+            State(test_world_cache()),
+            State(cache.clone()),
+            gzip_only,
+            Path("Sargatanas".into()),
+        )
+        .await
+        .expect("degraded fallback returns 200")
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+        assert_eq!(
+            resp.headers().get(header::CONTENT_ENCODING).unwrap(),
+            "gzip"
+        );
+        assert_eq!(resp.headers().get(header::VARY).unwrap(), "accept-encoding");
+        let wire = resp.into_body().collect().await.unwrap().to_bytes();
+        let mut decoded = Vec::new();
+        flate2::read::GzDecoder::new(&wire[..])
+            .read_to_end(&mut decoded)
+            .unwrap();
+        let dto: MarketPulseDto = serde_json::from_slice(&decoded).unwrap();
+        assert_eq!(dto.sales_today, 0);
+        assert_eq!(dto.active_listings, 0);
+        server.await.unwrap();
+
+        let (ch, _seen, server) = spawn_mock_clickhouse(None, MockListings::Error).await;
+        let mut reject_all = HeaderMap::new();
+        reject_all.insert(
+            header::ACCEPT_ENCODING,
+            header::HeaderValue::from_static("*;q=0"),
+        );
+        let resp = get_market_pulse(
+            State(ch),
+            State(test_world_cache()),
+            State(cache),
+            reject_all,
+            Path("Sargatanas".into()),
+        )
+        .await
+        .expect("406 is an HTTP response")
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_ACCEPTABLE);
+        assert_eq!(
+            resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+        assert_eq!(resp.headers().get(header::VARY).unwrap(), "accept-encoding");
+        server.await.unwrap();
     }
 }

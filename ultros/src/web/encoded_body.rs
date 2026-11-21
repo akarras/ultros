@@ -331,6 +331,23 @@ impl EncodedBody {
         cache_control: HeaderValue,
         extra_headers: &[(HeaderName, HeaderValue)],
     ) -> Response {
+        self.into_json_response_with_cache_control(headers, || cache_control, extra_headers)
+            .await
+    }
+
+    /// Like [`Self::into_json_response`], but computes `Cache-Control` via
+    /// `build_cache_control` *after* compression finishes so waiting on a cold
+    /// encode never extends downstream freshness or SWR past the origin cache
+    /// deadline.
+    pub(crate) async fn into_json_response_with_cache_control<F>(
+        self: &Arc<Self>,
+        headers: &HeaderMap,
+        build_cache_control: F,
+        extra_headers: &[(HeaderName, HeaderValue)],
+    ) -> Response
+    where
+        F: FnOnce() -> HeaderValue,
+    {
         let (body, encoding) = match self.select(headers).await {
             Ok(selected) => selected,
             Err(NotAcceptable) => {
@@ -341,6 +358,7 @@ impl EncodedBody {
                 return response;
             }
         };
+        let cache_control = build_cache_control();
         let mut response = body.into_response();
         let resp_headers = response.headers_mut();
         resp_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -841,5 +859,46 @@ mod tests {
             );
             assert!(resp.headers().get(VARY).is_some());
         }
+    }
+
+    #[tokio::test]
+    async fn cache_control_is_computed_after_compression_finishes() {
+        use std::time::{Duration, Instant};
+
+        let payload = "x".repeat(8 * 1024);
+        let body = EncodedBody::with_test_compressor(
+            payload,
+            Arc::new(Semaphore::new(2)),
+            Arc::new(|raw, enc| {
+                std::thread::sleep(Duration::from_millis(80));
+                compress_bytes(raw, enc)
+            }),
+        );
+
+        let stored_at = Instant::now() - Duration::from_secs(14);
+        // Only 30ms of stale lifetime left when the request arrives; waiting
+        // 80ms for compression consumes the rest so downstream gets NO SWR.
+        let stale_until = Instant::now() + Duration::from_millis(30);
+        let resp = body
+            .into_json_response_with_cache_control(
+                &headers_with("gzip"),
+                move || {
+                    let now = Instant::now();
+                    crate::web::api::public_cache_control_for_age(
+                        Duration::from_secs(15),
+                        Duration::from_secs(60),
+                        crate::web::api::PUBLIC_STALE_IF_ERROR_SECS,
+                        true,
+                        now.saturating_duration_since(stored_at),
+                        stale_until.saturating_duration_since(now),
+                    )
+                },
+                &[],
+            )
+            .await;
+        assert_eq!(
+            resp.headers().get(CACHE_CONTROL).unwrap(),
+            "public, max-age=0, stale-if-error=600"
+        );
     }
 }

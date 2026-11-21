@@ -25,7 +25,10 @@
 use clickhouse::Client;
 use tracing::{info, instrument};
 
-use crate::{ClickHouseClient, ClickHouseError, schema::LISTING_EVENTS_SEED_MARKER_TABLE};
+use crate::{
+    ClickHouseClient, ClickHouseError,
+    schema::{LISTING_ALIVE_REFRESH_MARKER_TABLE, LISTING_EVENTS_SEED_MARKER_TABLE},
+};
 
 // Consumers use the same cadence to distinguish a current snapshot from an
 // abandoned ReplacingMergeTree key when a rolling-window group disappears.
@@ -486,6 +489,12 @@ fn build_sale_stats_refresh_sql(window_days: u16) -> String {
 pub async fn refresh_listing_alive(ch: &ClickHouseClient) -> Result<u64, ClickHouseError> {
     let sql = build_listing_alive_refresh_sql();
     ch.client().query(&sql).execute().await?;
+    ch.client()
+        .query(&format!(
+            "INSERT INTO {LISTING_ALIVE_REFRESH_MARKER_TABLE} (refreshed_at) VALUES (now())"
+        ))
+        .execute()
+        .await?;
 
     #[derive(clickhouse::Row, serde::Deserialize)]
     struct Count {

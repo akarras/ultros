@@ -32,39 +32,74 @@ where
     Ok(history)
 }
 
-/// Stage incremental post-snapshot sales and merge them into existing per-world
-/// histories without holding any write lock across a database read or leaving
-/// partial updates if the stream fails midway.
-pub(super) async fn merge_history_since<S, E>(
+/// Stage rows from Postgres `recent_sale_history` and reconcile them into the
+/// analyzer's per-world histories without holding any write lock across a
+/// database read or leaving partial updates if the stream fails midway.
+///
+/// - When `projection_complete` is `true`, `recent_sale_history` holds the
+///   exact top-N rows per `(world, item, hq)`, so each world's history is
+///   replaced wholesale (preserving exact multiplicity and catching
+///   late-arriving sales regardless of `sold_date`).
+/// - When `projection_complete` is `false`, the restored snapshot provides the
+///   pre-migration baseline while projection rows are merged per board with
+///   multiset multiplicity preservation.
+///
+/// Returns `(applied_rows, loaded_pg_ids)` so the caller can ignore any
+/// already-loaded sales that also arrive on the buffered live broadcast bus.
+pub(super) async fn reconcile_projection_history<S, E>(
     worlds: &BTreeMap<i32, tokio::sync::RwLock<super::SaleHistory>>,
+    projection_complete: bool,
     stream: S,
-) -> Result<u64, E>
+) -> Result<(u64, std::collections::HashSet<i32>), E>
 where
-    S: futures::Stream<Item = Result<ultros_db::sales::AbbreviatedSaleData, E>>,
+    S: futures::Stream<Item = Result<ultros_db::sales::RecentProjectionSale, E>>,
 {
     use futures::TryStreamExt;
 
-    let mut staged: BTreeMap<i32, Vec<ultros_db::sales::AbbreviatedSaleData>> = BTreeMap::new();
+    let mut staged: BTreeMap<i32, BTreeMap<ItemKey, Vec<ultros_db::sales::RecentProjectionSale>>> =
+        BTreeMap::new();
+    let mut loaded_pg_ids = std::collections::HashSet::new();
     futures::pin_mut!(stream);
     while let Some(value) = stream.try_next().await? {
         if worlds.contains_key(&value.world_id) {
-            staged.entry(value.world_id).or_default().push(value);
+            loaded_pg_ids.insert(value.pg_id);
+            let key = ItemKey::from(&value);
+            staged
+                .entry(value.world_id)
+                .or_default()
+                .entry(key)
+                .or_default()
+                .push(value);
         } else {
             super::skipped_event("db_backfill_sale", "unknown_world");
         }
     }
-    let mut merged = 0u64;
-    for (world_id, sales) in staged {
-        if let Some(lock) = worlds.get(&world_id) {
-            let mut history = lock.write().await;
-            for sale in &sales {
-                if history.merge_backfill_sale(sale) {
-                    merged += 1;
+
+    let mut applied = 0u64;
+    if projection_complete {
+        for (world_id, lock) in worlds {
+            let mut replacement = super::SaleHistory::default();
+            if let Some(boards) = staged.remove(world_id) {
+                for (_, sales) in boards {
+                    for sale in &sales {
+                        replacement.add_sale(sale);
+                        applied += 1;
+                    }
+                }
+            }
+            *lock.write().await = replacement;
+        }
+    } else {
+        for (world_id, boards) in staged {
+            if let Some(lock) = worlds.get(&world_id) {
+                let mut history = lock.write().await;
+                for (key, sales) in boards {
+                    applied += history.merge_projection_board(key, &sales) as u64;
                 }
             }
         }
     }
-    Ok(merged)
+    Ok((applied, loaded_pg_ids))
 }
 
 type ChangedKeys = BTreeMap<AnySelector, BTreeSet<ItemKey>>;

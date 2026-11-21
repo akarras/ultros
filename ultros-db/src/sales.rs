@@ -366,18 +366,29 @@ impl UltrosDb {
             .await
     }
 
-    /// Stream compact recent-sale projection rows with `sold_date >= since`.
+    /// Stream the compact `recent_sale_history` projection along with each
+    /// row's `pg_id` and whether the historical backfill is complete.
     ///
-    /// Used after restoring an analyzer snapshot to backfill sales recorded
-    /// between the snapshot timestamp and restart without scanning all of
-    /// `sale_history`.
-    pub async fn sales_since(
+    /// Used after restoring an analyzer snapshot to reconcile every sale
+    /// committed after the snapshot (including late-arriving sales with older
+    /// `sold_date` values and duplicate timestamp/price purchases) and to make
+    /// the handoff to buffered live sale events idempotent via `pg_id`.
+    pub async fn recent_sale_projection(
         &self,
-        since: NaiveDateTime,
-    ) -> Result<impl Stream<Item = Result<AbbreviatedSaleData, DbErr>> + '_, DbErr> {
-        AbbreviatedSaleData::find_by_statement(self.sales_since_statement(since))
+    ) -> Result<
+        (
+            bool,
+            impl Stream<Item = Result<RecentProjectionSale, DbErr>> + '_,
+        ),
+        DbErr,
+    > {
+        let status = self.recent_sales_backfill_status().await?;
+        let complete =
+            status.complete && status.retention == crate::recent_sales::RECENT_SALE_LIMIT as i32;
+        let stream = RecentProjectionSale::find_by_statement(self.projection_rows_statement())
             .stream(&self.db)
-            .await
+            .await?;
+        Ok((complete, stream))
     }
 
     #[instrument(skip(self))]
@@ -446,6 +457,16 @@ fn attach_buyers(
 
 #[derive(Debug, FromQueryResult)]
 pub struct AbbreviatedSaleData {
+    pub sold_item_id: i32,
+    pub hq: bool,
+    pub price_per_item: i32,
+    pub sold_date: NaiveDateTime,
+    pub world_id: i32,
+}
+
+#[derive(Debug, Clone, FromQueryResult)]
+pub struct RecentProjectionSale {
+    pub pg_id: i32,
     pub sold_item_id: i32,
     pub hq: bool,
     pub price_per_item: i32,

@@ -1141,30 +1141,42 @@ fn cached_json(
 
 /// JSON response backed by a pre-compressed [`encoded_body::EncodedBody`] slab,
 /// negotiating `Accept-Encoding` (`zstd`/`br`/`gzip`/`identity`) and setting
-/// `Vary: accept-encoding` alongside age-adjusted public CDN `Cache-Control`.
+/// `Vary: accept-encoding` alongside age-adjusted public CDN `Cache-Control`
+/// computed *after* encoding finishes so cold-encode latency never extends
+/// downstream freshness or SWR past the origin cache deadline.
 pub(crate) async fn cached_encoded_json(
     loaded: &json_cache::SwrValue,
     headers: &axum::http::HeaderMap,
     ttl: std::time::Duration,
 ) -> axum::response::Response {
     let secs = ttl.as_secs();
-    let swr = secs.saturating_mul(4).clamp(60, 1_800);
-    let cache_control = api::public_cache_control_for_age(
-        ttl,
-        std::time::Duration::from_secs(swr),
-        api::PUBLIC_STALE_IF_ERROR_SECS,
-        loaded.disposition == json_cache::SwrDisposition::Stale,
-        loaded.age,
-        loaded.remaining_stale,
-    );
+    let swr = std::time::Duration::from_secs(secs.saturating_mul(4).clamp(60, 1_800));
+    let is_stale = loaded.disposition == json_cache::SwrDisposition::Stale;
+    let stored_at = loaded.stored_at;
+    let stale_until = loaded.stale_until;
     loaded
         .body
-        .into_json_response(headers, cache_control, &[])
+        .into_json_response_with_cache_control(
+            headers,
+            move || {
+                let now = std::time::Instant::now();
+                api::public_cache_control_for_age(
+                    ttl,
+                    swr,
+                    api::PUBLIC_STALE_IF_ERROR_SECS,
+                    is_stale,
+                    now.saturating_duration_since(stored_at),
+                    stale_until.saturating_duration_since(now),
+                )
+            },
+            &[],
+        )
         .await
 }
 
 /// JSON response for degraded `200 OK` fallbacks (e.g. ClickHouse soft-fail)
 /// that must never be stored in a browser or CDN cache.
+#[cfg(test)]
 fn uncached_json(body: impl Into<axum::body::Bytes>) -> axum::response::Response {
     let body = body.into();
     (
