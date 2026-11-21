@@ -44,6 +44,19 @@ pub enum AnalyzerError {
     NotFound,
 }
 
+/// Output of an analyzer query that optionally enriches in-memory market state
+/// with ClickHouse analytics.
+///
+/// `degraded` is `true` whenever a ClickHouse round-trip failed and the method
+/// fell back to partial, unfiltered, zero-filled, or empty data. HTTP handlers
+/// must emit `Cache-Control: no-store` whenever `degraded` is `true` so
+/// degraded responses are never cached locally or at the CDN.
+#[derive(Debug, Clone)]
+pub struct AnalyzerQueryResult<T> {
+    pub data: T,
+    pub degraded: bool,
+}
+
 #[derive(
     Hash,
     Eq,
@@ -1210,7 +1223,7 @@ impl AnalyzerService {
         }
     }
 
-    pub async fn get_trends(&self, world_id: i32) -> Option<TrendsData> {
+    pub async fn get_trends(&self, world_id: i32) -> Option<AnalyzerQueryResult<TrendsData>> {
         if !self.initiated.load(Ordering::Relaxed) {
             return None;
         }
@@ -1379,18 +1392,20 @@ impl AnalyzerService {
         scan_req.sort_unstable();
         scan_req.dedup();
 
-        let scan_by_key: std::collections::HashMap<
-            (i32, u8, i32),
-            ultros_clickhouse::queries::DeepScan,
-        > = match ultros_clickhouse::queries::deep_scan_batch(&self.ch_client, 30, &scan_req).await
+        let (scan_by_key, degraded): (
+            std::collections::HashMap<(i32, u8, i32), ultros_clickhouse::queries::DeepScan>,
+            bool,
+        ) = match ultros_clickhouse::queries::deep_scan_batch(&self.ch_client, 30, &scan_req).await
         {
-            Ok(rows) => rows
-                .into_iter()
-                .map(|d| ((d.item_id, d.hq, d.world_id), d))
-                .collect(),
+            Ok(rows) => (
+                rows.into_iter()
+                    .map(|d| ((d.item_id, d.hq, d.world_id), d))
+                    .collect(),
+                false,
+            ),
             Err(e) => {
                 tracing::warn!(error = ?e, world_id, "deep-scan enrichment unavailable for trends");
-                std::collections::HashMap::new()
+                (std::collections::HashMap::new(), true)
             }
         };
 
@@ -1427,11 +1442,14 @@ impl AnalyzerService {
         drop_unusable(&mut rising_price);
         drop_unusable(&mut falling_price);
 
-        Some(TrendsData {
-            items: vec![],
-            high_velocity,
-            rising_price,
-            falling_price,
+        Some(AnalyzerQueryResult {
+            data: TrendsData {
+                items: vec![],
+                high_velocity,
+                rising_price,
+                falling_price,
+            },
+            degraded,
         })
     }
 
@@ -1447,7 +1465,7 @@ impl AnalyzerService {
         world_id: i32,
         window_days: u16,
         include_suspicious: bool,
-    ) -> Option<Vec<TrendItem>> {
+    ) -> Option<AnalyzerQueryResult<Vec<TrendItem>>> {
         if !self.initiated.load(Ordering::Relaxed) {
             return None;
         }
@@ -1512,7 +1530,10 @@ impl AnalyzerService {
         requests.dedup();
 
         if requests.is_empty() {
-            return Some(Vec::new());
+            return Some(AnalyzerQueryResult {
+                data: Vec::new(),
+                degraded: false,
+            });
         }
 
         // One CH call to pull the window aggregates.
@@ -1526,7 +1547,10 @@ impl AnalyzerService {
             Ok(rows) => rows,
             Err(e) => {
                 tracing::warn!(error = ?e, world_id, window_days, "trends v2 deep_scan_batch failed");
-                return Some(Vec::new());
+                return Some(AnalyzerQueryResult {
+                    data: Vec::new(),
+                    degraded: true,
+                });
             }
         };
 
@@ -1542,9 +1566,19 @@ impl AnalyzerService {
             .filter(|t| scan_keys.contains(t))
             .collect();
 
-        let sparks = ultros_clickhouse::queries::sparklines_batch(&self.ch_client, &spark_req, 24)
-            .await
-            .unwrap_or_default();
+        let (sparks, degraded) = match ultros_clickhouse::queries::sparklines_batch(
+            &self.ch_client,
+            &spark_req,
+            24,
+        )
+        .await
+        {
+            Ok(rows) => (rows, false),
+            Err(e) => {
+                tracing::warn!(error = ?e, world_id, window_days, "trends v2 sparklines_batch failed");
+                (Vec::new(), true)
+            }
+        };
         let spark_by_key: std::collections::HashMap<(i32, u8, i32), Vec<u32>> = sparks
             .into_iter()
             .map(|s| ((s.item_id, s.hq, s.world_id), s.points))
@@ -1628,7 +1662,10 @@ impl AnalyzerService {
         }
         items.sort_unstable_by(cmp_unit_volume);
 
-        Some(items)
+        Some(AnalyzerQueryResult {
+            data: items,
+            degraded,
+        })
     }
 
     pub async fn get_best_resale(
@@ -1637,7 +1674,7 @@ impl AnalyzerService {
         region_id: i32,
         resale_options: ResaleOptions,
         world_cache: &Arc<WorldCache>,
-    ) -> Option<Vec<ResaleStats>> {
+    ) -> Option<AnalyzerQueryResult<Vec<ResaleStats>>> {
         if !self.initiated.load(Ordering::Relaxed) {
             return None;
         }
@@ -1851,7 +1888,10 @@ impl AnalyzerService {
                         world_id,
                         "deep-scan enrichment unavailable; returning Pass-1 results only",
                     );
-                    return Some(possible_sales);
+                    return Some(AnalyzerQueryResult {
+                        data: possible_sales,
+                        degraded: true,
+                    });
                 }
             };
 
@@ -1890,7 +1930,10 @@ impl AnalyzerService {
             filter.keep(scan)
         });
 
-        Some(possible_sales)
+        Some(AnalyzerQueryResult {
+            data: possible_sales,
+            degraded: false,
+        })
     }
 
     /// process listings in bulk.
@@ -3622,5 +3665,276 @@ mod tests {
         assert_eq!(snapshot_age("snapshot-notanumber.bin.gz", now), None);
         assert_eq!(snapshot_age("some-other-file.bin.gz", now), None);
         assert_eq!(snapshot_age("", now), None);
+    }
+
+    async fn read_http_request(socket: &mut tokio::net::TcpStream) {
+        use tokio::io::AsyncReadExt;
+
+        let mut buf = Vec::with_capacity(4096);
+        let mut chunk = [0u8; 1024];
+        let header_end = loop {
+            let n = socket.read(&mut chunk).await.unwrap();
+            if n == 0 {
+                return;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&buf[..header_end]);
+        let content_len = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())
+                    .flatten()
+            })
+            .unwrap_or(0);
+        while buf.len() < header_end + content_len {
+            let n = socket.read(&mut chunk).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+    }
+
+    async fn spawn_mock_clickhouse(
+        responses: Vec<(u16, Vec<u8>)>,
+    ) -> (
+        ultros_clickhouse::ClickHouseClient,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = tokio::spawn(async move {
+            for (status, body) in responses {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                read_http_request(&mut socket).await;
+                let reason = if status == 200 {
+                    "OK"
+                } else {
+                    "Internal Server Error"
+                };
+                let head = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(head.as_bytes()).await.unwrap();
+                socket.write_all(&body).await.unwrap();
+                let _ = socket.shutdown().await;
+            }
+        });
+        let client = ultros_clickhouse::ClickHouseClient::from_client(
+            clickhouse::Client::default()
+                .with_url(url)
+                .with_compression(clickhouse::Compression::None)
+                .with_validation(false),
+        );
+        (client, handle)
+    }
+
+    fn encode_deep_scan_row(item_id: i32, hq: u8, world_id: i32, window_days: u16) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&item_id.to_le_bytes());
+        out.push(hq);
+        out.extend_from_slice(&world_id.to_le_bytes());
+        out.extend_from_slice(&window_days.to_le_bytes());
+        // vwap, p50, p10, p25, p75, p90, median_abs_deviation
+        for v in [5000u32, 5000, 4500, 4800, 5200, 5500, 200] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        // sample_size, cleaned_sample_size, excluded_count
+        for v in [25u32, 24, 1] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        // unit_volume, gil_volume
+        out.extend_from_slice(&50u64.to_le_bytes());
+        out.extend_from_slice(&250_000u64.to_le_bytes());
+        // unique_buyers, quality_score
+        out.extend_from_slice(&12u32.to_le_bytes());
+        out.push(90u8);
+        // confidence_band_raw ("high")
+        out.push(4u8);
+        out.extend_from_slice(b"high");
+        // launder_suspicion_pct
+        out.extend_from_slice(&0.05f32.to_le_bytes());
+        out
+    }
+
+    fn populated_analyzer(ch_client: ultros_clickhouse::ClickHouseClient) -> AnalyzerService {
+        use ultros_db::entity::sale_history;
+
+        let now = Utc::now().naive_utc();
+        let mut history = SaleHistory::default();
+        for hours_ago in [1, 2, 3] {
+            history.add_sale(&sale_history::Model {
+                id: hours_ago,
+                quantity: 1,
+                price_per_item: 5000,
+                buying_character_id: hours_ago,
+                hq: false,
+                sold_item_id: 1,
+                sold_date: now - chrono::Duration::hours(hours_ago.into()),
+                world_id: 54,
+            });
+        }
+
+        let listing = |price: i32| ActiveListing {
+            id: 1,
+            world_id: 54,
+            item_id: 1,
+            retainer_id: 1,
+            price_per_unit: price,
+            quantity: 1,
+            hq: false,
+            timestamp: now,
+        };
+        let mut world_cheapest = CheapestListings::default();
+        world_cheapest.add_listing(&listing(5000));
+        let mut region_cheapest = CheapestListings::default();
+        region_cheapest.add_listing(&listing(1000));
+
+        AnalyzerService {
+            recent_sale_history: Arc::new(BTreeMap::from([(54, RwLock::new(history))])),
+            cheapest_items: Arc::new(BTreeMap::from([
+                (AnySelector::World(54), RwLock::new(world_cheapest)),
+                (AnySelector::Region(1), RwLock::new(region_cheapest)),
+            ])),
+            initiated: Arc::new(AtomicBool::new(true)),
+            cheapest_resync_in_flight: Arc::new(AtomicBool::new(false)),
+            cheapest_rebuild: Arc::default(),
+            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
+            floor_writer: ultros_clickhouse::writer::Writer::disabled(),
+            ch_client,
+        }
+    }
+
+    #[tokio::test]
+    async fn trends_v1_marks_degraded_when_deep_scan_fails() {
+        let (ch, server) = spawn_mock_clickhouse(vec![
+            (500, b"Code: 241. MEMORY_LIMIT_EXCEEDED".to_vec()),
+            (200, Vec::new()),
+        ])
+        .await;
+        let analyzer = populated_analyzer(ch);
+
+        let failed = analyzer
+            .get_trends(54)
+            .await
+            .expect("analyzer is initiated");
+        assert!(
+            failed.degraded,
+            "ClickHouse error must mark trends v1 degraded"
+        );
+        assert!(
+            !failed.data.high_velocity.is_empty(),
+            "Pass-1 trend bucket must still be returned"
+        );
+
+        let healthy = analyzer
+            .get_trends(54)
+            .await
+            .expect("analyzer is initiated");
+        assert!(
+            !healthy.degraded,
+            "successful deep_scan_batch must not mark trends v1 degraded"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn trends_v2_marks_degraded_when_deep_scan_or_sparklines_fail() {
+        let (ch, server) = spawn_mock_clickhouse(vec![
+            // Case 1: deep_scan_batch fails -> empty data + degraded = true
+            (500, b"Code: 241. MEMORY_LIMIT_EXCEEDED".to_vec()),
+            // Case 2: deep_scan_batch succeeds, sparklines_batch fails -> zero-filled sparklines + degraded = true
+            (200, encode_deep_scan_row(1, 0, 54, 30)),
+            (500, b"Code: 159. TIMEOUT_EXCEEDED".to_vec()),
+            // Case 3: both succeed -> degraded = false
+            (200, encode_deep_scan_row(1, 0, 54, 30)),
+            (200, Vec::new()),
+        ])
+        .await;
+        let analyzer = populated_analyzer(ch);
+
+        let deep_scan_failed = analyzer
+            .get_trends_v2(54, 30, false)
+            .await
+            .expect("analyzer is initiated");
+        assert!(deep_scan_failed.degraded);
+        assert!(deep_scan_failed.data.is_empty());
+
+        let sparklines_failed = analyzer
+            .get_trends_v2(54, 30, false)
+            .await
+            .expect("analyzer is initiated");
+        assert!(
+            sparklines_failed.degraded,
+            "sparklines_batch failure must mark trends v2 degraded"
+        );
+        assert_eq!(sparklines_failed.data.len(), 1);
+        assert_eq!(sparklines_failed.data[0].sparkline_24h, vec![0; 24]);
+
+        let healthy = analyzer
+            .get_trends_v2(54, 30, false)
+            .await
+            .expect("analyzer is initiated");
+        assert!(!healthy.degraded);
+        assert_eq!(healthy.data.len(), 1);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn best_resale_marks_degraded_when_deep_scan_fails() {
+        use ultros_db::entity::{datacenter, region, world};
+
+        let world_cache = Arc::new(WorldCache::from_models(
+            vec![world::Model {
+                id: 54,
+                name: "Sargatanas".into(),
+                datacenter_id: 10,
+            }],
+            vec![datacenter::Model {
+                id: 10,
+                name: "Aether".into(),
+                region_id: 1,
+            }],
+            vec![region::Model {
+                id: 1,
+                name: "North-America".into(),
+            }],
+        ));
+
+        let (ch, server) = spawn_mock_clickhouse(vec![
+            (500, b"Code: 241. MEMORY_LIMIT_EXCEEDED".to_vec()),
+            (200, Vec::new()),
+        ])
+        .await;
+        let analyzer = populated_analyzer(ch);
+
+        let failed = analyzer
+            .get_best_resale(54, 1, ResaleOptions::default(), &world_cache)
+            .await
+            .expect("analyzer is initiated");
+        assert!(
+            failed.degraded,
+            "deep_scan_batch failure must mark best_resale degraded"
+        );
+        assert_eq!(failed.data.len(), 1);
+
+        let healthy = analyzer
+            .get_best_resale(54, 1, ResaleOptions::default(), &world_cache)
+            .await
+            .expect("analyzer is initiated");
+        assert!(
+            !healthy.degraded,
+            "successful deep_scan_batch must not mark best_resale degraded"
+        );
+        server.await.unwrap();
     }
 }

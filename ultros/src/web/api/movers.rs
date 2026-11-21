@@ -96,12 +96,25 @@ pub(crate) async fn get_movers(
 
     // For each mover, fetch the 24h sparkline — folded over the same worlds
     // as the ranking — so the response is one round trip from the
-    // frontend's perspective.
+    // frontend's perspective. If the sparkline query fails, degrade to
+    // zero-filled sparklines but never cache the degraded body locally or
+    // at the CDN.
     let spark_req: Vec<(i32, u8)> = rows.iter().map(|m| (m.item_id, m.hq)).collect();
-    let sparkline_rows =
-        ultros_clickhouse::queries::sparklines_folded(&ch, scope_id, &world_ids, &spark_req, 24)
-            .await
-            .unwrap_or_default();
+    let (sparkline_rows, sparklines_degraded) = match ultros_clickhouse::queries::sparklines_folded(
+        &ch, scope_id, &world_ids, &spark_req, 24,
+    )
+    .await
+    {
+        Ok(rows) => (rows, false),
+        Err(e) => {
+            tracing::warn!(
+                error = ?e,
+                scope_id,
+                "sparklines_folded CH query failed, returning zero-filled sparklines without caching"
+            );
+            (Vec::new(), true)
+        }
+    };
     let mut spark_by_key: std::collections::HashMap<(i32, u8), Vec<u32>> = sparkline_rows
         .into_iter()
         .map(|s| ((s.item_id, s.hq), s.points))
@@ -129,6 +142,9 @@ pub(crate) async fn get_movers(
         items,
     })
     .map_err(anyhow::Error::from)?;
+    if sparklines_degraded {
+        return Ok(crate::web::uncached_json(body));
+    }
     cache.insert(cache_key, body.clone(), ttl);
     Ok(cached_json(body, ttl))
 }
@@ -191,4 +207,191 @@ pub(crate) async fn post_sparklines(
         .headers_mut()
         .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(60)));
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MoversQuery, get_movers};
+    use crate::web::home_feed_cache::HomeFeedCache;
+    use axum::{
+        extract::{Path, Query, State},
+        http::{StatusCode, header},
+        response::IntoResponse,
+    };
+    use http_body_util::BodyExt;
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use ultros_api_types::{
+        sparklines::MoversResponse,
+        world::{Datacenter, Region, World, WorldData},
+        world_helper::WorldHelper,
+    };
+    use ultros_clickhouse::ClickHouseClient;
+
+    async fn read_http_request(socket: &mut tokio::net::TcpStream) {
+        let mut buf = Vec::with_capacity(4096);
+        let mut chunk = [0u8; 1024];
+        let header_end = loop {
+            let n = socket.read(&mut chunk).await.unwrap();
+            if n == 0 {
+                return;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&buf[..header_end]);
+        let content_len = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())
+                    .flatten()
+            })
+            .unwrap_or(0);
+        while buf.len() < header_end + content_len {
+            let n = socket.read(&mut chunk).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+    }
+
+    async fn spawn_mock_clickhouse(
+        responses: Vec<(u16, Vec<u8>)>,
+    ) -> (ClickHouseClient, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = tokio::spawn(async move {
+            for (status, body) in responses {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                read_http_request(&mut socket).await;
+                let reason = if status == 200 {
+                    "OK"
+                } else {
+                    "Internal Server Error"
+                };
+                let head = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(head.as_bytes()).await.unwrap();
+                socket.write_all(&body).await.unwrap();
+                let _ = socket.shutdown().await;
+            }
+        });
+        let client = ClickHouseClient::from_client(
+            clickhouse::Client::default()
+                .with_url(url)
+                .with_compression(clickhouse::Compression::None)
+                .with_validation(false),
+        );
+        (client, handle)
+    }
+
+    fn encode_mover_row(item_id: i32, hq: u8, world_id: i32) -> Vec<u8> {
+        let mut out = Vec::with_capacity(29);
+        out.extend_from_slice(&item_id.to_le_bytes());
+        out.push(hq);
+        out.extend_from_slice(&world_id.to_le_bytes());
+        out.extend_from_slice(&5000u32.to_le_bytes());
+        out.extend_from_slice(&25.0f32.to_le_bytes());
+        out.extend_from_slice(&10u32.to_le_bytes());
+        out.extend_from_slice(&50_000u64.to_le_bytes());
+        out
+    }
+
+    fn test_world_helper() -> Arc<WorldHelper> {
+        Arc::new(WorldHelper::from(WorldData {
+            regions: vec![Region {
+                id: 1,
+                name: "North-America".into(),
+                datacenters: vec![Datacenter {
+                    id: 10,
+                    name: "Aether".into(),
+                    region_id: 1,
+                    worlds: vec![World {
+                        id: 54,
+                        name: "Sargatanas".into(),
+                        datacenter_id: 10,
+                    }],
+                }],
+            }],
+        }))
+    }
+
+    #[tokio::test]
+    async fn movers_returns_no_store_and_skips_local_cache_when_sparklines_fail() {
+        let (ch, server) = spawn_mock_clickhouse(vec![
+            (200, encode_mover_row(42, 0, 54)),
+            (500, b"Code: 159. TIMEOUT_EXCEEDED".to_vec()),
+        ])
+        .await;
+        let cache = HomeFeedCache::new(16);
+        let response = get_movers(
+            State(ch),
+            State(test_world_helper()),
+            State(cache.clone()),
+            Path("Sargatanas".into()),
+            Query(MoversQuery {
+                direction: None,
+                limit: None,
+            }),
+        )
+        .await
+        .expect("sparkline degradation returns 200")
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+        assert!(
+            cache.get("movers:Sargatanas:rising:10").is_none(),
+            "degraded movers response must not be inserted into HomeFeedCache"
+        );
+
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body: MoversResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body.items.len(), 1);
+        assert_eq!(body.items[0].item_id, 42);
+        assert_eq!(body.items[0].sparkline, vec![0; 24]);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn movers_caches_healthy_response_locally_and_at_cdn() {
+        let (ch, server) =
+            spawn_mock_clickhouse(vec![(200, encode_mover_row(42, 0, 54)), (200, Vec::new())])
+                .await;
+        let cache = HomeFeedCache::new(16);
+        let response = get_movers(
+            State(ch),
+            State(test_world_helper()),
+            State(cache.clone()),
+            Path("Sargatanas".into()),
+            Query(MoversQuery {
+                direction: None,
+                limit: None,
+            }),
+        )
+        .await
+        .expect("healthy movers request returns 200")
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL).unwrap(),
+            "public, max-age=60, stale-while-revalidate=240, stale-if-error=600"
+        );
+        assert!(
+            cache.get("movers:Sargatanas:rising:10").is_some(),
+            "healthy movers response should populate HomeFeedCache"
+        );
+        server.await.unwrap();
+    }
 }

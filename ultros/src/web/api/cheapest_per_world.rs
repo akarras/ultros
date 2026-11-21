@@ -1,11 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::header,
     response::{IntoResponse, Response},
 };
-use axum_extra::headers::{CacheControl, HeaderMapExt};
 use serde::{Deserialize, Serialize};
 use ultros_api_types::cheapest_listings::CheapestListingsColumnar;
 use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
@@ -97,9 +97,10 @@ pub(crate) async fn cheapest_per_world(
             .await?;
         Json(rows).into_response()
     };
-    response
-        .headers_mut()
-        .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(15)));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        super::public_cache_control(15, 60, super::PUBLIC_STALE_IF_ERROR_SECS),
+    );
     Ok(response)
 }
 

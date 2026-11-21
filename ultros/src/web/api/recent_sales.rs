@@ -3,9 +3,9 @@ use std::{sync::Arc, time::Duration};
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::header,
     response::{IntoResponse, Response},
 };
-use axum_extra::headers::{CacheControl, HeaderMapExt};
 use serde::{Deserialize, Serialize};
 use ultros_api_types::recent_sales::{RecentSales, RecentSalesColumnar, SaleData, Sales};
 use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
@@ -116,9 +116,11 @@ pub(crate) async fn recent_sales(
         }
     };
     let mut response: Response = Json(body(sales, columnar)).into_response();
-    response
-        .headers_mut()
-        .typed_insert(CacheControl::new().with_max_age(ttl));
+    let secs = ttl.as_secs();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        super::public_cache_control(secs, secs * 4, super::PUBLIC_STALE_IF_ERROR_SECS),
+    );
     Ok(response)
 }
 

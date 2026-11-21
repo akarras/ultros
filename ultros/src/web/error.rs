@@ -503,6 +503,10 @@ impl IntoResponse for ApiError {
             // defaulted to `200`.
             return (
                 StatusCode::UNAUTHORIZED,
+                [(
+                    axum::http::header::CACHE_CONTROL,
+                    axum::http::HeaderValue::from_static("no-store"),
+                )],
                 cookies,
                 Json(JsonErrorWrapper::ApiError(
                     ultros_api_types::result::ApiError::NotAuthenticated,
@@ -526,6 +530,10 @@ impl IntoResponse for ApiError {
         }
         (
             status,
+            [(
+                axum::http::header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static("no-store"),
+            )],
             Json(JsonErrorWrapper::ApiError(self.as_api_error())),
         )
             .into_response()
@@ -612,7 +620,15 @@ impl WebError {
         } else {
             tracing::debug!(error = %self, %status, "{title}");
         }
-        (status, message).into_response()
+        (
+            status,
+            [(
+                axum::http::header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static("no-store"),
+            )],
+            message,
+        )
+            .into_response()
     }
 }
 
@@ -653,11 +669,33 @@ mod tests {
             ),
         ] {
             let shared = Arc::new(error);
+            let first = SharedWebError(shared.clone()).into_response();
+            assert_eq!(first.status(), expected);
             assert_eq!(
-                SharedWebError(shared.clone()).into_response().status(),
-                expected
+                first.headers()[axum::http::header::CACHE_CONTROL],
+                "no-store"
             );
-            assert_eq!(SharedWebError(shared).into_response().status(), expected);
+            let second = SharedWebError(shared).into_response();
+            assert_eq!(second.status(), expected);
+            assert_eq!(
+                second.headers()[axum::http::header::CACHE_CONTROL],
+                "no-store"
+            );
+        }
+    }
+
+    #[test]
+    fn api_errors_emit_no_store_cache_control() {
+        for error in [
+            ApiError::NoAuthCookie,
+            ApiError::BadRequest("invalid"),
+            ApiError::ServiceUnavailable("offline"),
+        ] {
+            let response = error.into_response();
+            assert_eq!(
+                response.headers()[axum::http::header::CACHE_CONTROL],
+                "no-store"
+            );
         }
     }
 
