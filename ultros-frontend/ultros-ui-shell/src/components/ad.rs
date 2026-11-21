@@ -29,11 +29,26 @@ pub const AD_REFRESH_COOLDOWN_MS: f64 = 30_000.0;
 pub mod slots {
     pub const DEFAULT: &str = "1163555858";
     pub const DESKTOP_RAIL: &str = "1163555858";
+    pub const LAPTOP_ANCHOR: &str = "1163555858";
     pub const HOME_BANNER: &str = "1163555858";
     pub const HOME_SIDEBAR: &str = "1163555858";
+    pub const ITEM_MID: &str = "1163555858";
     pub const ITEM_BOTTOM: &str = "1163555858";
     pub const CURRENCY_INLINE: &str = "1163555858";
+    pub const CONTENT_INLINE: &str = "1163555858";
     pub const SETTINGS_PREVIEW: &str = "1163555858";
+}
+
+/// Bucket viewport widths to match Ultros's responsive ad breakpoints so GA4
+/// telemetry can break down fill rate and opt-out rate per layout tier.
+pub fn viewport_bucket(width_px: f64) -> &'static str {
+    if !width_px.is_finite() || width_px < 1024.0 {
+        "mobile"
+    } else if width_px < 1536.0 {
+        "laptop"
+    } else {
+        "wide"
+    }
 }
 
 /// Pure decision helper for SPA route/entity ad refresh.
@@ -72,7 +87,7 @@ pub fn should_refresh_ad(
 /// client.
 #[cfg(feature = "hydrate")]
 mod adsense {
-    use super::ADSENSE_LOADER_URL;
+    use super::{ADSENSE_LOADER_URL, viewport_bucket};
     use leptos::{html::Ins, prelude::*};
     use wasm_bindgen::{JsCast, JsValue, prelude::Closure};
 
@@ -83,9 +98,85 @@ mod adsense {
     /// Set on the loader tag when it fails to load (ad blocker, offline) so
     /// ads mounted after the error can hide themselves immediately.
     const FAILED_ATTR: &str = "data-load-failed";
+    const ANCHOR_DISMISSED_KEY: &str = "ultros_anchor_ad_dismissed";
+    const HIDDEN_PREF_LOGGED_KEY: &str = "ultros_ad_hidden_pref_logged";
 
     pub fn now_ms() -> f64 {
         js_sys::Date::now()
+    }
+
+    pub fn current_viewport_bucket() -> &'static str {
+        let width = web_sys::window()
+            .and_then(|w| w.inner_width().ok())
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        viewport_bucket(width)
+    }
+
+    /// Best-effort GA4 event emission. Silently no-ops when `window.gtag` is
+    /// absent (e.g. blocked or `/plugin` pages).
+    pub fn track_ad_event(event_name: &str, placement: &str, ad_slot: &str) {
+        let global = js_sys::global();
+        let Ok(gtag) = js_sys::Reflect::get(&global, &JsValue::from_str("gtag")) else {
+            return;
+        };
+        let Some(gtag) = gtag.dyn_ref::<js_sys::Function>() else {
+            return;
+        };
+        let params = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &params,
+            &JsValue::from_str("ad_placement"),
+            &JsValue::from_str(placement),
+        );
+        let _ = js_sys::Reflect::set(
+            &params,
+            &JsValue::from_str("ad_slot"),
+            &JsValue::from_str(ad_slot),
+        );
+        let _ = js_sys::Reflect::set(
+            &params,
+            &JsValue::from_str("viewport_bucket"),
+            &JsValue::from_str(current_viewport_bucket()),
+        );
+        let _ = gtag.call3(
+            &JsValue::NULL,
+            &JsValue::from_str("event"),
+            &JsValue::from_str(event_name),
+            &params,
+        );
+    }
+
+    pub fn track_hidden_pref_once() {
+        let Ok(Some(storage)) = web_sys::window()
+            .map(|w| w.session_storage())
+            .unwrap_or(Ok(None))
+        else {
+            return;
+        };
+        if storage
+            .get_item(HIDDEN_PREF_LOGGED_KEY)
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return;
+        }
+        let _ = storage.set_item(HIDDEN_PREF_LOGGED_KEY, "1");
+        track_ad_event("ad_hidden_pref", "global", "none");
+    }
+
+    pub fn is_anchor_dismissed() -> bool {
+        web_sys::window()
+            .and_then(|w| w.session_storage().ok().flatten())
+            .and_then(|s| s.get_item(ANCHOR_DISMISSED_KEY).ok().flatten())
+            .is_some()
+    }
+
+    pub fn persist_anchor_dismissed() {
+        if let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+            let _ = storage.set_item(ANCHOR_DISMISSED_KEY, "1");
+        }
     }
 
     /// Returns `true` when the `<ins>` currently occupies non-zero layout box
@@ -186,6 +277,7 @@ mod adsense {
                 let script = script.clone();
                 move || {
                     let _ = script.set_attribute(FAILED_ATTR, "");
+                    track_ad_event("ad_blocked", "loader", "none");
                     // try_set: the Ad that injected the loader may have been
                     // unmounted (and its signal disposed) by the time the
                     // error fires.
@@ -254,6 +346,12 @@ mod adsense {
     pub fn now_ms() -> f64 {
         0.0
     }
+    pub fn track_ad_event(_event_name: &str, _placement: &str, _ad_slot: &str) {}
+    pub fn track_hidden_pref_once() {}
+    pub fn is_anchor_dismissed() -> bool {
+        false
+    }
+    pub fn persist_anchor_dismissed() {}
     pub fn is_rendered_visible(_node: &NodeRef<Ins>) -> bool {
         false
     }
@@ -268,6 +366,7 @@ mod adsense {
 fn AdUnit(
     ad_class: &'static str,
     ad_slot: &'static str,
+    placement: &'static str,
     format: Option<&'static str>,
     responsive_attr: Option<&'static str>,
     lazy: bool,
@@ -296,7 +395,13 @@ fn AdUnit(
                 && let Some(status) = node.deref().get_attribute("data-ad-status")
             {
                 info!("ad status {status}");
-                unfilled.set(status == "unfilled");
+                let is_unfilled = status == "unfilled";
+                unfilled.set(is_unfilled);
+                if status == "filled" {
+                    adsense::track_ad_event("ad_filled", placement, ad_slot);
+                } else if is_unfilled {
+                    adsense::track_ad_event("ad_unfilled", placement, ad_slot);
+                }
             }
         },
         UseMutationObserverOptions::default().attributes(true),
@@ -338,6 +443,7 @@ fn AdUnit(
 pub fn Ad(
     #[prop(optional)] class: Option<&'static str>,
     #[prop(optional)] ad_slot: Option<&'static str>,
+    #[prop(optional)] placement: Option<&'static str>,
     #[prop(optional)] format: Option<&'static str>,
     #[prop(optional)] full_width_responsive: Option<bool>,
     #[prop(optional)] lazy: bool,
@@ -346,12 +452,19 @@ pub fn Ad(
     let i18n = use_i18n();
     let ad_class = class.unwrap_or("ad-banner-ins");
     let ad_slot = ad_slot.unwrap_or(slots::DEFAULT);
+    let placement = placement.unwrap_or("inline");
     let responsive_attr = full_width_responsive.map(|v| if v { "true" } else { "false" });
     let cookies = use_context::<Cookies>().unwrap();
     let (hide_ads, _) = cookies.use_cookie_typed::<_, bool>("HIDE_ADS");
     let unfilled = RwSignal::new(false);
     let generation = RwSignal::new(0u32);
     let last_fill_ms = RwSignal::new(None::<f64>);
+
+    Effect::new(move |_| {
+        if hide_ads.get().unwrap_or_default() {
+            adsense::track_hidden_pref_once();
+        }
+    });
 
     let on_requested = Callback::new(move |()| {
         last_fill_ms.set(Some(adsense::now_ms()));
@@ -393,6 +506,7 @@ pub fn Ad(
                                 <AdUnit
                                     ad_class
                                     ad_slot
+                                    placement
                                     format
                                     responsive_attr
                                     lazy
@@ -427,6 +541,7 @@ pub fn DesktopAdRail() -> impl IntoView {
                     <Ad
                         class="ad-rail-ins"
                         ad_slot=slots::DESKTOP_RAIL
+                        placement="desktop_rail"
                         refresh_key=route_key
                     />
                 </div>
@@ -435,9 +550,68 @@ pub fn DesktopAdRail() -> impl IntoView {
     }
 }
 
+/// Dismissible 728x90 sticky bottom leaderboard for medium desktop/laptop
+/// viewports (1024px–1535px, or 1024px–1351px when the sidebar is collapsed),
+/// where neither `<MobileBar />` nor `<DesktopAdRail />` is displayed.
+///
+/// Dismissal is remembered in `sessionStorage` and read inside a post-hydration
+/// `Effect` so SSR and initial hydration trees always agree.
+#[component]
+pub fn LaptopBottomAnchorAd() -> impl IntoView {
+    let i18n = use_i18n();
+    let cookies = use_context::<Cookies>().unwrap();
+    let (hide_ads, _) = cookies.use_cookie_typed::<_, bool>("HIDE_ADS");
+    let dismissed = RwSignal::new(false);
+    Effect::new(move |_| {
+        if adsense::is_anchor_dismissed() {
+            dismissed.set(true);
+        }
+    });
+    let visible = Signal::derive(move || !hide_ads.get().unwrap_or_default() && !dismissed.get());
+    let location = use_location_or_default();
+    let route_key = Signal::derive(move || location.pathname.get());
+
+    view! {
+        <Show when=visible>
+            <aside class="app-bottom-anchor-ad" aria-label=t_string!(i18n, ad_aria_label)>
+                <div class="app-bottom-anchor-inner">
+                    <Ad
+                        class="ad-anchor-ins"
+                        ad_slot=slots::LAPTOP_ANCHOR
+                        placement="laptop_anchor"
+                        refresh_key=route_key
+                    />
+                    <button
+                        type="button"
+                        class="app-bottom-anchor-dismiss"
+                        aria-label=t_string!(i18n, close).to_string()
+                        on:click=move |_| {
+                            adsense::persist_anchor_dismissed();
+                            dismissed.set(true);
+                        }
+                    >
+                        "×"
+                    </button>
+                </div>
+            </aside>
+        </Show>
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AD_REFRESH_COOLDOWN_MS, should_refresh_ad};
+    use super::{AD_REFRESH_COOLDOWN_MS, should_refresh_ad, viewport_bucket};
+
+    #[test]
+    fn viewport_buckets_match_ad_layout_breakpoints() {
+        assert_eq!(viewport_bucket(375.0), "mobile");
+        assert_eq!(viewport_bucket(1023.0), "mobile");
+        assert_eq!(viewport_bucket(1024.0), "laptop");
+        assert_eq!(viewport_bucket(1440.0), "laptop");
+        assert_eq!(viewport_bucket(1536.0), "wide");
+        assert_eq!(viewport_bucket(2560.0), "wide");
+        assert_eq!(viewport_bucket(f64::NAN), "mobile");
+    }
 
     #[test]
     fn refresh_skips_initial_mount_and_unchanged_routes() {

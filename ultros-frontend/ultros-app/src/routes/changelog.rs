@@ -9,6 +9,7 @@
 //! order — the same thing a crawler used to get from a static array.
 
 use crate::api::get_changelog;
+use crate::components::ad::{Ad, slots as ad_slots};
 use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
 use crate::components::meta::{MetaDescription, MetaTitle};
@@ -141,6 +142,16 @@ pub fn Changelog() -> impl IntoView {
                             })
                     }}
                 </Suspense>
+                <div class="app-inline-ad">
+                    <div class="w-full flex justify-center">
+                        <Ad
+                            class="ad-banner-ins"
+                            ad_slot=ad_slots::CONTENT_INLINE
+                            placement="changelog"
+                            lazy=true
+                        />
+                    </div>
+                </div>
             </div>
         </div>
     }

@@ -270,6 +270,7 @@ fn AdChoice() -> impl IntoView {
                 <Ad
                     class="ad-banner-ins"
                     ad_slot=slots::SETTINGS_PREVIEW
+                    placement="settings_preview"
                     format="horizontal"
                     full_width_responsive=true
                     lazy=true

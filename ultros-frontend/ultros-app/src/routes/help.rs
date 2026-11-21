@@ -1,5 +1,6 @@
 use crate::components::app_link::AppLink;
 use crate::components::{
+    ad::{Ad, slots as ad_slots},
     icon::Icon,
     meta::{MetaDescription, MetaTitle},
 };
@@ -454,6 +455,16 @@ pub fn HelpArticle() -> impl IntoView {
                             <TopicSection title=t_string!(i18n, help_section_assumptions).to_string() items=topic.assumptions />
                             <TopicSection title=t_string!(i18n, help_section_how_to_read).to_string() items=topic.results />
                             <TopicSection title=t_string!(i18n, help_section_next_actions).to_string() items=topic.next_actions />
+                        </div>
+                        <div class="app-inline-ad">
+                            <div class="w-full flex justify-center">
+                                <Ad
+                                    class="ad-banner-ins"
+                                    ad_slot=ad_slots::CONTENT_INLINE
+                                    placement="help_article"
+                                    lazy=true
+                                />
+                            </div>
                         </div>
                     }.into_any(),
                     None => view! {

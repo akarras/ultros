@@ -407,7 +407,12 @@ pub fn HomePage() -> impl IntoView {
                     </section>
 
                     <div class="w-full flex justify-center">
-                        <Ad class="ad-banner-ins" ad_slot=ad_slots::HOME_BANNER lazy=true />
+                        <Ad
+                            class="ad-banner-ins"
+                            ad_slot=ad_slots::HOME_BANNER
+                            placement="home_banner"
+                            lazy=true
+                        />
                     </div>
                 </div>
 
@@ -419,7 +424,12 @@ pub fn HomePage() -> impl IntoView {
                     <LiveSaleTicker scope=feed_scope />
                     <RecentlyViewed />
                     <div class="w-full flex justify-center">
-                        <Ad class="ad-rect-ins" ad_slot=ad_slots::HOME_SIDEBAR lazy=true />
+                        <Ad
+                            class="ad-rect-ins"
+                            ad_slot=ad_slots::HOME_SIDEBAR
+                            placement="home_sidebar"
+                            lazy=true
+                        />
                     </div>
                 </div>
             </div>

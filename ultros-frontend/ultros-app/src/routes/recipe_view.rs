@@ -11,6 +11,7 @@ use xiv_gen::{ItemId, RecipeId, RecipeLevelTableId};
 use crate::api::{bulk_add_item_to_list, get_listings, get_lists, get_login};
 use crate::components::app_link::use_query_map_or_default;
 use crate::components::{
+    ad::{Ad, slots as ad_slots},
     clipboard::Clipboard,
     crafting_cost::{CRYSTAL_SEARCH_CATEGORY, IngredientsIter, vendor_price_map},
     item_icon::{IconSize, ItemIcon},
@@ -1003,6 +1004,16 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
             })}</div></details>
             <Show when=move ||show_save.get()><SavePlan materials=materials hq=hq output=recipe.item_result output_hq=output_hq buy_output=buy_output set_visible=show_save /></Show>
             <Show when=move ||show_settings.get()><PlannerSettings options=options set_options=set_options set_visible=show_settings /></Show>
+            <div class="app-inline-ad">
+                <div class="w-full flex justify-center">
+                    <Ad
+                        class="ad-banner-ins"
+                        ad_slot=ad_slots::CONTENT_INLINE
+                        placement="recipe_view"
+                        lazy=true
+                    />
+                </div>
+            </div>
         </div>
     }
 }

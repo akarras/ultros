@@ -14,6 +14,7 @@ use xiv_gen::{ClassJobCategoryId, ItemId};
 
 use crate::CheapestPrices;
 use crate::api::get_cheapest_listings;
+use crate::components::ad::{Ad, slots as ad_slots};
 use crate::components::add_set_to_list::AddSetToList;
 use crate::components::cheapest_price::CheapestPrice;
 use crate::components::clipboard::Clipboard;
@@ -783,6 +784,16 @@ pub fn JobSetDetail() -> impl IntoView {
                             }}
                         </Suspense>
                     </div>
+                </div>
+            </div>
+            <div class="app-inline-ad mt-4">
+                <div class="w-full flex justify-center">
+                    <Ad
+                        class="ad-banner-ins"
+                        ad_slot=ad_slots::CONTENT_INLINE
+                        placement="job_set_detail"
+                        lazy=true
+                    />
                 </div>
             </div>
         </div>
