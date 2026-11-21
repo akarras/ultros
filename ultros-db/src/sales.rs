@@ -366,15 +366,14 @@ impl UltrosDb {
             .await
     }
 
-    /// Stream the compact `recent_sale_history` projection along with each
-    /// row's `pg_id` and whether the historical backfill is complete.
-    ///
-    /// Used after restoring an analyzer snapshot to reconcile every sale
-    /// committed after the snapshot (including late-arriving sales with older
-    /// `sold_date` values and duplicate timestamp/price purchases) and to make
-    /// the handoff to buffered live sale events idempotent via `pg_id`.
-    pub async fn recent_sale_projection(
+    /// Stream up to `n_sales` recent sales per `(world, item, hq)` including
+    /// each row's Postgres `pg_id` (from `recent_sale_history` when the
+    /// backfill projection is complete, or from `sale_history` otherwise) so
+    /// startup can deduplicate buffered live broadcast events on every boot
+    /// path.
+    pub async fn last_n_sales_with_ids(
         &self,
+        n_sales: i32,
     ) -> Result<
         (
             bool,
@@ -382,13 +381,29 @@ impl UltrosDb {
         ),
         DbErr,
     > {
-        let status = self.recent_sales_backfill_status().await?;
-        let complete =
-            status.complete && status.retention == crate::recent_sales::RECENT_SALE_LIMIT as i32;
-        let stream = RecentProjectionSale::find_by_statement(self.projection_rows_statement())
+        let (complete, stmt) = self.recent_sales_with_ids_statement(n_sales).await?;
+        let stream = RecentProjectionSale::find_by_statement(stmt)
             .stream(&self.db)
             .await?;
         Ok((complete, stream))
+    }
+
+    /// Check whether the compact `recent_sale_history` projection is complete
+    /// and matches `RECENT_SALE_LIMIT`.
+    pub async fn is_recent_sales_projection_complete(&self) -> Result<bool, DbErr> {
+        let status = self.recent_sales_backfill_status().await?;
+        Ok(status.complete && status.retention == crate::recent_sales::RECENT_SALE_LIMIT as i32)
+    }
+
+    /// Stream the complete `recent_sale_history` projection along with each
+    /// row's `pg_id`. Callers should gate on
+    /// [`Self::is_recent_sales_projection_complete`] first.
+    pub async fn stream_recent_sale_projection(
+        &self,
+    ) -> Result<impl Stream<Item = Result<RecentProjectionSale, DbErr>> + '_, DbErr> {
+        RecentProjectionSale::find_by_statement(self.projection_rows_statement())
+            .stream(&self.db)
+            .await
     }
 
     #[instrument(skip(self))]

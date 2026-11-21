@@ -617,24 +617,57 @@ pub async fn active_listing_count(
     let worlds = id_list(world_ids);
     let seed_table = crate::schema::LISTING_EVENTS_SEED_MARKER_TABLE;
     let refresh_table = crate::schema::LISTING_ALIVE_REFRESH_MARKER_TABLE;
-    let row = ch
+    let query_with_marker = format!(
+        "SELECT
+             toUInt64(sum(alive_count)) AS total,
+             toUInt8((SELECT count() > 0 FROM {seed_table})) AS is_seeded,
+             toInt64(toUnixTimestamp((SELECT max(seeded_at) FROM {seed_table}))) AS seeded_at_unix,
+             greatest(
+                 toInt64(toUnixTimestamp((SELECT max(refreshed_at) FROM {refresh_table}))),
+                 toInt64(toUnixTimestamp((SELECT max(computed_at) FROM listing_alive)))
+             ) AS last_refresh_unix,
+             toInt64(toUnixTimestamp(now())) AS now_unix
+         FROM listing_alive FINAL
+         WHERE world_id IN ({worlds})"
+    );
+    let row = match ch
         .client()
-        .query(&format!(
-            "SELECT
-                 toUInt64(sum(alive_count)) AS total,
-                 toUInt8((SELECT count() > 0 FROM {seed_table})) AS is_seeded,
-                 toInt64(toUnixTimestamp((SELECT max(seeded_at) FROM {seed_table}))) AS seeded_at_unix,
-                 greatest(
-                     toInt64(toUnixTimestamp((SELECT max(refreshed_at) FROM {refresh_table}))),
-                     toInt64(toUnixTimestamp((SELECT max(computed_at) FROM listing_alive)))
-                 ) AS last_refresh_unix,
-                 toInt64(toUnixTimestamp(now())) AS now_unix
-             FROM listing_alive FINAL
-             WHERE world_id IN ({worlds})"
-        ))
+        .query(&query_with_marker)
         .fetch_one::<ActiveListingCountRow>()
-        .await?;
+        .await
+    {
+        Ok(row) => row,
+        Err(err) if is_missing_refresh_marker_error(&err.to_string(), refresh_table) => {
+            // During rollout before the async startup migration creates
+            // `_listing_alive_refresh`, fall back to `listing_alive`'s own
+            // `computed_at` so existing populated clusters do not briefly
+            // lose valid listing counts.
+            let fallback_query = format!(
+                "SELECT
+                     toUInt64(sum(alive_count)) AS total,
+                     toUInt8((SELECT count() > 0 FROM {seed_table})) AS is_seeded,
+                     toInt64(toUnixTimestamp((SELECT max(seeded_at) FROM {seed_table}))) AS seeded_at_unix,
+                     toInt64(toUnixTimestamp((SELECT max(computed_at) FROM listing_alive))) AS last_refresh_unix,
+                     toInt64(toUnixTimestamp(now())) AS now_unix
+                 FROM listing_alive FINAL
+                 WHERE world_id IN ({worlds})"
+            );
+            ch.client()
+                .query(&fallback_query)
+                .fetch_one::<ActiveListingCountRow>()
+                .await?
+        }
+        Err(err) => return Err(err.into()),
+    };
     Ok(evaluate_active_listing_count(row))
+}
+
+fn is_missing_refresh_marker_error(msg: &str, refresh_table: &str) -> bool {
+    msg.contains(refresh_table)
+        && (msg.contains("UNKNOWN_TABLE")
+            || msg.contains("Code: 60")
+            || msg.contains("doesn't exist")
+            || msg.contains("does not exist"))
 }
 
 /// One row of deep-scan data for a single (item_id, hq, world_id) tuple at
@@ -1837,5 +1870,82 @@ mod tests {
             }),
             ActiveListingCount::Ready(12_345)
         );
+    }
+
+    #[tokio::test]
+    async fn active_listing_count_falls_back_when_refresh_marker_table_not_yet_created() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let now = 1_800_000_000i64;
+        let server = tokio::spawn(async move {
+            for attempt in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 1024];
+                let header_end = loop {
+                    let n = socket.read(&mut chunk).await.unwrap();
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break pos + 4;
+                    }
+                };
+                let headers = String::from_utf8_lossy(&buf[..header_end]);
+                let content_len = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (k, v) = line.split_once(':')?;
+                        k.eq_ignore_ascii_case("content-length")
+                            .then(|| v.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or(0);
+                while buf.len() < header_end + content_len {
+                    let n = socket.read(&mut chunk).await.unwrap();
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                let req = String::from_utf8_lossy(&buf);
+                let (status, body) = if attempt == 0 {
+                    assert!(req.contains("_listing_alive_refresh"));
+                    (
+                        404,
+                        b"Code: 60. DB::Exception: Table default._listing_alive_refresh does not exist. (UNKNOWN_TABLE)"
+                            .to_vec(),
+                    )
+                } else {
+                    assert!(!req.contains("_listing_alive_refresh"));
+                    assert!(req.contains("listing_alive FINAL"));
+                    let mut out = Vec::with_capacity(33);
+                    out.extend_from_slice(&7_777u64.to_le_bytes());
+                    out.push(1u8);
+                    out.extend_from_slice(&(now - 600).to_le_bytes());
+                    out.extend_from_slice(&(now - 60).to_le_bytes());
+                    out.extend_from_slice(&now.to_le_bytes());
+                    (200, out)
+                };
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let head = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(head.as_bytes()).await.unwrap();
+                socket.write_all(&body).await.unwrap();
+                let _ = socket.shutdown().await;
+            }
+        });
+
+        let ch = ClickHouseClient::from_client(
+            clickhouse::Client::default()
+                .with_url(url)
+                .with_compression(clickhouse::Compression::None)
+                .with_validation(false),
+        );
+        let result = active_listing_count(&ch, &[54]).await.unwrap();
+        assert_eq!(result, ActiveListingCount::Ready(7_777));
+        server.await.unwrap();
     }
 }

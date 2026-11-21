@@ -1151,22 +1151,22 @@ pub(crate) async fn cached_encoded_json(
 ) -> axum::response::Response {
     let secs = ttl.as_secs();
     let swr = std::time::Duration::from_secs(secs.saturating_mul(4).clamp(60, 1_800));
-    let is_stale = loaded.disposition == json_cache::SwrDisposition::Stale;
     let stored_at = loaded.stored_at;
+    let fresh_until = loaded.fresh_until;
     let stale_until = loaded.stale_until;
     loaded
         .body
         .into_json_response_with_cache_control(
             headers,
             move || {
-                let now = std::time::Instant::now();
-                api::public_cache_control_for_age(
+                api::public_cache_control_for_deadlines(
                     ttl,
                     swr,
                     api::PUBLIC_STALE_IF_ERROR_SECS,
-                    is_stale,
-                    now.saturating_duration_since(stored_at),
-                    stale_until.saturating_duration_since(now),
+                    stored_at,
+                    fresh_until,
+                    stale_until,
+                    std::time::Instant::now(),
                 )
             },
             &[],

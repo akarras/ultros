@@ -562,6 +562,7 @@ mod tests {
             cacheable: true,
             disposition: SwrDisposition::Stale,
             stored_at: now - Duration::from_secs(299),
+            fresh_until: now - Duration::from_secs(269),
             stale_until: now + Duration::from_secs(1),
         };
         let resp =

@@ -14,7 +14,7 @@ use crate::{
     analyzer_service::{AnalyzerService, CheapestListings},
     web::{
         error::{SharedWebError, WebError},
-        json_cache::{JsonCache, SwrDisposition, SwrLoad},
+        json_cache::{JsonCache, SwrLoad},
     },
 };
 
@@ -136,22 +136,22 @@ pub(crate) async fn cheapest_per_world(
         "disposition" => cached.disposition.as_str()
     )
     .increment(1);
-    let is_stale = cached.disposition == SwrDisposition::Stale;
     let stored_at = cached.stored_at;
+    let fresh_until = cached.fresh_until;
     let stale_until = cached.stale_until;
     Ok(cached
         .body
         .into_json_response_with_cache_control(
             &headers,
             move || {
-                let now = std::time::Instant::now();
-                super::public_cache_control_for_age(
+                super::public_cache_control_for_deadlines(
                     Duration::from_secs(15),
                     Duration::from_secs(60),
                     super::PUBLIC_STALE_IF_ERROR_SECS,
-                    is_stale,
-                    now.saturating_duration_since(stored_at),
-                    stale_until.saturating_duration_since(now),
+                    stored_at,
+                    fresh_until,
+                    stale_until,
+                    std::time::Instant::now(),
                 )
             },
             &[],

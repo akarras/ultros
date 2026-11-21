@@ -31,7 +31,7 @@ pub(crate) use resale_quality::post_resale_quality;
 pub(crate) use sale_stats::get_sale_stats;
 pub(crate) use trends::get_trends;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::http::HeaderValue;
 
@@ -60,26 +60,31 @@ pub(crate) fn public_cache_control(max_age_secs: u64, swr_secs: u64, sie_secs: u
 }
 
 /// Derive downstream `Cache-Control` directives from an in-process SWR entry's
-/// age and remaining stale lifetime so origin SWR never starts a fresh CDN
-/// lifetime for an already-aged or stale generation (RFC 9111 §4.2).
-pub(crate) fn public_cache_control_for_age(
+/// origin timestamps (`stored_at`, `fresh_until`, `stale_until`) evaluated at
+/// send time `now` (after encoding finishes), so neither origin SWR nor slow
+/// compression can ever extend downstream freshness or SWR past the origin
+/// deadline (RFC 9111 §4.2).
+pub(crate) fn public_cache_control_for_deadlines(
     configured_max_age: Duration,
     configured_swr: Duration,
     sie_secs: u64,
-    is_stale: bool,
-    age: Duration,
-    remaining_stale: Duration,
+    stored_at: Instant,
+    fresh_until: Instant,
+    stale_until: Instant,
+    now: Instant,
 ) -> HeaderValue {
-    let age_secs = age.as_secs();
-    let (max_age_secs, swr_secs) = if is_stale {
+    if now >= stale_until {
+        return public_cache_control(0, 0, sie_secs);
+    }
+    let age_secs = now.saturating_duration_since(stored_at).as_secs();
+    let remaining_stale_secs = stale_until.saturating_duration_since(now).as_secs();
+    if now >= fresh_until {
         let elapsed_past_fresh = age_secs.saturating_sub(configured_max_age.as_secs());
         let swr_budget = configured_swr.as_secs().saturating_sub(elapsed_past_fresh);
-        (0, swr_budget.min(remaining_stale.as_secs()))
-    } else {
-        let remaining_fresh = configured_max_age.as_secs().saturating_sub(age_secs);
-        (remaining_fresh, configured_swr.as_secs())
-    };
-    public_cache_control(max_age_secs, swr_secs, sie_secs)
+        return public_cache_control(0, swr_budget.min(remaining_stale_secs), sie_secs);
+    }
+    let remaining_fresh_secs = configured_max_age.as_secs().saturating_sub(age_secs);
+    public_cache_control(remaining_fresh_secs, configured_swr.as_secs(), sie_secs)
 }
 
 /// Default `stale-if-error` window for public market JSON responses so
@@ -110,59 +115,80 @@ mod tests {
     }
 
     #[test]
-    fn public_cache_control_for_age_shrinks_freshness_and_caps_stale_windows() {
-        use std::time::Duration;
+    fn public_cache_control_for_deadlines_shrinks_freshness_and_caps_expired_windows() {
+        use std::time::{Duration, Instant};
+
+        let t0 = Instant::now();
 
         // Freshly loaded Market Pulse keeps full window.
         assert_eq!(
-            super::public_cache_control_for_age(
+            super::public_cache_control_for_deadlines(
                 Duration::from_secs(30),
                 Duration::from_secs(120),
                 PUBLIC_STALE_IF_ERROR_SECS,
-                false,
-                Duration::ZERO,
-                Duration::from_secs(300),
+                t0,
+                t0 + Duration::from_secs(30),
+                t0 + Duration::from_secs(300),
+                t0,
             ),
             "public, max-age=30, stale-while-revalidate=120, stale-if-error=600"
         );
 
         // 10s-old fresh Market Pulse gets remaining 20s max-age.
         assert_eq!(
-            super::public_cache_control_for_age(
+            super::public_cache_control_for_deadlines(
                 Duration::from_secs(30),
                 Duration::from_secs(120),
                 PUBLIC_STALE_IF_ERROR_SECS,
-                false,
-                Duration::from_secs(10),
-                Duration::from_secs(290),
+                t0,
+                t0 + Duration::from_secs(30),
+                t0 + Duration::from_secs(300),
+                t0 + Duration::from_secs(10),
             ),
             "public, max-age=20, stale-while-revalidate=120, stale-if-error=600"
         );
 
         // 299s-old stale Market Pulse must never start a new freshness or SWR window.
         assert_eq!(
-            super::public_cache_control_for_age(
+            super::public_cache_control_for_deadlines(
                 Duration::from_secs(30),
                 Duration::from_secs(120),
                 PUBLIC_STALE_IF_ERROR_SECS,
-                true,
-                Duration::from_secs(299),
-                Duration::from_secs(1),
+                t0,
+                t0 + Duration::from_secs(30),
+                t0 + Duration::from_secs(300),
+                t0 + Duration::from_secs(299),
             ),
             "public, max-age=0, stale-if-error=600"
         );
 
         // 14s-old stale /cheapest (fresh 5s, stale 15s) gets max-age=0, swr=1.
         assert_eq!(
-            super::public_cache_control_for_age(
+            super::public_cache_control_for_deadlines(
                 Duration::from_secs(15),
                 Duration::from_secs(60),
                 PUBLIC_STALE_IF_ERROR_SECS,
-                true,
-                Duration::from_secs(14),
-                Duration::from_secs(1),
+                t0,
+                t0 + Duration::from_secs(5),
+                t0 + Duration::from_secs(15),
+                t0 + Duration::from_secs(14),
             ),
             "public, max-age=0, stale-while-revalidate=1, stale-if-error=600"
+        );
+
+        // Any entry whose send time `now` reaches/passes `stale_until` (even
+        // if it was classified Fresh when fetched before encoding) gets 0/0.
+        assert_eq!(
+            super::public_cache_control_for_deadlines(
+                Duration::from_secs(15),
+                Duration::from_secs(60),
+                PUBLIC_STALE_IF_ERROR_SECS,
+                t0,
+                t0 + Duration::from_secs(5),
+                t0 + Duration::from_secs(15),
+                t0 + Duration::from_secs(16),
+            ),
+            "public, max-age=0, stale-if-error=600"
         );
     }
 }

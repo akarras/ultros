@@ -231,44 +231,6 @@ impl SaleHistory {
         }
         entries.sort_by_key(|sale| Reverse(sale.sale_date));
     }
-
-    /// Multiset-preserving merge of one `(item_id, hq)` board's projection
-    /// rows into a snapshot-restored history (used when historical backfill of
-    /// `recent_sale_history` is not yet marked complete).
-    ///
-    /// Counts how many copies of each `(sale_date, price_per_item)` pair were
-    /// already present in the restored snapshot and decrements that count once
-    /// per matching projection row. Two genuine purchases with identical
-    /// timestamp and price therefore preserve exact multiplicity, while
-    /// already-restored overlap rows are not duplicated.
-    fn merge_projection_board(
-        &mut self,
-        key: ItemKey,
-        sales: &[ultros_db::sales::RecentProjectionSale],
-    ) -> usize {
-        let mut existing_counts: std::collections::HashMap<(NaiveDateTime, i32), usize> =
-            std::collections::HashMap::new();
-        if let Some(entries) = self.item_map.get(&key) {
-            for entry in entries {
-                *existing_counts
-                    .entry((entry.sale_date, entry.price_per_item))
-                    .or_insert(0) += 1;
-            }
-        }
-        let mut added = 0;
-        for sale in sales {
-            let sig = (sale.sold_date, sale.price_per_item);
-            if let Some(remaining) = existing_counts.get_mut(&sig)
-                && *remaining > 0
-            {
-                *remaining -= 1;
-                continue;
-            }
-            self.add_sale(sale);
-            added += 1;
-        }
-        added
-    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, Serialize, Archive, RkyvDeserialize, RkyvSerialize)]
@@ -602,6 +564,15 @@ impl BootSaleDedup {
         }
     }
 
+    fn is_active(&self) -> bool {
+        !self.loaded_pg_ids.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.loaded_pg_ids.clear();
+        self.loaded_pg_ids.shrink_to_fit();
+    }
+
     /// Returns `true` when `pg_id` was already loaded from Postgres during
     /// startup and should be skipped by the live consumer.
     fn should_skip(&mut self, pg_id: i32, now: tokio::time::Instant) -> bool {
@@ -609,8 +580,7 @@ impl BootSaleDedup {
             return false;
         }
         if now >= self.expires_at {
-            self.loaded_pg_ids.clear();
-            self.loaded_pg_ids.shrink_to_fit();
+            self.clear();
             return false;
         }
         self.loaded_pg_ids.remove(&pg_id)
@@ -714,6 +684,11 @@ pub struct AnalyzerService {
     /// Most recent snapshot generation verified by this process via a clean
     /// [`snapshot::write`] + atomic rename or [`snapshot::read`].
     last_verified_snapshot: Arc<Mutex<Option<VerifiedSnapshot>>>,
+    /// Set once startup confirms Postgres `recent_sale_history` backfill is
+    /// complete. Only then can SIGTERM safely skip writing a shutdown snapshot,
+    /// because the next boot reconciles authoritative boards straight from the
+    /// compact projection without any lossy merge.
+    projection_complete: Arc<AtomicBool>,
     /// Records every move of a world-level lowest price into the ClickHouse
     /// `floor_changes` table. Fire-and-forget; the periodic Postgres resync is
     /// what heals a dropped row.
@@ -780,6 +755,7 @@ impl AnalyzerService {
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
             last_verified_snapshot: Arc::default(),
+            projection_complete: Arc::default(),
             floor_writer,
             ch_client,
         };
@@ -892,9 +868,10 @@ impl AnalyzerService {
             .increment(1);
             return;
         }
-        if self
-            .has_verified_recent_snapshot_in(directory, now, SHUTDOWN_SNAPSHOT_MAX_AGE)
-            .await
+        if self.projection_complete.load(Ordering::Acquire)
+            && self
+                .has_verified_recent_snapshot_in(directory, now, SHUTDOWN_SNAPSHOT_MAX_AGE)
+                .await
         {
             info!(
                 max_age_minutes = SHUTDOWN_SNAPSHOT_MAX_AGE.num_minutes(),
@@ -1350,38 +1327,57 @@ impl AnalyzerService {
             }
             let load = async {
                 if !history_ready {
-                    let (projection_complete, projection_stream) =
-                        ultros_db.recent_sale_projection().await?;
-                    if restored_snapshot_ts.is_some() || projection_complete {
-                        // Reconcile from the compact `recent_sale_history`
-                        // projection without a `sold_date` cutoff so both
-                        // post-snapshot sales and late-arriving sales with
-                        // older timestamps are captured with exact
-                        // multiplicity, and capture `pg_id`s so any live event
-                        // broadcast during this read is skipped idempotently.
-                        let (applied, pg_ids) = rebuild::reconcile_projection_history(
-                            &self.recent_sale_history,
-                            projection_complete,
-                            projection_stream,
+                    let projection_complete =
+                        ultros_db.is_recent_sales_projection_complete().await?;
+                    self.projection_complete
+                        .store(projection_complete, Ordering::Release);
+                    if projection_complete {
+                        // Authoritative complete projection: replace histories
+                        // wholesale from the compact `recent_sale_history`
+                        // table (preserving exact multiplicity and catching
+                        // late-arriving sales regardless of `sold_date`) and
+                        // record `pg_id`s for idempotent live-event handoff.
+                        let stream = ultros_db.stream_recent_sale_projection().await?;
+                        let (history, pg_ids, loaded) = rebuild::load_history_with_ids(
+                            self.recent_sale_history.keys().copied(),
+                            stream,
                         )
                         .await?;
-                        loaded_pg_ids = pg_ids;
-                        info!(
-                            applied_sales = applied,
-                            projection_complete,
-                            restored_snapshot = restored_snapshot_ts.is_some(),
-                            "reconciled analyzer sale history from recent_sale_history"
-                        );
-                    } else {
-                        drop(projection_stream);
-                        let stream = ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32).await?;
-                        let history =
-                            rebuild::load_history(self.recent_sale_history.keys().copied(), stream)
-                                .await?;
                         for (world, history) in history {
                             *self.recent_sale_history[&world].write().await = history;
                         }
+                        loaded_pg_ids = pg_ids;
+                        info!(
+                            loaded_sales = loaded,
+                            restored_snapshot = restored_snapshot_ts.is_some(),
+                            "loaded authoritative analyzer sale history from recent_sale_history"
+                        );
+                    } else if restored_snapshot_ts.is_none() {
+                        // Pre-backfill DB with no restorable snapshot: use
+                        // `last_n_sales_with_ids` so even the legacy scan
+                        // records `pg_id`s for idempotent live-event handoff.
+                        let (_, stream) = ultros_db
+                            .last_n_sales_with_ids(SALE_HISTORY_SIZE as i32)
+                            .await?;
+                        let (history, pg_ids, loaded) = rebuild::load_history_with_ids(
+                            self.recent_sale_history.keys().copied(),
+                            stream,
+                        )
+                        .await?;
+                        for (world, history) in history {
+                            *self.recent_sale_history[&world].write().await = history;
+                        }
+                        loaded_pg_ids = pg_ids;
+                        info!(
+                            loaded_sales = loaded,
+                            "loaded analyzer sale history from legacy sale_history scan"
+                        );
                     }
+                    // When `!projection_complete && restored_snapshot_ts.is_some()`,
+                    // shutdown wrote a full snapshot up to SIGTERM (because
+                    // skipping shutdown snapshots requires `projection_complete`),
+                    // so the restored snapshot is already complete without a
+                    // heuristic merge that could drop distinct purchases.
                     history_ready = true;
                 }
                 // Rebuild on every boot, including when a snapshot restored.
@@ -1413,10 +1409,17 @@ impl AnalyzerService {
         let history_shutdown = history_token.clone();
         let mut boot_dedup = BootSaleDedup::new(loaded_pg_ids, BOOT_SALE_DEDUP_WINDOW);
         let history_worker = tokio::spawn(async move {
+            let dedup_expiry = tokio::time::sleep_until(boot_dedup.expires_at);
+            tokio::pin!(dedup_expiry);
             loop {
                 tokio::select! {
                     _ = history_token.cancelled() => {
                         break;
+                    }
+                    _ = &mut dedup_expiry, if boot_dedup.is_active() => {
+                        // Proactively free startup `pg_id` set even if no
+                        // live sales arrive after the handoff window.
+                        boot_dedup.clear();
                     }
                     history = event_receivers.history.recv() => {
                         match handle_bus_recv("history", history) {
@@ -2787,6 +2790,7 @@ mod test {
             cheapest_resync_in_flight: Arc::new(AtomicBool::new(false)),
             cheapest_rebuild: Arc::default(),
             last_verified_snapshot: Arc::default(),
+            projection_complete: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client,
         }
@@ -3653,6 +3657,7 @@ mod tests {
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
             last_verified_snapshot: Arc::default(),
+            projection_complete: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -3708,6 +3713,7 @@ mod tests {
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
             last_verified_snapshot: Arc::default(),
+            projection_complete: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -3747,6 +3753,7 @@ mod tests {
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
             last_verified_snapshot: Arc::default(),
+            projection_complete: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -3769,6 +3776,7 @@ mod tests {
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
             last_verified_snapshot: Arc::default(),
+            projection_complete: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -3827,6 +3835,7 @@ mod tests {
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
             last_verified_snapshot: Arc::default(),
+            projection_complete: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -4105,6 +4114,7 @@ mod tests {
             cheapest_resync_in_flight: Arc::new(AtomicBool::new(false)),
             cheapest_rebuild: Arc::default(),
             last_verified_snapshot: Arc::default(),
+            projection_complete: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client,
         }
@@ -4300,8 +4310,25 @@ mod tests {
         // Verify the written file is genuinely restorable.
         snapshot::read(&written_path).expect("shutdown snapshot must decode cleanly");
 
-        // Now that this analyzer holds a verified recent snapshot generation,
-        // another shutdown within `SHUTDOWN_SNAPSHOT_MAX_AGE` skips writing.
+        // While `projection_complete` is false, even a verified intact snapshot
+        // must NOT suppress a shutdown write (the pre-backfill path relies on
+        // the shutdown snapshot to avoid a lossy merge).
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let before_incomplete = snapshot_files().len();
+        analyzer
+            .serialize_state_on_shutdown_in(dir.path(), Utc::now() + chrono::Duration::seconds(2))
+            .await;
+        assert_eq!(
+            snapshot_files().len(),
+            before_incomplete + 1,
+            "shutdown must not skip while recent_sale_history projection is incomplete"
+        );
+
+        // Once `projection_complete` is true and this analyzer holds a verified
+        // intact recent snapshot generation, shutdown within
+        // `SHUTDOWN_SNAPSHOT_MAX_AGE` skips writing.
+        analyzer.projection_complete.store(true, Ordering::Release);
+        let written_path = snapshot_files().into_iter().last().unwrap();
         let before_count = snapshot_files().len();
         analyzer
             .serialize_state_on_shutdown_in(dir.path(), Utc::now() + chrono::Duration::seconds(5))
@@ -4345,13 +4372,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restore_from_snapshot_then_reconcile_preserves_multiplicity_late_sales_and_live_dedup()
-    {
+    async fn authoritative_projection_load_preserves_multiplicity_late_sales_and_live_dedup() {
         let dir = tempfile::tempdir().unwrap();
         let source = populated_analyzer(ultros_clickhouse::ClickHouseClient::from_env());
         source.serialize_state_in(dir.path(), false).await.unwrap();
 
-        let make_target = || AnalyzerService {
+        let target = AnalyzerService {
             recent_sale_history: Arc::new(BTreeMap::from([(54, RwLock::default())])),
             cheapest_items: Arc::new(BTreeMap::from([(
                 AnySelector::World(54),
@@ -4361,16 +4387,11 @@ mod tests {
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
             last_verified_snapshot: Arc::default(),
+            projection_complete: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
 
-        // 1. Incomplete projection mode: snapshot provides baseline; reconcile
-        // must preserve exact multiplicity (including a second distinct sale
-        // with identical timestamp & price to an existing snapshot sale),
-        // capture late-arriving sales older than the snapshot, and return
-        // `loaded_pg_ids` for idempotent live-event handoff.
-        let target = make_target();
         let restored_ts = target
             .try_restore_from_snapshot_in(dir.path(), Utc::now() + chrono::Duration::seconds(1))
             .await
@@ -4396,8 +4417,8 @@ mod tests {
 
         let newer_date = existing_sale.sale_date + chrono::Duration::minutes(5);
         let late_arriving_old_date = existing_sale.sale_date - chrono::Duration::hours(4);
-        let projection_rows = [
-            // Overlap with existing snapshot sale (1 copy already in snapshot).
+        let rows = [
+            // Two distinct purchases at the EXACT same second & price.
             Ok::<_, &str>(ultros_db::sales::RecentProjectionSale {
                 pg_id: 101,
                 sold_item_id: 1,
@@ -4406,7 +4427,6 @@ mod tests {
                 sold_date: existing_sale.sale_date,
                 world_id: 54,
             }),
-            // Second distinct purchase at the EXACT same second & price.
             Ok(ultros_db::sales::RecentProjectionSale {
                 pg_id: 102,
                 sold_item_id: 1,
@@ -4424,8 +4444,7 @@ mod tests {
                 sold_date: newer_date,
                 world_id: 54,
             }),
-            // Late-arriving sale whose `sold_date` predates the snapshot by
-            // hours (e.g. catch-up ingest committed after the snapshot).
+            // Late-arriving sale whose `sold_date` predates the snapshot by hours.
             Ok(ultros_db::sales::RecentProjectionSale {
                 pg_id: 104,
                 sold_item_id: 1,
@@ -4435,94 +4454,49 @@ mod tests {
                 world_id: 54,
             }),
         ];
-        let (applied, loaded_pg_ids) = rebuild::reconcile_projection_history(
-            &target.recent_sale_history,
-            false,
-            futures::stream::iter(projection_rows),
-        )
-        .await
-        .unwrap();
-        // 1 overlapping row subtracted once; 3 new rows (2nd same-second copy,
-        // newer sale, and late-arriving old sale) added!
-        assert_eq!(applied, 3);
+        let (history, loaded_pg_ids, loaded) =
+            rebuild::load_history_with_ids([54].into_iter(), futures::stream::iter(rows))
+                .await
+                .unwrap();
+        assert_eq!(loaded, 4);
         assert!(loaded_pg_ids.contains(&101));
         assert!(loaded_pg_ids.contains(&102));
         assert!(loaded_pg_ids.contains(&103));
         assert!(loaded_pg_ids.contains(&104));
 
-        {
-            let guard = target.recent_sale_history[&54].read().await;
-            let sales = &guard.item_map[&ItemKey {
-                item_id: 1,
-                hq: false,
-            }];
-            assert_eq!(sales.len(), 6);
-            assert_eq!(sales[0].price_per_item, 2_500);
-            let same_ts_count = sales
+        let sales = &history[&54].item_map[&ItemKey {
+            item_id: 1,
+            hq: false,
+        }];
+        assert_eq!(sales.len(), 4);
+        assert_eq!(sales[0].price_per_item, 2_500);
+        let same_ts_count = sales
+            .iter()
+            .filter(|s| {
+                s.sale_date == existing_sale.sale_date
+                    && s.price_per_item == existing_sale.price_per_item
+            })
+            .count();
+        assert_eq!(
+            same_ts_count, 2,
+            "both distinct same-second/same-price sales must be preserved"
+        );
+        assert!(
+            sales
                 .iter()
-                .filter(|s| {
-                    s.sale_date == existing_sale.sale_date
-                        && s.price_per_item == existing_sale.price_per_item
-                })
-                .count();
-            assert_eq!(
-                same_ts_count, 2,
-                "both distinct same-second/same-price sales must be preserved"
-            );
-            assert!(
-                sales
-                    .iter()
-                    .any(|s| s.sale_date == late_arriving_old_date && s.price_per_item == 4_200),
-                "late-arriving sale older than snapshot must not be dropped"
-            );
-        }
+                .any(|s| s.sale_date == late_arriving_old_date && s.price_per_item == 4_200),
+            "late-arriving sale older than snapshot must not be dropped"
+        );
 
-        // 2. Complete projection mode: authoritative wholesale replacement
-        // preserves identical-timestamp duplicates cleanly.
-        let complete_target = make_target();
-        let complete_rows = [
-            Ok::<_, &str>(ultros_db::sales::RecentProjectionSale {
-                pg_id: 201,
-                sold_item_id: 1,
-                hq: false,
-                price_per_item: 9_999,
-                sold_date: newer_date,
-                world_id: 54,
-            }),
-            Ok(ultros_db::sales::RecentProjectionSale {
-                pg_id: 202,
-                sold_item_id: 1,
-                hq: false,
-                price_per_item: 9_999,
-                sold_date: newer_date,
-                world_id: 54,
-            }),
-        ];
-        let (applied_complete, _) = rebuild::reconcile_projection_history(
-            &complete_target.recent_sale_history,
-            true,
-            futures::stream::iter(complete_rows),
-        )
-        .await
-        .unwrap();
-        assert_eq!(applied_complete, 2);
-        {
-            let guard = complete_target.recent_sale_history[&54].read().await;
-            let sales = &guard.item_map[&ItemKey {
-                item_id: 1,
-                hq: false,
-            }];
-            assert_eq!(sales.len(), 2);
-            assert!(sales.iter().all(|s| s.price_per_item == 9_999));
-        }
-
-        // 3. Boot-to-live handoff deduplication skips already-loaded `pg_id`s
-        // once, allows fresh live events, and clears after TTL expiry.
+        // Boot-to-live handoff deduplication skips already-loaded `pg_id`s
+        // once, allows fresh live events, and clears proactively on expiry.
         let mut dedup = BootSaleDedup::new(loaded_pg_ids, std::time::Duration::from_secs(60));
         let now = tokio::time::Instant::now();
+        assert!(dedup.is_active());
         assert!(dedup.should_skip(103, now));
         assert!(!dedup.should_skip(999, now));
-        assert!(!dedup.should_skip(102, now + std::time::Duration::from_secs(61)));
-        assert!(dedup.loaded_pg_ids.is_empty());
+        dedup.clear();
+        assert!(!dedup.is_active());
+        assert!(!dedup.should_skip(102, now));
     }
 }

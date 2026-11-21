@@ -62,11 +62,22 @@ pub(crate) struct SwrValue {
     pub disposition: SwrDisposition,
     /// Origin timestamp when this cached generation was stored.
     pub stored_at: Instant,
+    /// Origin deadline after which this generation becomes stale.
+    pub fresh_until: Instant,
     /// Origin deadline after which this generation is no longer servable stale.
     pub stale_until: Instant,
 }
 
-type JobOutput = Result<(Arc<EncodedBody>, bool), Arc<WebError>>;
+#[derive(Clone)]
+struct CompletedJob {
+    body: Arc<EncodedBody>,
+    cacheable: bool,
+    stored_at: Instant,
+    fresh_until: Instant,
+    stale_until: Instant,
+}
+
+type JobOutput = Result<CompletedJob, Arc<WebError>>;
 type Status = watch::Receiver<Option<JobOutput>>;
 
 struct CacheEntry {
@@ -178,6 +189,20 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
         fresh_ttl: Duration,
         stale_ttl: Duration,
     ) {
+        let now = Instant::now();
+        let stale_ttl = stale_ttl.max(fresh_ttl);
+        self.store_at(state, key, body, now, now + fresh_ttl, now + stale_ttl);
+    }
+
+    fn store_at(
+        &self,
+        state: &mut State<K>,
+        key: K,
+        body: Arc<EncodedBody>,
+        stored_at: Instant,
+        fresh_until: Instant,
+        stale_until: Instant,
+    ) {
         if let Some(previous) = state.entries.remove(&key) {
             state.bytes = state.bytes.saturating_sub(previous.charged_bytes);
         }
@@ -190,9 +215,8 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
                 true
             }
         });
-        let stale_ttl = stale_ttl.max(fresh_ttl);
         let initial_bytes = body.raw_len();
-        if self.inner.capacity == 0 || initial_bytes > self.inner.max_bytes || stale_ttl.is_zero() {
+        if self.inner.capacity == 0 || initial_bytes > self.inner.max_bytes || stale_until <= now {
             return;
         }
         while state.entries.len() >= self.inner.capacity
@@ -256,15 +280,20 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
             CacheEntry {
                 body,
                 charged_bytes: initial_bytes,
-                stored_at: now,
-                fresh_until: now + fresh_ttl,
-                stale_until: now + stale_ttl,
+                stored_at,
+                fresh_until,
+                stale_until,
                 refresh_retry_after: None,
             },
         );
     }
 
-    async fn run_loader_guarded<F, Fut>(deadline: Duration, loader: F) -> JobOutput
+    async fn run_loader_guarded<F, Fut>(
+        deadline: Duration,
+        fresh_ttl: Duration,
+        stale_ttl: Duration,
+        loader: F,
+    ) -> JobOutput
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = Result<SwrLoad, WebError>> + Send + 'static,
@@ -273,8 +302,18 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
         let result = AssertUnwindSafe(tokio::time::timeout(deadline, work))
             .catch_unwind()
             .await;
+        let stale_ttl = stale_ttl.max(fresh_ttl);
         match result {
-            Ok(Ok(Ok(loaded))) => Ok((EncodedBody::new(loaded.body), loaded.cacheable)),
+            Ok(Ok(Ok(loaded))) => {
+                let stored_at = Instant::now();
+                Ok(CompletedJob {
+                    body: EncodedBody::new(loaded.body),
+                    cacheable: loaded.cacheable,
+                    stored_at,
+                    fresh_until: stored_at + fresh_ttl,
+                    stale_until: stored_at + stale_ttl,
+                })
+            }
             Ok(Ok(Err(error))) => Err(Arc::new(error)),
             Ok(Err(_)) => {
                 tracing::warn!("cached JSON loader timed out");
@@ -306,10 +345,22 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
         state.jobs.insert(key.clone(), status.clone());
         let cache = self.clone();
         tokio::spawn(async move {
-            let result = Self::run_loader_guarded(cache.inner.deadline, loader).await;
+            let result =
+                Self::run_loader_guarded(cache.inner.deadline, fresh_ttl, stale_ttl, loader).await;
             let mut state = cache.inner.state.lock().unwrap_or_else(|e| e.into_inner());
-            if let Ok((body, true)) = &result {
-                cache.store(&mut state, key.clone(), body.clone(), fresh_ttl, stale_ttl);
+            if let Ok(completed) = &result {
+                if completed.cacheable {
+                    cache.store_at(
+                        &mut state,
+                        key.clone(),
+                        completed.body.clone(),
+                        completed.stored_at,
+                        completed.fresh_until,
+                        completed.stale_until,
+                    );
+                } else if let Some(entry) = state.entries.get_mut(&key) {
+                    entry.refresh_retry_after = Some(Instant::now() + STALE_REFRESH_RETRY_BACKOFF);
+                }
             } else if let Some(entry) = state.entries.get_mut(&key) {
                 entry.refresh_retry_after = Some(Instant::now() + STALE_REFRESH_RETRY_BACKOFF);
             }
@@ -344,12 +395,14 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
                         cacheable: true,
                         disposition: SwrDisposition::Fresh,
                         stored_at: entry.stored_at,
+                        fresh_until: entry.fresh_until,
                         stale_until: entry.stale_until,
                     });
                 }
                 if entry.stale_until > now {
                     let body = entry.body.clone();
                     let stored_at = entry.stored_at;
+                    let fresh_until = entry.fresh_until;
                     let stale_until = entry.stale_until;
                     let retry_allowed = entry.refresh_retry_after.is_none_or(|until| until <= now);
                     if retry_allowed && !state.jobs.contains_key(&key) {
@@ -360,6 +413,7 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
                         cacheable: true,
                         disposition: SwrDisposition::Stale,
                         stored_at,
+                        fresh_until,
                         stale_until,
                     });
                 }
@@ -381,19 +435,30 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
                 // Job table is full on an `overflow_inline` cache: run the
                 // loader directly so cold bursts degrade to uncoalesced loads
                 // rather than 503ing visitors, and store the result if healthy.
-                let result = Self::run_loader_guarded(self.inner.deadline, loader).await;
-                let now = Instant::now();
-                if let Ok((body, true)) = &result {
+                let result =
+                    Self::run_loader_guarded(self.inner.deadline, fresh_ttl, stale_ttl, loader)
+                        .await;
+                if let Ok(completed) = &result
+                    && completed.cacheable
+                {
                     let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
-                    self.store(&mut state, key, body.clone(), fresh_ttl, stale_ttl);
+                    self.store_at(
+                        &mut state,
+                        key,
+                        completed.body.clone(),
+                        completed.stored_at,
+                        completed.fresh_until,
+                        completed.stale_until,
+                    );
                 }
                 return result
-                    .map(|(body, cacheable)| SwrValue {
-                        body,
-                        cacheable,
+                    .map(|completed| SwrValue {
+                        body: completed.body,
+                        cacheable: completed.cacheable,
                         disposition: SwrDisposition::Loaded,
-                        stored_at: now,
-                        stale_until: now + stale_ttl,
+                        stored_at: completed.stored_at,
+                        fresh_until: completed.fresh_until,
+                        stale_until: completed.stale_until,
                     })
                     .map_err(SharedWebError);
             }
@@ -402,14 +467,14 @@ impl<K: Clone + Eq + Hash + Send + Sync + 'static> JsonCache<K> {
         loop {
             let completed = status.borrow_and_update().clone();
             if let Some(result) = completed {
-                let now = Instant::now();
                 return result
-                    .map(|(body, cacheable)| SwrValue {
-                        body,
-                        cacheable,
+                    .map(|completed| SwrValue {
+                        body: completed.body,
+                        cacheable: completed.cacheable,
                         disposition: SwrDisposition::Loaded,
-                        stored_at: now,
-                        stale_until: now + stale_ttl,
+                        stored_at: completed.stored_at,
+                        fresh_until: completed.fresh_until,
+                        stale_until: completed.stale_until,
                     })
                     .map_err(SharedWebError);
             }
