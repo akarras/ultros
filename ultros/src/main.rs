@@ -92,14 +92,15 @@ fn spawn_rollup_scheduler(
     ch: ultros_clickhouse::ClickHouseClient,
     db: UltrosDb,
     token: CancellationToken,
-    writer: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::SaleRow>,
+    sale_outbox: ultros_clickhouse::sale_outbox::SaleOutboxDrainer,
 ) {
     tokio::spawn(async move {
-        // The writer owns migration retries. Rollups must wait for schema
-        // readiness too, without running a competing migration on startup.
+        // The sale outbox drainer owns migration retries. Rollups must wait
+        // for schema readiness too, without running a competing migration on
+        // startup.
         tokio::select! {
             _ = token.cancelled() => return,
-            ready = writer.wait_ready() => {
+            ready = sale_outbox.wait_ready() => {
                 if !ready {
                     return;
                 }
@@ -663,21 +664,23 @@ async fn main() -> Result<()> {
     let listings_sender = senders.listings.clone();
     let history_sender = senders.history.clone();
     let token = CancellationToken::new();
-    // Migration retries in the writers so an outage at startup does not disable
-    // analytics for the lifetime of this process. Keep their cancellation
-    // separate so producers can finish sending before the final flush. Four
-    // writers: sales, listing changes, floor moves, and websocket sale receipts.
-    // Receipts cannot be recovered from Postgres. Each migration is idempotent.
+    // Migration retries in the writers/outbox so an outage at startup does not
+    // disable analytics for the lifetime of this process. Keep their
+    // cancellation separate so producers can finish sending before the final
+    // flush. `sales` drains durably from Postgres `clickhouse_sale_outbox`;
+    // `listing_events`, `floor_changes`, and `sale_receipts` remain in-memory
+    // streams (receipts cannot be recovered from Postgres). Each migration is
+    // idempotent.
     let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
     let listing_snapshot_worker = tokio::spawn(ultros_clickhouse::listing_snapshots::run(
         ch_client.clone(),
         token.clone(),
     ));
-    let ch_writer =
-        ultros_clickhouse::writer::Writer::<ultros_clickhouse::rows::SaleRow>::spawn_recovering(
-            ch_client.clone(),
-            CancellationToken::new(),
-        );
+    let sale_outbox = ultros_clickhouse::sale_outbox::SaleOutboxDrainer::spawn_recovering(
+        ch_client.clone(),
+        db.clone(),
+        CancellationToken::new(),
+    );
     let listing_events_writer = ultros_clickhouse::writer::Writer::<
         ultros_clickhouse::rows::ListingEventRow,
     >::spawn_recovering(ch_client.clone(), CancellationToken::new());
@@ -743,14 +746,13 @@ async fn main() -> Result<()> {
         ch_client.clone(),
         db.clone(),
         token.clone(),
-        ch_writer.clone(),
+        sale_outbox.clone(),
     );
 
     let (analyzer_service, analyzer_shutdown) = AnalyzerService::start_analyzer(
         db.clone(),
         receivers.clone(),
         world_cache.clone(),
-        ch_writer.clone(),
         floor_writer.clone(),
         ch_client.clone(),
         token.clone(),
@@ -941,7 +943,6 @@ async fn main() -> Result<()> {
             // spent two drain budgets back to back against the one 30 second
             // budget below (GlitchTip #7310).
             tokio::join!(
-                stages.run("clickhouse_sales", ch_writer.shutdown()),
                 stages.run("clickhouse_sale_receipts", sale_receipts.shutdown()),
                 stages.run("clickhouse_floor", floor_writer.shutdown())
             );
@@ -960,14 +961,18 @@ async fn main() -> Result<()> {
             }
         };
         tokio::join!(drain_analytics, drain_web, drain_snapshots);
-        // Every listing_events producer (socket task, update service, web) has
-        // been cancelled or drained by now.
-        stages
-            .run(
+        // Every listing_events and sale producer (socket task, update service,
+        // web) has been cancelled or drained by now. Run the durable
+        // sale_outbox shutdown concurrently with listing_events (and under its
+        // own 8s ceiling) so Postgres latency can never starve the non-durable
+        // listing_events flush.
+        tokio::join!(
+            stages.run(
                 "clickhouse_listing_events",
                 listing_events_writer.shutdown(),
-            )
-            .await;
+            ),
+            stages.run("clickhouse_sale_outbox", sale_outbox.shutdown()),
+        );
     };
     if tokio::time::timeout(std::time::Duration::from_secs(30), shutdown)
         .await

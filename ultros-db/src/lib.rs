@@ -1,5 +1,6 @@
 mod account;
 mod alerts;
+pub mod clickhouse_outbox;
 pub mod common;
 pub mod common_type_conversions;
 mod discord;
