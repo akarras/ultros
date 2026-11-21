@@ -5,6 +5,8 @@ use crate::{
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::header,
+    response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -98,7 +100,7 @@ pub(crate) async fn get_best_deals(
     State(world_cache): State<Arc<WorldCache>>,
     Path(world_name): Path<String>,
     Query(query): Query<BestDealsQuery>,
-) -> Result<Json<Vec<ResaleStatsDto>>, WebError> {
+) -> Result<impl IntoResponse, WebError> {
     let world = world_cache.lookup_value_by_name(&world_name)?;
     let world_id = world.as_world()?.id;
     let region = world_cache
@@ -128,14 +130,25 @@ pub(crate) async fn get_best_deals(
         .get_best_resale(world_id, region.id, options, &world_cache)
         .await;
 
-    let dtos = stats
+    let cache_control = if stats.is_some() {
+        super::public_cache_control(30, 120, super::PUBLIC_STALE_IF_ERROR_SECS)
+    } else {
+        // Analyzer is still warming up; do not cache an empty fallback at the CDN.
+        axum::http::HeaderValue::from_static("no-store")
+    };
+
+    let dtos: Vec<ResaleStatsDto> = stats
         .unwrap_or_default()
         .into_iter()
         .take(limit)
         .map(ResaleStatsDto::from)
         .collect();
 
-    Ok(Json(dtos))
+    let mut response = Json(dtos).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, cache_control);
+    Ok(response)
 }
 
 #[cfg(test)]

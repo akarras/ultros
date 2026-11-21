@@ -3,6 +3,8 @@ use std::sync::Arc;
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::header,
+    response::IntoResponse,
 };
 use serde::Deserialize;
 use tracing::instrument;
@@ -30,7 +32,7 @@ pub async fn get_trends(
     State(world_cache): State<Arc<WorldCache>>,
     Path(world_name): Path<String>,
     Query(query): Query<TrendsQuery>,
-) -> Result<Json<TrendsData>, WebError> {
+) -> Result<impl IntoResponse, WebError> {
     let selector = world_cache
         .lookup_value_by_name(&world_name)
         .map_err(|_| WebError::NotFound)?;
@@ -53,33 +55,52 @@ pub async fn get_trends(
     // V2 path: ?window= supplied → return a flat sorted list under
     // `items`. Clamp the window to the values the rollup actually
     // produces (7/30/90); anything else falls back to 30.
-    if let Some(raw_window) = query.window {
+    let (trends, initialized) = if let Some(raw_window) = query.window {
         let window_days = match raw_window {
             7 | 30 | 90 => raw_window,
             _ => 30,
         };
         let include_suspicious = query.show_suspicious.unwrap_or(false);
-        let items = analyzer
+        let maybe_items = analyzer
             .get_trends_v2(world_id, window_days, include_suspicious)
-            .await
-            .unwrap_or_default();
-        return Ok(Json(TrendsData {
-            items,
-            high_velocity: vec![],
-            rising_price: vec![],
-            falling_price: vec![],
-        }));
-    }
+            .await;
+        let initialized = maybe_items.is_some();
+        (
+            TrendsData {
+                items: maybe_items.unwrap_or_default(),
+                high_velocity: vec![],
+                rising_price: vec![],
+                falling_price: vec![],
+            },
+            initialized,
+        )
+    } else {
+        // Legacy v1 path — pre-bucketed lists, kept for any older client.
+        let maybe_trends = analyzer.get_trends(world_id).await;
+        let initialized = maybe_trends.is_some();
+        (
+            maybe_trends.unwrap_or(TrendsData {
+                items: vec![],
+                high_velocity: vec![],
+                rising_price: vec![],
+                falling_price: vec![],
+            }),
+            initialized,
+        )
+    };
 
-    // Legacy v1 path — pre-bucketed lists, kept for any older client.
-    let trends = analyzer.get_trends(world_id).await.unwrap_or(TrendsData {
-        items: vec![],
-        high_velocity: vec![],
-        rising_price: vec![],
-        falling_price: vec![],
-    });
+    let cache_control = if initialized {
+        super::public_cache_control(60, 300, super::PUBLIC_STALE_IF_ERROR_SECS)
+    } else {
+        // Analyzer is still warming up; do not cache an empty fallback at the CDN.
+        axum::http::HeaderValue::from_static("no-store")
+    };
 
-    Ok(Json(trends))
+    let mut response = Json(trends).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, cache_control);
+    Ok(response)
 }
 
 #[cfg(test)]

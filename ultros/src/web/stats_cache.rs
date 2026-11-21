@@ -70,7 +70,7 @@ pub(crate) fn cached_response(body: Bytes, disposition: &'static str) -> axum::r
             ),
             (
                 axum::http::header::CACHE_CONTROL,
-                "public, max-age=300, s-maxage=300, stale-while-revalidate=1800".to_string(),
+                "public, max-age=300, stale-while-revalidate=1800, stale-if-error=600".to_string(),
             ),
             (
                 axum::http::header::HeaderName::from_static("x-ultros-cache"),

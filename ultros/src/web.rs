@@ -293,7 +293,7 @@ async fn world_item_listings(
     State(db): State<UltrosDb>,
     State(world_cache): State<Arc<WorldCache>>,
     Path((world, item_id)): Path<(String, i32)>,
-) -> Result<axum::Json<CurrentlyShownItem>, WebError> {
+) -> Result<axum::response::Response, WebError> {
     let selected_value = world_cache.lookup_value_by_name(&world)?;
     let worlds = world_cache
         .get_all_worlds_in(&selected_value)
@@ -322,7 +322,12 @@ async fn world_item_listings(
             })
             .collect(),
     };
-    Ok(axum::Json(currently_shown))
+    let mut response = axum::Json(currently_shown).into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        api::public_cache_control(5, 30, api::PUBLIC_STALE_IF_ERROR_SECS),
+    );
+    Ok(response)
 }
 
 /// Compact extended sale history for charting. Returns up to `limit` rows (default
@@ -1115,15 +1120,37 @@ fn cached_json(
     ttl: std::time::Duration,
 ) -> axum::response::Response {
     let body = body.into();
+    let secs = ttl.as_secs();
+    let swr = secs.saturating_mul(4).clamp(60, 1_800);
     (
         [
             (
                 axum::http::header::CONTENT_TYPE,
-                "application/json".to_string(),
+                HeaderValue::from_static("application/json"),
             ),
             (
                 axum::http::header::CACHE_CONTROL,
-                format!("public, max-age={}", ttl.as_secs()),
+                api::public_cache_control(secs, swr, api::PUBLIC_STALE_IF_ERROR_SECS),
+            ),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+/// JSON response for degraded `200 OK` fallbacks (e.g. ClickHouse soft-fail)
+/// that must never be stored in a browser or CDN cache.
+fn uncached_json(body: impl Into<axum::body::Bytes>) -> axum::response::Response {
+    let body = body.into();
+    (
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            ),
+            (
+                axum::http::header::CACHE_CONTROL,
+                HeaderValue::from_static("no-store"),
             ),
         ],
         body,
@@ -4455,6 +4482,77 @@ mod pressure_route_tests {
         assert!(year / bucket <= 2000, "{bucket}");
         // 1 h → 8760 buckets (too many); 6 h → 1460 fits.
         assert_eq!(bucket, 6 * 3600);
+    }
+}
+
+#[cfg(test)]
+mod cache_header_tests {
+    use super::{cached_json, uncached_json};
+    use crate::web::error::WebError;
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode, header},
+        routing::get,
+    };
+    use std::time::Duration;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn router_emits_public_cdn_headers_for_healthy_and_no_store_for_degraded_or_errors() {
+        let app = Router::new()
+            .route(
+                "/healthy",
+                get(|| async { cached_json("{}", Duration::from_secs(30)) }),
+            )
+            .route("/degraded", get(|| async { uncached_json("{}") }))
+            .route(
+                "/missing",
+                get(|| async { Err::<&'static str, WebError>(WebError::NotFound) }),
+            );
+
+        let healthy = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/healthy")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(healthy.status(), StatusCode::OK);
+        let healthy_cc = healthy.headers()[header::CACHE_CONTROL].to_str().unwrap();
+        assert_eq!(
+            healthy_cc,
+            "public, max-age=30, stale-while-revalidate=120, stale-if-error=600"
+        );
+        assert!(!healthy_cc.contains("s-maxage"));
+
+        let degraded = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/degraded")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(degraded.status(), StatusCode::OK);
+        assert_eq!(degraded.headers()[header::CACHE_CONTROL], "no-store");
+
+        let missing = app
+            .oneshot(
+                Request::builder()
+                    .uri("/missing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(missing.headers()[header::CACHE_CONTROL], "no-store");
     }
 }
 

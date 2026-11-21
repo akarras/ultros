@@ -50,16 +50,14 @@ pub(crate) async fn get_market_pulse(
         .count(db.get_connection());
 
     let (pulse, active_listings) = tokio::join!(ch_future, pg_future);
+    let pg_failed = active_listings.is_err();
     let active_listings = active_listings.unwrap_or(0);
 
-    // ClickHouse soft-fail: when the rollup query errors (CH down,
-    // `ILLEGAL_AGGREGATION` on the world_kpi_5min CTE, etc.) we still
-    // want to render the strip with the PG-backed `active_listings`
-    // card and zeros for the time-series cards rather than 500ing the
-    // whole home page. The frontend's normal zero-state rendering
-    // already reads as a "quiet world" — delta chips fall back to "—"
-    // when yesterday is zero. Log so the issue is still visible.
-    let soft_failed = pulse.is_err();
+    // ClickHouse/Postgres soft-fail: when either query errors we still
+    // render the strip with whatever succeeded and zeros for the rest rather
+    // than 500ing the whole home page. Degraded responses must NEVER be cached
+    // locally or at Cloudflare (`no-store`), so the strip recovers immediately.
+    let soft_failed = pulse.is_err() || pg_failed;
     let dto = match pulse {
         Ok(p) => MarketPulseDto {
             world_id: p.world_id,
@@ -88,11 +86,11 @@ pub(crate) async fn get_market_pulse(
 
     // 30s TTL: the 5-min refresh interval on the rollup is the lower bound
     // on how often the underlying data changes, so 30s still feels live. A
-    // soft-failed placeholder is not cached, so the strip recovers as soon
-    // as ClickHouse does.
+    // soft-failed placeholder is neither cached locally nor at the CDN.
     let body = serde_json::to_string(&dto).map_err(anyhow::Error::from)?;
-    if !soft_failed {
-        cache.insert(cache_key, body.clone(), ttl);
+    if soft_failed {
+        return Ok(crate::web::uncached_json(body));
     }
+    cache.insert(cache_key, body.clone(), ttl);
     Ok(cached_json(body, ttl))
 }
