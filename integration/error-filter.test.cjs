@@ -1014,6 +1014,41 @@ const cases = [
     },
     expectDrop: true,
   },
+  // Category 12: an AbortError rejection nobody listened for. Firefox's
+  // no-reason abort message, ~15 ms after a side-nav click. GlitchTip #8170,
+  // #8171.
+  {
+    name: "Frameless unhandled-rejection AbortError (Firefox, aborted on navigation) is dropped",
+    ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:160.0) Gecko/20100101 Firefox/160.0",
+    event: {
+      exception: {
+        values: [
+          {
+            type: "AbortError",
+            value: "The operation was aborted. ",
+            mechanism: { type: "auto.browser.global_handlers.onunhandledrejection", handled: false },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "Frameless unhandled-rejection AbortError (Chrome no-reason abort) is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "AbortError",
+            value: "signal is aborted without reason",
+            mechanism: { type: "auto.browser.global_handlers.onunhandledrejection", handled: false },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
   // Category 11: a scraper served an emptied module body. The hydration
   // bootstrap's `mod.default(...)` then finds no default export. The only
   // frame is the inline bootstrap on the page itself. GlitchTip #8166-#8169.
@@ -1141,6 +1176,62 @@ const cases = [
               type: "auto.browser.global_handlers.onunhandledrejection",
               handled: false,
             },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  {
+    name: "AbortError rejection with an Ultros stack frame is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "AbortError",
+            value: "signal is aborted without reason",
+            mechanism: { type: "auto.browser.global_handlers.onunhandledrejection", handled: false },
+            stacktrace: {
+              frames: [
+                {
+                  filename: "https://www.ultros.app/pkg/abc1234/ultros.js",
+                  function: "eF",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  {
+    name: "Frameless AbortError reported via onerror (not a rejection) is preserved",
+    ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:160.0) Gecko/20100101 Firefox/160.0",
+    event: {
+      exception: {
+        values: [
+          {
+            type: "AbortError",
+            value: "The operation was aborted. ",
+            mechanism: { type: "auto.browser.global_handlers.onerror", handled: false },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  {
+    name: "Frameless unhandled-rejection DOMException of another type is preserved",
+    ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:160.0) Gecko/20100101 Firefox/160.0",
+    event: {
+      exception: {
+        values: [
+          {
+            type: "NotAllowedError",
+            value: "The request is not allowed by the user agent or the platform in the current context.",
+            mechanism: { type: "auto.browser.global_handlers.onunhandledrejection", handled: false },
           },
         ],
       },
