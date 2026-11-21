@@ -10546,11 +10546,13 @@ dependencies = [
  "axum-extra",
  "axum-macros",
  "base64 0.23.1",
+ "brotli",
  "chrono",
  "clickhouse",
  "cookie",
  "dotenvy",
  "envy",
+ "flate2",
  "futures",
  "getrandom 0.4.3",
  "http-body",
@@ -10620,6 +10622,7 @@ dependencies = [
  "uuid",
  "xiv-gen",
  "xiv-gen-db",
+ "zstd",
 ]
 
 [[package]]

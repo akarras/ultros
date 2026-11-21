@@ -909,6 +909,7 @@ async fn main() -> Result<()> {
         home_feed_cache: Default::default(),
         sale_stats_cache: Default::default(),
         listing_stats_cache: Default::default(),
+        cheapest_cache: crate::web::api::new_cheapest_cache(),
         refresh_jobs: Default::default(),
         list_sync,
     };

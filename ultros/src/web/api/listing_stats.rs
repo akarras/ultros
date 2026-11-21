@@ -25,6 +25,7 @@ use std::sync::Arc;
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::IntoResponse,
 };
 use ultros_api_types::listing_stats::{
@@ -53,6 +54,7 @@ pub(crate) async fn get_listing_stats(
     State(ch): State<ClickHouseClient>,
     State(world_cache): State<Arc<WorldCache>>,
     State(cache): State<ListingStatsCache>,
+    headers: HeaderMap,
     Path(world): Path<String>,
     Query(query): Query<ListingStatsQuery>,
 ) -> Result<impl IntoResponse, WebError> {
@@ -86,7 +88,7 @@ pub(crate) async fn get_listing_stats(
         "disposition" => disposition
     )
     .increment(1);
-    Ok(cached_response(cached.body, disposition))
+    Ok(cached_response(&cached.body, &headers, disposition).await)
 }
 
 async fn load_listing_stats(

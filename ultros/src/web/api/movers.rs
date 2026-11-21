@@ -7,7 +7,9 @@ use std::time::Duration;
 
 use axum::{
     Json,
+    body::Bytes,
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::IntoResponse,
 };
 use axum_extra::headers::{CacheControl, HeaderMapExt};
@@ -23,7 +25,12 @@ use ultros_clickhouse::{
     queries::{MoverDirection, MoverScope},
 };
 
-use crate::web::{cached_json, error::WebError, home_feed_cache::HomeFeedCache};
+use crate::web::{
+    cached_encoded_json,
+    error::{SharedWebError, WebError},
+    home_feed_cache::HomeFeedCache,
+    json_cache::SwrLoad,
+};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct MoversQuery {
@@ -37,9 +44,10 @@ pub(crate) async fn get_movers(
     State(ch): State<ClickHouseClient>,
     State(world_helper): State<Arc<WorldHelper>>,
     State(cache): State<HomeFeedCache>,
+    headers: HeaderMap,
     Path(world_name): Path<String>,
     Query(q): Query<MoversQuery>,
-) -> Result<impl IntoResponse, WebError> {
+) -> Result<impl IntoResponse, SharedWebError> {
     let scope = world_helper
         .lookup_world_by_name(&world_name)
         .ok_or(WebError::NotFound)?;
@@ -68,85 +76,99 @@ pub(crate) async fn get_movers(
         "falling" => MoverDirection::Falling,
         "volume" => MoverDirection::Volume,
         "gil" => MoverDirection::Gil,
-        _ => return Err(WebError::BadRequest),
+        _ => return Err(WebError::BadRequest.into()),
     };
     let limit = q.limit.unwrap_or(10).clamp(1, 50);
 
-    // Sales_hourly refreshes every 15 min; 60s stays ahead of the data
-    // without paying ClickHouse on every page load.
+    // Sales_hourly refreshes every 15 min; 60s fresh / 300s stale stays ahead
+    // of the data without paying ClickHouse on every page load or stalling on
+    // TTL boundaries.
     let ttl = Duration::from_secs(60);
+    let stale_ttl = Duration::from_secs(300);
     let cache_key = format!("movers:{}:{direction_str}:{limit}", scope.get_name());
-    if let Some(body) = cache.get(&cache_key) {
-        return Ok(cached_json(body, ttl));
-    }
 
-    let rows = ultros_clickhouse::queries::top_movers(
-        &ch,
-        scope_id,
-        &world_ids,
-        mover_scope,
-        direction,
-        limit,
-    )
-    .await
-    .map_err(|e| {
-        tracing::warn!(error = ?e, scope_id, "top_movers CH query failed");
-        crate::web::error::ClickHouseQueryError::new("top_movers", e)
-    })?;
-
-    // For each mover, fetch the 24h sparkline — folded over the same worlds
-    // as the ranking — so the response is one round trip from the
-    // frontend's perspective. If the sparkline query fails, degrade to
-    // zero-filled sparklines but never cache the degraded body locally or
-    // at the CDN.
-    let spark_req: Vec<(i32, u8)> = rows.iter().map(|m| (m.item_id, m.hq)).collect();
-    let (sparkline_rows, sparklines_degraded) = match ultros_clickhouse::queries::sparklines_folded(
-        &ch, scope_id, &world_ids, &spark_req, 24,
-    )
-    .await
-    {
-        Ok(rows) => (rows, false),
-        Err(e) => {
-            tracing::warn!(
-                error = ?e,
+    let loaded = cache
+        .get_or_load_swr(cache_key, ttl, stale_ttl, move || async move {
+            let rows = ultros_clickhouse::queries::top_movers(
+                &ch,
                 scope_id,
-                "sparklines_folded CH query failed, returning zero-filled sparklines without caching"
-            );
-            (Vec::new(), true)
-        }
-    };
-    let mut spark_by_key: std::collections::HashMap<(i32, u8), Vec<u32>> = sparkline_rows
-        .into_iter()
-        .map(|s| ((s.item_id, s.hq), s.points))
-        .collect();
+                &world_ids,
+                mover_scope,
+                direction,
+                limit,
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = ?e, scope_id, "top_movers CH query failed");
+                crate::web::error::ClickHouseQueryError::new("top_movers", e)
+            })?;
 
-    let items: Vec<MoverItem> = rows
-        .into_iter()
-        .map(|r| MoverItem {
-            item_id: r.item_id,
-            hq: r.hq != 0,
-            world_id: r.world_id,
-            price_now: r.price_now,
-            pct_change_24h: r.pct_change_24h,
-            volume_24h: r.volume_24h,
-            gil_volume_24h: r.gil_volume_24h,
-            sparkline: spark_by_key
-                .remove(&(r.item_id, r.hq))
-                .unwrap_or_else(|| vec![0; 24]),
+            // For each mover, fetch the 24h sparkline — folded over the same worlds
+            // as the ranking — so the response is one round trip from the
+            // frontend's perspective. If the sparkline query fails, degrade to
+            // zero-filled sparklines but never cache the degraded body locally or
+            // at the CDN.
+            let spark_req: Vec<(i32, u8)> = rows.iter().map(|m| (m.item_id, m.hq)).collect();
+            let (sparkline_rows, sparklines_degraded) =
+                match ultros_clickhouse::queries::sparklines_folded(
+                    &ch, scope_id, &world_ids, &spark_req, 24,
+                )
+                .await
+                {
+                    Ok(rows) => (rows, false),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = ?e,
+                            scope_id,
+                            "sparklines_folded CH query failed, returning zero-filled sparklines without caching"
+                        );
+                        (Vec::new(), true)
+                    }
+                };
+            let mut spark_by_key: std::collections::HashMap<(i32, u8), Vec<u32>> = sparkline_rows
+                .into_iter()
+                .map(|s| ((s.item_id, s.hq), s.points))
+                .collect();
+
+            let items: Vec<MoverItem> = rows
+                .into_iter()
+                .map(|r| MoverItem {
+                    item_id: r.item_id,
+                    hq: r.hq != 0,
+                    world_id: r.world_id,
+                    price_now: r.price_now,
+                    pct_change_24h: r.pct_change_24h,
+                    volume_24h: r.volume_24h,
+                    gil_volume_24h: r.gil_volume_24h,
+                    sparkline: spark_by_key
+                        .remove(&(r.item_id, r.hq))
+                        .unwrap_or_else(|| vec![0; 24]),
+                })
+                .collect();
+
+            let body = serde_json::to_vec(&MoversResponse {
+                world_id: scope_id,
+                direction: direction_str,
+                items,
+            })
+            .map_err(anyhow::Error::from)?;
+            Ok(SwrLoad {
+                body: Bytes::from(body),
+                cacheable: !sparklines_degraded,
+            })
         })
-        .collect();
+        .await?;
 
-    let body = serde_json::to_string(&MoversResponse {
-        world_id: scope_id,
-        direction: direction_str,
-        items,
-    })
-    .map_err(anyhow::Error::from)?;
-    if sparklines_degraded {
-        return Ok(crate::web::uncached_json(body));
+    metrics::counter!(
+        "ultros_home_feed_cache_total",
+        "feed" => "movers",
+        "disposition" => loaded.disposition.as_str()
+    )
+    .increment(1);
+    if !loaded.cacheable {
+        return Ok(crate::web::uncached_json(loaded.body.raw().clone()));
     }
-    cache.insert(cache_key, body.clone(), ttl);
-    Ok(cached_json(body, ttl))
+    Ok(cached_encoded_json(&loaded.body, &headers, ttl).await)
 }
 
 /// POST /api/v1/sparklines/{world} — bulk sparkline fetch by item id list.
@@ -335,6 +357,7 @@ mod tests {
             State(ch),
             State(test_world_helper()),
             State(cache.clone()),
+            axum::http::HeaderMap::new(),
             Path("Sargatanas".into()),
             Query(MoversQuery {
                 direction: None,
@@ -373,6 +396,7 @@ mod tests {
             State(ch),
             State(test_world_helper()),
             State(cache.clone()),
+            axum::http::HeaderMap::new(),
             Path("Sargatanas".into()),
             Query(MoversQuery {
                 direction: None,

@@ -19,12 +19,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-use axum::{body::Bytes, response::IntoResponse};
+use axum::{
+    body::Bytes,
+    http::{HeaderMap, HeaderName, HeaderValue},
+};
 use futures::FutureExt;
 use tokio::sync::{Mutex as AsyncMutex, Notify, Semaphore};
 use ultros_db::world_data::world_cache::AnySelector;
 
-use super::error::{ClickHouseQueryError, WebError};
+use super::{
+    encoded_body::EncodedBody,
+    error::{ClickHouseQueryError, WebError},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CacheKey {
@@ -54,37 +60,35 @@ impl CacheDisposition {
 }
 
 pub(crate) struct CacheValue {
-    pub body: Bytes,
+    pub body: Arc<EncodedBody>,
     pub disposition: CacheDisposition,
 }
 
-/// The response every cached bulk-stat endpoint returns: JSON, shared-cacheable
-/// for as long as a value is fresh here, `stale-while-revalidate` matching the
-/// stale window, and the disposition exposed for debugging.
-pub(crate) fn cached_response(body: Bytes, disposition: &'static str) -> axum::response::Response {
-    (
-        [
-            (
-                axum::http::header::CONTENT_TYPE,
-                "application/json".to_string(),
-            ),
-            (
-                axum::http::header::CACHE_CONTROL,
-                "public, max-age=300, stale-while-revalidate=1800, stale-if-error=600".to_string(),
-            ),
-            (
-                axum::http::header::HeaderName::from_static("x-ultros-cache"),
-                disposition.to_string(),
-            ),
-        ],
-        body,
+/// The response every cached bulk-stat endpoint returns: pre-compressed JSON
+/// negotiated from `headers`, shared-cacheable for as long as a value is fresh
+/// here, `stale-while-revalidate` matching the stale window, and the
+/// disposition exposed for debugging.
+pub(crate) async fn cached_response(
+    body: &Arc<EncodedBody>,
+    headers: &HeaderMap,
+    disposition: &'static str,
+) -> axum::response::Response {
+    body.into_json_response(
+        headers,
+        HeaderValue::from_static(
+            "public, max-age=300, stale-while-revalidate=1800, stale-if-error=600",
+        ),
+        &[(
+            HeaderName::from_static("x-ultros-cache"),
+            HeaderValue::from_static(disposition),
+        )],
     )
-        .into_response()
+    .await
 }
 
 #[derive(Default)]
 struct SlotState {
-    body: Option<Bytes>,
+    body: Option<Arc<EncodedBody>>,
     fresh_until: Option<Instant>,
     stale_until: Option<Instant>,
     failed_until: Option<Instant>,
@@ -340,7 +344,7 @@ impl<K: CacheKind> StatsCache<K> {
         &self,
         slot: Arc<Slot>,
         loader: F,
-    ) -> tokio::task::JoinHandle<Result<Bytes, WebError>>
+    ) -> tokio::task::JoinHandle<Result<Arc<EncodedBody>, WebError>>
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = Result<Bytes, WebError>> + Send + 'static,
@@ -355,7 +359,8 @@ impl<K: CacheKind> StatsCache<K> {
                 .unwrap_or_else(|_| {
                     tracing::error!(cache = K::LABEL, "stats loader panicked");
                     Err(WebError::TemporarilyUnavailable)
-                });
+                })
+                .map(EncodedBody::new);
             if let Err(error) = &result {
                 tracing::warn!(?error, cache = K::LABEL, "stats refresh failed");
             }
@@ -388,11 +393,11 @@ impl<K: CacheKind> StatsCache<K> {
         }
     }
 
-    async fn finish_refresh(&self, slot: &Arc<Slot>, body: Option<&Bytes>) {
+    async fn finish_refresh(&self, slot: &Arc<Slot>, body: Option<&Arc<EncodedBody>>) {
         let mut state = slot.state.lock().await;
         state.refreshing = false;
         if let Some(body) = body
-            && body.len() <= self.inner.max_bytes
+            && body.raw_len() <= self.inner.max_bytes
             && slot.cached.load(Ordering::Acquire)
         {
             let now = Instant::now();
@@ -400,13 +405,14 @@ impl<K: CacheKind> StatsCache<K> {
             state.fresh_until = Some(now + self.inner.fresh_ttl);
             state.stale_until = Some(now + self.inner.stale_ttl);
             state.failed_until = None;
-            let old_len = slot.body_bytes.swap(body.len(), Ordering::AcqRel);
-            if body.len() >= old_len {
+            let len = body.raw_len();
+            let old_len = slot.body_bytes.swap(len, Ordering::AcqRel);
+            if len >= old_len {
                 self.inner
                     .retained_bytes
-                    .fetch_add(body.len() - old_len, Ordering::AcqRel);
+                    .fetch_add(len - old_len, Ordering::AcqRel);
             } else {
-                self.subtract_retained(old_len - body.len());
+                self.subtract_retained(old_len - len);
             }
         } else {
             state.failed_until = Some(Instant::now() + Duration::from_secs(2));
@@ -461,7 +467,7 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(value.disposition, expected);
-            assert_eq!(value.body, "body");
+            assert_eq!(value.body.raw(), "body");
         }
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
@@ -487,6 +493,8 @@ mod tests {
                 .await
                 .unwrap()
                 .body
+                .raw()
+                .clone()
         };
         let (a, b) = tokio::join!(
             load(cache.clone(), calls.clone()),
@@ -525,7 +533,7 @@ mod tests {
         .await
         .expect("a cancelled caller must not strand its followers")
         .unwrap();
-        assert_eq!(value.body, "shared body");
+        assert_eq!(value.body.raw(), "shared body");
         assert_eq!(value.disposition, CacheDisposition::Fresh);
     }
 
@@ -547,7 +555,7 @@ mod tests {
             .get_or_load(key(1), || async { Ok(Bytes::from_static(b"retry")) })
             .await
             .unwrap();
-        assert_eq!(value.body, "retry");
+        assert_eq!(value.body.raw(), "retry");
         assert_eq!(value.disposition, CacheDisposition::Loaded);
     }
 
@@ -570,7 +578,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(value.disposition, CacheDisposition::Stale);
-        assert_eq!(value.body, "body");
+        assert_eq!(value.body.raw(), "body");
     }
 
     #[tokio::test]
@@ -648,12 +656,12 @@ mod tests {
                     .get_or_load(key, || async { panic!("wrong cache slot") })
                     .await
                     .unwrap();
-                assert_eq!(hit.body, expected);
+                assert_eq!(hit.body.raw(), &expected);
                 let sale = sales
                     .get_or_load(key, || async { Ok(Bytes::from_static(b"sale")) })
                     .await
                     .unwrap();
-                assert_eq!(sale.body, Bytes::from_static(b"sale"));
+                assert_eq!(sale.body.raw(), &Bytes::from_static(b"sale"));
             }
         }
     }
@@ -686,6 +694,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(value.disposition, CacheDisposition::Loaded);
-        assert_eq!(&value.body[..], b"columnar");
+        assert_eq!(&value.body.raw()[..], b"columnar");
     }
 }

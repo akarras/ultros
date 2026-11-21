@@ -559,6 +559,36 @@ pub async fn market_pulse(
     Ok(row)
 }
 
+#[derive(Debug, Clone, Row, Deserialize)]
+struct ActiveListingCountRow {
+    total: u64,
+}
+
+/// Total alive listings across `world_ids` from the scheduled `listing_alive`
+/// rollup (`ReplacingMergeTree(computed_at)` keyed starting with `world_id`).
+///
+/// Replaces `market_pulse`'s live Postgres `COUNT(*)` over `active_listing`
+/// (which scanned millions of churning rows and drove a ~9.75s p95 tail).
+pub async fn active_listing_count(
+    ch: &ClickHouseClient,
+    world_ids: &[i32],
+) -> Result<u64, ClickHouseError> {
+    if world_ids.is_empty() {
+        return Ok(0);
+    }
+    let worlds = id_list(world_ids);
+    let row = ch
+        .client()
+        .query(&format!(
+            "SELECT toUInt64(sum(alive_count)) AS total
+             FROM listing_alive FINAL
+             WHERE world_id IN ({worlds})"
+        ))
+        .fetch_one::<ActiveListingCountRow>()
+        .await?;
+    Ok(row.total)
+}
+
 /// One row of deep-scan data for a single (item_id, hq, world_id) tuple at
 /// a given window. Maps the analyzer's enrichment fields directly to the
 /// rollup table columns.

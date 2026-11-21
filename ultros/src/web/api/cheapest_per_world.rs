@@ -1,10 +1,10 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
-    Json,
+    body::Bytes,
     extract::{Path, Query, State},
-    http::header,
-    response::{IntoResponse, Response},
+    http::HeaderMap,
+    response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 use ultros_api_types::cheapest_listings::CheapestListingsColumnar;
@@ -12,8 +12,19 @@ use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
 use crate::{
     analyzer_service::{AnalyzerService, CheapestListings},
-    web::error::WebError,
+    web::{
+        error::{SharedWebError, WebError},
+        json_cache::{JsonCache, SwrLoad},
+    },
 };
+
+/// Short-TTL pre-compressed SWR cache for `/api/v1/cheapest/{world}` bulk
+/// market payloads, keyed by `(selector, is_columnar)`.
+pub(crate) type CheapestCache = JsonCache<(AnySelector, bool)>;
+
+pub(crate) fn new_cheapest_cache() -> CheapestCache {
+    JsonCache::with_budget(256, 64 * 1024 * 1024, 8)
+}
 
 #[derive(Serialize, Debug)]
 struct CheapestListingData {
@@ -81,27 +92,58 @@ fn rows_from_map(listings: &CheapestListings) -> CheapestPerWorld {
 pub(crate) async fn cheapest_per_world(
     State(analyzer): State<AnalyzerService>,
     State(world_cache): State<Arc<WorldCache>>,
+    State(cache): State<CheapestCache>,
+    headers: HeaderMap,
     Path(world): Path<String>,
     Query(format): Query<CheapestFormat>,
-) -> Result<impl IntoResponse, WebError> {
-    let value = world_cache.lookup_value_by_name(&world)?;
+) -> Result<impl IntoResponse, SharedWebError> {
+    let value = world_cache
+        .lookup_value_by_name(&world)
+        .map_err(WebError::from)?;
     let selector = AnySelector::from(&value);
-    let mut response: Response = if format.is_columnar() {
-        let columnar = analyzer
-            .read_cheapest_items(&selector, columnar_from_map)
-            .await?;
-        Json(columnar).into_response()
-    } else {
-        let rows = analyzer
-            .read_cheapest_items(&selector, rows_from_map)
-            .await?;
-        Json(rows).into_response()
-    };
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        super::public_cache_control(15, 60, super::PUBLIC_STALE_IF_ERROR_SECS),
-    );
-    Ok(response)
+    let columnar = format.is_columnar();
+
+    // 5s fresh / 15s stale SWR window: absorbs bursty traffic for ~1.5 MB
+    // region payloads without repeating `serde_json` or compression per
+    // request while staying fresher than the 15s public `max-age`.
+    let cached = cache
+        .get_or_load_swr(
+            (selector, columnar),
+            Duration::from_secs(5),
+            Duration::from_secs(15),
+            move || async move {
+                let bytes = if columnar {
+                    let payload = analyzer
+                        .read_cheapest_items(&selector, columnar_from_map)
+                        .await?;
+                    serde_json::to_vec(&payload).map_err(anyhow::Error::from)?
+                } else {
+                    let payload = analyzer
+                        .read_cheapest_items(&selector, rows_from_map)
+                        .await?;
+                    serde_json::to_vec(&payload).map_err(anyhow::Error::from)?
+                };
+                Ok(SwrLoad {
+                    body: Bytes::from(bytes),
+                    cacheable: true,
+                })
+            },
+        )
+        .await?;
+
+    metrics::counter!(
+        "ultros_cheapest_cache_total",
+        "disposition" => cached.disposition.as_str()
+    )
+    .increment(1);
+    Ok(cached
+        .body
+        .into_json_response(
+            &headers,
+            super::public_cache_control(15, 60, super::PUBLIC_STALE_IF_ERROR_SECS),
+            &[],
+        )
+        .await)
 }
 
 #[cfg(test)]

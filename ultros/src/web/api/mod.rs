@@ -20,7 +20,7 @@ mod trends;
 
 pub(crate) use best_deals::get_best_deals;
 pub(crate) use changelog::get_changelog;
-pub(crate) use cheapest_per_world::cheapest_per_world;
+pub(crate) use cheapest_per_world::{CheapestCache, cheapest_per_world, new_cheapest_cache};
 pub(crate) use item_stats::get_item_stats;
 pub(crate) use listing_stats::get_listing_stats;
 pub(crate) use market_heat::get_market_heat;

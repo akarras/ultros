@@ -508,6 +508,54 @@ fn flip_profit_and_roi(est_sale_price: i32, cost: i32) -> Option<(i32, f32)> {
 /// reads only that compact table; until then it retains the legacy history scan.
 const MAX_SNAPSHOT_AGE: Duration = Duration::hours(3);
 
+/// Cadence for background periodic snapshots. Frequent enough that graceful
+/// deploys almost always find a fresh snapshot on disk and skip writing on
+/// SIGTERM.
+const PERIODIC_SNAPSHOT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Delay before the first periodic snapshot after boot so a newly started
+/// process writes a fresh snapshot promptly once initialized without churning
+/// during rapid restart loops.
+const INITIAL_SNAPSHOT_DELAY: std::time::Duration = std::time::Duration::from_secs(2 * 60);
+
+/// Maximum age of an existing on-disk snapshot that lets SIGTERM skip writing
+/// another snapshot. Keeps shutdown off the multi-second gzip write path when
+/// a recent periodic snapshot is already available for fast restart.
+const SHUTDOWN_SNAPSHOT_MAX_AGE: Duration = Duration::minutes(20);
+
+/// Whether `directory` already holds a non-empty, valid-looking snapshot whose
+/// filename timestamp is between `0` and `max_age` old relative to `now`.
+///
+/// Ignores `.partial-snapshot-*` temp files, unparseable names, future-dated
+/// filenames (clock skew), and 0-byte files.
+async fn has_recent_snapshot_in(
+    directory: &Path,
+    now: chrono::DateTime<Utc>,
+    max_age: Duration,
+) -> bool {
+    let mut dir = match fs::read_dir(directory).await {
+        Ok(dir) => dir,
+        Err(_) => return false,
+    };
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !is_snapshot_name(&name) {
+            continue;
+        }
+        let Some(age) = snapshot_age(&name, now) else {
+            continue;
+        };
+        if age < Duration::zero() || age > max_age {
+            continue;
+        }
+        if entry.metadata().await.is_ok_and(|meta| meta.len() > 0) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether `file_name` is a finished snapshot, as opposed to the
 /// `.partial-snapshot-*` temp file `serialize_state` renames from.
 fn is_snapshot_name(file_name: &str) -> bool {
@@ -648,18 +696,26 @@ impl AnalyzerService {
         let task_self = temp.clone();
         let serialize_token = token;
         let shutdown = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+            let mut interval = tokio::time::interval_at(
+                tokio::time::Instant::now() + INITIAL_SNAPSHOT_DELAY,
+                PERIODIC_SNAPSHOT_INTERVAL,
+            );
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tokio::select! {
                     _ = serialize_token.cancelled() => {
                         // The worker joins its history consumer before returning,
-                        // so the final snapshot includes any in-flight sale batch.
+                        // so any fallback shutdown snapshot includes in-flight
+                        // sale batches.
                         if let Err(e) = worker.await {
                             error!("Analyzer worker failed during shutdown: {e:?}");
                         }
-                        if let Err(e) = task_self.serialize_state(true).await {
-                            error!("Error serializing state {e:?}");
-                        }
+                        task_self
+                            .serialize_state_on_shutdown_in(
+                                Path::new("analyzer-data"),
+                                Utc::now(),
+                            )
+                            .await;
                         break;
                     }
                     _ = interval.tick() => {
@@ -672,6 +728,47 @@ impl AnalyzerService {
         });
 
         (temp, shutdown)
+    }
+
+    async fn serialize_state_on_shutdown_in(&self, directory: &Path, now: chrono::DateTime<Utc>) {
+        if !self.initiated.load(Ordering::Relaxed) {
+            info!("Analyzer not initialized, skipping shutdown snapshot");
+            metrics::counter!(
+                "ultros_analyzer_shutdown_snapshot_total",
+                "outcome" => "skipped_uninitialized"
+            )
+            .increment(1);
+            return;
+        }
+        if has_recent_snapshot_in(directory, now, SHUTDOWN_SNAPSHOT_MAX_AGE).await {
+            info!(
+                max_age_minutes = SHUTDOWN_SNAPSHOT_MAX_AGE.num_minutes(),
+                "skipping shutdown analyzer snapshot; recent periodic snapshot exists on disk"
+            );
+            metrics::counter!(
+                "ultros_analyzer_shutdown_snapshot_total",
+                "outcome" => "skipped_recent"
+            )
+            .increment(1);
+            return;
+        }
+        match self.serialize_state_in(directory, true).await {
+            Ok(()) => {
+                metrics::counter!(
+                    "ultros_analyzer_shutdown_snapshot_total",
+                    "outcome" => "written"
+                )
+                .increment(1);
+            }
+            Err(e) => {
+                error!("Error serializing state on shutdown: {e:?}");
+                metrics::counter!(
+                    "ultros_analyzer_shutdown_snapshot_total",
+                    "outcome" => "failed"
+                )
+                .increment(1);
+            }
+        }
     }
 
     async fn serialize_state(&self, is_shutdown: bool) -> Result<()> {
@@ -3916,5 +4013,72 @@ mod tests {
             "successful deep_scan_batch must not mark best_resale degraded"
         );
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_snapshot_skips_when_recent_and_writes_when_stale_or_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+
+        // Empty dir -> no recent snapshot.
+        assert!(!has_recent_snapshot_in(dir.path(), now, SHUTDOWN_SNAPSHOT_MAX_AGE).await);
+
+        // Partial, future-dated, and zero-byte files must never suppress a shutdown write.
+        let partial = dir.path().join(format!(
+            ".partial-snapshot-{}.columns.gz",
+            now.timestamp() - 60
+        ));
+        tokio::fs::write(&partial, b"partial").await.unwrap();
+        let future = dir
+            .path()
+            .join(format!("snapshot-{}.columns.gz", now.timestamp() + 60));
+        tokio::fs::write(&future, b"future").await.unwrap();
+        let empty = dir
+            .path()
+            .join(format!("snapshot-{}.columns.gz", now.timestamp() - 30));
+        tokio::fs::write(&empty, b"").await.unwrap();
+        let stale = dir.path().join(format!(
+            "snapshot-{}.columns.gz",
+            now.timestamp() - SHUTDOWN_SNAPSHOT_MAX_AGE.num_seconds() - 60
+        ));
+        tokio::fs::write(&stale, b"stale").await.unwrap();
+
+        assert!(!has_recent_snapshot_in(dir.path(), now, SHUTDOWN_SNAPSHOT_MAX_AGE).await);
+
+        // With no recent snapshot on disk, shutdown writes one.
+        let analyzer = populated_analyzer(ultros_clickhouse::ClickHouseClient::from_env());
+        analyzer
+            .serialize_state_on_shutdown_in(dir.path(), now)
+            .await;
+
+        let count_snapshots = || {
+            std::fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    let name = e.file_name();
+                    let name = name.to_string_lossy();
+                    is_snapshot_name(&name) && e.metadata().is_ok_and(|m| m.len() > 0)
+                })
+                .count()
+        };
+        // `future` + `stale` + the newly written snapshot = 3 non-empty snapshot files.
+        assert_eq!(count_snapshots(), 3);
+
+        // Now place a fresh snapshot relative to `now` and confirm shutdown skips writing.
+        let fresh = dir
+            .path()
+            .join(format!("snapshot-{}.columns.gz", now.timestamp() - 300));
+        tokio::fs::write(&fresh, b"fresh-bytes").await.unwrap();
+        assert!(has_recent_snapshot_in(dir.path(), now, SHUTDOWN_SNAPSHOT_MAX_AGE).await);
+        let before = count_snapshots();
+        analyzer
+            .serialize_state_on_shutdown_in(dir.path(), now)
+            .await;
+        assert_eq!(
+            count_snapshots(),
+            before,
+            "shutdown must skip writing when a recent snapshot is already on disk"
+        );
     }
 }
