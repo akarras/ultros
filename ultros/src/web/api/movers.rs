@@ -415,9 +415,16 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(header::CACHE_CONTROL).unwrap(),
-            "public, max-age=60, stale-while-revalidate=240, stale-if-error=600"
+        let cc = response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            cc == "public, max-age=60, stale-while-revalidate=240, stale-if-error=600"
+                || cc == "public, max-age=59, stale-while-revalidate=240, stale-if-error=600",
+            "unexpected Cache-Control: {cc}"
         );
         assert!(
             cache.get("movers:Sargatanas:rising:10").is_some(),

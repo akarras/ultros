@@ -538,9 +538,10 @@ const PERIODIC_SNAPSHOT_INTERVAL: std::time::Duration = std::time::Duration::fro
 const INITIAL_SNAPSHOT_DELAY: std::time::Duration = std::time::Duration::from_secs(2 * 60);
 
 /// Maximum age of an existing on-disk snapshot that lets SIGTERM skip writing
-/// another snapshot. Keeps shutdown off the multi-second gzip write path when
-/// a verified periodic snapshot is already intact on disk; the next boot
-/// backfills sales recorded after `snapshot_ts` from `recent_sale_history`.
+/// another snapshot when `recent_sale_history` projection is complete. Keeps
+/// shutdown off the multi-second gzip write path when a verified periodic
+/// snapshot is already intact on disk; the next boot reloads authoritative
+/// sale history from Postgres with `pg_id` deduplication.
 const SHUTDOWN_SNAPSHOT_MAX_AGE: Duration = Duration::minutes(20);
 
 /// How long `history_worker` retains Postgres `pg_id`s loaded at startup to

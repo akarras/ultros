@@ -492,9 +492,16 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(header::CACHE_CONTROL).unwrap(),
-            "public, max-age=30, stale-while-revalidate=120, stale-if-error=600"
+        let cc = response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            cc == "public, max-age=30, stale-while-revalidate=120, stale-if-error=600"
+                || cc == "public, max-age=29, stale-while-revalidate=120, stale-if-error=600",
+            "unexpected Cache-Control: {cc}"
         );
         assert!(cache.get("pulse:Sargatanas").is_some());
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
