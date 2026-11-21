@@ -226,7 +226,9 @@ impl UltrosDb {
         .await?;
         crate::recent_sales::project_sales(transaction, &inserted, world_id, item_id).await?;
         let buyers_by_id: HashMap<i32, _> = buyers.into_values().map(|b| (b.id, b)).collect();
-        Ok(attach_buyers(inserted, &buyers_by_id))
+        let recorded = attach_buyers(inserted, &buyers_by_id);
+        crate::clickhouse_outbox::enqueue_sales(transaction, &recorded).await?;
+        Ok(recorded)
     }
 
     pub async fn get_sale_history_from_multiple_worlds(

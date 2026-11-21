@@ -73,6 +73,21 @@ impl SaleRow {
         }
     }
 
+    /// Build a `SaleRow` from a transactional `clickhouse_sale_outbox` row.
+    pub fn from_outbox_row(r: &ultros_db::clickhouse_outbox::SaleOutboxRow) -> Self {
+        Self {
+            pg_id: r.pg_id,
+            sold_date: chrono::DateTime::from_naive_utc_and_offset(r.sold_date, chrono::Utc),
+            item_id: r.item_id,
+            hq: r.hq as u8,
+            world_id: r.world_id,
+            price_per_item: clamp_price(r.price_per_item),
+            quantity: clamp_qty(r.quantity),
+            buying_character_id: r.buying_character_id as i64,
+            buyer_name: r.buyer_name.clone(),
+        }
+    }
+
     /// Build a `SaleRow` from the API type (used by the dual-write path, which
     /// reads from the existing event bus and already has a richer payload).
     pub fn from_api_sale(s: &ultros_api_types::SaleHistory) -> Self {
@@ -396,6 +411,41 @@ mod tests {
         assert_eq!(live_row.hq, backfill_row.hq);
         assert_eq!(live_row.world_id, backfill_row.world_id);
         assert_eq!(live_row.sold_date, backfill_row.sold_date);
+    }
+
+    #[test]
+    fn from_outbox_row_matches_backfill_and_preserves_negative_pg_id() {
+        let sold_date = NaiveDate::from_ymd_opt(2026, 5, 15)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let recorded = ultros_db::entity::sale_history::Model {
+            id: i32::MIN,
+            quantity: 3,
+            price_per_item: 2500,
+            buying_character_id: 42,
+            hq: true,
+            sold_item_id: 7,
+            sold_date,
+            world_id: 40,
+        };
+        let outbox = ultros_db::clickhouse_outbox::SaleOutboxRow {
+            id: 99,
+            pg_id: recorded.id,
+            sold_date,
+            item_id: recorded.sold_item_id,
+            hq: recorded.hq,
+            world_id: recorded.world_id,
+            price_per_item: recorded.price_per_item,
+            quantity: recorded.quantity,
+            buying_character_id: recorded.buying_character_id,
+            buyer_name: "Test Buyer".to_string(),
+            created_at: Utc::now(),
+        };
+        let backfill_row = SaleRow::from_db_model(&recorded, "Test Buyer".to_string());
+        let outbox_row = SaleRow::from_outbox_row(&outbox);
+        assert_eq!(outbox_row, backfill_row);
+        assert_eq!(outbox_row.pg_id, i32::MIN);
     }
 
     #[test]

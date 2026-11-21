@@ -1,9 +1,11 @@
 //! Bounded, retrying row writer. Postgres remains the source of truth.
 //!
-//! One `Writer<R>` per table: `sales` (analyzer dual-write), `listing_events`
-//! (every listing ingest path) and `floor_changes` (analyzer floor moves).
-//! They share this queue/retry/drain implementation and differ only in the
-//! row type, whose [`TableRow::TABLE`] names the destination.
+//! One `Writer<R>` per in-memory table stream: `listing_events` (every listing
+//! ingest path), `floor_changes` (analyzer floor moves), and `sale_receipts`
+//! (WebSocket receipt latency). `sales` drains durably from Postgres
+//! `clickhouse_sale_outbox` via [`crate::sale_outbox`]. They share this
+//! queue/retry/drain implementation and differ only in the row type, whose
+//! [`TableRow::TABLE`] names the destination.
 //!
 //! A failed insert retains its complete batch until an acknowledged retry.
 //! Retrying an ambiguous response is safe for `sales` because its
@@ -185,7 +187,7 @@ impl<R: TableRow> Writer<R> {
     }
 }
 
-async fn initialize(client: &ClickHouseClient, token: &CancellationToken) -> bool {
+pub(crate) async fn initialize(client: &ClickHouseClient, token: &CancellationToken) -> bool {
     loop {
         let result = tokio::select! {
             _ = token.cancelled() => return false,
@@ -351,7 +353,10 @@ fn record_unflushed(rows: usize, table: &'static str) {
     }
 }
 
-async fn flush<R: TableRow>(client: &ClickHouseClient, rows: &[R]) -> Result<(), ClickHouseError> {
+pub(crate) async fn flush<R: TableRow>(
+    client: &ClickHouseClient,
+    rows: &[R],
+) -> Result<(), ClickHouseError> {
     let mut insert = client.client().insert::<R>(R::TABLE).await?;
     for row in rows {
         insert.write(row).await?;

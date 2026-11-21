@@ -568,13 +568,9 @@ pub struct AnalyzerService {
     /// collapses a burst into a single pass instead of queueing one per drop.
     cheapest_resync_in_flight: Arc<AtomicBool>,
     cheapest_rebuild: Arc<rebuild::RebuildTracker>,
-    /// Dual-writes every observed sale into the ClickHouse `sales` table.
-    /// Non-blocking, fire-and-forget — Postgres remains the source of truth so
-    /// dropped rows are recoverable via the backfill binary.
-    ch_writer: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::SaleRow>,
     /// Records every move of a world-level lowest price into the ClickHouse
-    /// `floor_changes` table. Same fire-and-forget contract as `ch_writer`;
-    /// the periodic Postgres resync is what heals a dropped row.
+    /// `floor_changes` table. Fire-and-forget; the periodic Postgres resync is
+    /// what heals a dropped row.
     floor_writer: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::FloorChangeRow>,
     /// Read-side ClickHouse client for the deep-scan pass. The hot path
     /// (CheapestListings + RecentSales BTreeMaps) doesn't touch this — only
@@ -588,7 +584,6 @@ impl std::fmt::Debug for AnalyzerService {
             .field("recent_sale_history", &self.recent_sale_history)
             .field("cheapest_items", &self.cheapest_items)
             .field("initiated", &self.initiated)
-            .field("ch_writer", &"<Writer>")
             .field("floor_writer", &"<Writer>")
             .field("ch_client", &"<ClickHouseClient>")
             .finish()
@@ -602,7 +597,6 @@ impl AnalyzerService {
         ultros_db: UltrosDb,
         event_receivers: EventReceivers,
         world_cache: Arc<WorldCache>,
-        ch_writer: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::SaleRow>,
         floor_writer: ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::FloorChangeRow>,
         ch_client: ultros_clickhouse::ClickHouseClient,
         token: CancellationToken,
@@ -639,7 +633,6 @@ impl AnalyzerService {
             initiated: Arc::default(),
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
-            ch_writer,
             floor_writer,
             ch_client,
         };
@@ -1136,24 +1129,18 @@ impl AnalyzerService {
                                 crate::event::EventType::Add(sales) => {
                                     for (sale, _) in sales.sales.iter() {
                                         second_worker_instance.add_sale(sale).await;
-                                        // Mirror into ClickHouse. Non-blocking;
-                                        // see ultros_clickhouse::writer for the
-                                        // crash-safety contract (PG is source
-                                        // of truth, backfill recovers gaps).
-                                        second_worker_instance.ch_writer.send(
-                                            ultros_clickhouse::rows::SaleRow::from_api_sale(sale),
-                                        );
                                     }
                                 }
                                 crate::event::EventType::Update(_) => {}
                             },
-                            // The surviving events continue, but neither RAM
-                            // history nor ClickHouse can reconstruct the gap
-                            // from this bus. Make the repair requirement explicit.
+                            // In-memory recent sale history missed events on
+                            // the broadcast bus. ClickHouse `sales` is
+                            // unaffected because it drains durably from
+                            // Postgres `clickhouse_sale_outbox`.
                             BusRecv::Lagged => {
                                 metrics::counter!("ultros_analyzer_history_recovery_required_total")
                                     .increment(1);
-                                warn!("sale history bus lagged; Postgres reconciliation required for analytics");
+                                warn!("sale history bus lagged; in-memory analyzer history missed events");
                             }
                             // recv() on a closed bus returns instantly forever;
                             // looping here would hot-spin and emit one warn per
@@ -2499,7 +2486,6 @@ mod test {
             initiated: Arc::new(AtomicBool::new(true)),
             cheapest_resync_in_flight: Arc::new(AtomicBool::new(false)),
             cheapest_rebuild: Arc::default(),
-            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client,
         }
@@ -3365,7 +3351,6 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
-            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -3420,7 +3405,6 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
-            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -3458,7 +3442,6 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(true)),
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
-            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -3480,7 +3463,6 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
-            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -3537,7 +3519,6 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
-            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -3808,7 +3789,6 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(true)),
             cheapest_resync_in_flight: Arc::new(AtomicBool::new(false)),
             cheapest_rebuild: Arc::default(),
-            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client,
         }

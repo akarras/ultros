@@ -63,6 +63,7 @@ mod m20261018_000002_plugin_retainer_links;
 mod m20261018_000003_plugin_pairing_links;
 mod m20261018_000004_game_retainer_listings;
 mod m20261027_000001_retainer_preferences;
+mod m20261120_000001_clickhouse_sale_outbox;
 
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
@@ -130,6 +131,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261023_000001_listing_board_revisions::Migration),
             Box::new(m20261023_000002_recent_sale_history::Migration),
             Box::new(m20261027_000001_retainer_preferences::Migration),
+            Box::new(m20261120_000001_clickhouse_sale_outbox::Migration),
         ]
     }
 }
