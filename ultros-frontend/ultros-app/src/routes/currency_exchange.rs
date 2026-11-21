@@ -940,10 +940,16 @@ pub fn CurrencySelection() -> impl IntoView {
 
 #[component]
 pub fn CurrencyExchange() -> impl IntoView {
+    let location = crate::components::app_link::use_location_or_default();
+    let route_key = Signal::derive(move || location.pathname.get());
     view! {
         <div class="app-inline-ad">
             <div class="w-full flex justify-center py-2">
-                <Ad class="ad-banner-ins" ad_slot=ad_slots::CURRENCY_INLINE />
+                <Ad
+                    class="ad-banner-ins"
+                    ad_slot=ad_slots::CURRENCY_INLINE
+                    refresh_key=route_key
+                />
             </div>
         </div>
         <div class="main-content p-2 sm:p-6">
