@@ -78,7 +78,11 @@ Keep a **single compiled server binary** gated by `ULTROS_ROLES` (default `all` 
 ### 3.1 Durable ClickHouse Projection (Fixes 1,342 Dropped Sales/Day)
 Moving `SaleRow` out of `AnalyzerService`'s broadcast loop removes broadcast-lag loss, but a bounded in-memory `mpsc` channel still drops rows on crash or queue overflow, and `UpdateService` catch-up writes ([item_update_service.rs](../../ultros-ingest/src/item_update_service.rs)) must feed the exact same path as WebSocket writes.
 
-* **Contract:** Record new sales (and listing/receipt payloads that Postgres cannot reconstruct later) in a **transactional Postgres outbox** (or durable monotonic watermark on `sale_history.id`) inside the committing ingest transaction, drained in batches into ClickHouse and acknowledged only after ClickHouse confirms the insert (`ReplacingMergeTree` deduplicates by Postgres sale ID).
+* **Why a `sale_history.id` high-water mark is NOT valid:** A sequence watermark can skip lower IDs whose transactions commit after a higher ID has already been scanned, and `sale_history_id_seq` is explicitly configured to wrap into negative `int4` values ([m20260923_000002_sale_history_id_seq_wrap.rs](../../migration/src/m20260923_000002_sale_history_id_seq_wrap.rs)), breaking monotonicity.
+* **Required replay contract (transactional Postgres outbox):** Record new sales — plus listing/receipt payloads that Postgres cannot reconstruct later — in a **transactional Postgres outbox** table written inside the same committing ingest transaction (`BIGSERIAL` outbox ID or commit-ordered claim with `FOR UPDATE SKIP LOCKED` / lease). The outbox drainer reads committed rows in batches, flushes to ClickHouse, and deletes/acknowledges the outbox rows only after ClickHouse confirms the insert.
+* **ClickHouse at-least-once deduplication contract:** Because a worker can crash after ClickHouse commits an insert but before the Postgres outbox acknowledgement commits, every projected table must tolerate replayed batches without double-counting:
+  * **`sales`:** Already `ReplacingMergeTree(inserted_at)` keyed on `(item_id, hq, world_id, sold_date, pg_id)`. Retried inserts merge cleanly; all rollups and analytical queries reading `sales` must continue using `FINAL` (or explicit dedup by key) so unmerged duplicate parts never inflate counts or volumes.
+  * **`sale_receipts` and `listing_events`:** Both are currently plain `MergeTree` tables ([schema.rs](../../ultros-clickhouse/src/schema.rs)). Before routing them through an at-least-once outbox, prevent retry double-counting by either (a) migrating them to `ReplacingMergeTree` keyed with a stable outbox/event discriminator (`pg_id` for `sale_receipts`, `outbox_id` for `listing_events`) and reading with `FINAL`/dedup in rollups, or (b) draining fixed, deterministic outbox batches with ClickHouse block deduplication enabled (`non_replicated_deduplication_window` + deterministic `insert_deduplication_token` derived from the batch's outbox ID range).
 
 ### 3.2 Postgres `LISTEN / NOTIFY` as Wake-Ups Only (Never a Durable Queue)
 For cross-replica coordination across `ultros-web` replicas and `ultros-market`/`bot` (`lists`, `list_docs`, `notifications`, `alerts`, `retainers`, `auth_revoke`):
@@ -109,15 +113,18 @@ Because `env!("GIT_HASH")` is compiled into binaries and Rust Docker builds are 
 
 ### 4.2 Safe Cloudflare Cache Rules (Ship in Phase 0)
 
-> **Cloudflare `Cache-Control` nuance:** Cloudflare documents that `s-maxage` disables `stale-while-revalidate` at the edge. All Phase 0 public JSON responses therefore emit `public, max-age=<ttl>, stale-while-revalidate=<swr>, stale-if-error=600` (without `s-maxage`), and **every error (`WebError`/`ApiError`) and degraded `200` fallback** (`market_pulse` soft-fail, `best_deals`/`trends` during analyzer warm-up) emits `Cache-Control: no-store`.
+> **Cloudflare `Cache-Control` nuances:**
+> 1. Cloudflare documents that `s-maxage` disables `stale-while-revalidate` at the edge. All Phase 0 public JSON responses therefore emit `public, max-age=<ttl>, stale-while-revalidate=<swr>, stale-if-error=600` (without `s-maxage`).
+> 2. **Every error (`WebError`/`ApiError`) and every degraded `200` fallback** (`market_pulse` ClickHouse/Postgres soft-fail, `movers` sparkline failure, and `trends`/`best_deals` during analyzer warm-up or ClickHouse enrichment failure) emits `Cache-Control: no-store` (and skips `HomeFeedCache`).
+> 3. **Use `bypass_by_default` ("Use cache-control header if present, bypass cache if not")** for Edge TTL on both rules instead of `respect_origin`. `respect_origin` falls back to Cloudflare's default status-based caching when a response has no `Cache-Control` header, which would otherwise cache router-generated 404s outside `WebError` or future routes that omit a header.
 
 1. **Rule 1 — Social & Item Cards (largest immediate CPU win):**
    * Match: `(starts_with(http.request.uri.path, "/social/v2/") or starts_with(http.request.uri.path, "/itemcard/"))`
-   * Settings: *Eligible for cache*, *Edge TTL: Respect origin (`public, max-age=86400, stale-if-error=86400`)*, *Browser TTL: Respect origin*, *Ignore cookies*.
+   * Settings: *Eligible for cache*, *Edge TTL: Use cache-control header if present, bypass cache if not (`bypass_by_default`, origin sends `public, max-age=86400, stale-if-error=86400`)*, *Browser TTL: Respect origin*, *Ignore cookies*.
    * Enable **Cloudflare Tiered Cache** so PoP misses collapse before hitting origin.
 2. **Rule 2 — Verified Cookie-Independent Public Market JSON GETs:**
    * Match: `http.request.method eq "GET"` and path starts with `/api/v1/cheapest/`, `/api/v1/sale_stats/`, `/api/v1/listing_stats/`, `/api/v1/price_series/`, `/api/v1/price_density/`, `/api/v1/floor_history/`, `/api/v1/undercut_pressure/`, `/api/v1/item_stats/`, `/api/v1/market_pulse/`, `/api/v1/market_heat/`, `/api/v1/movers/`, `/api/v1/recentSales/`, `/api/v1/listings/`, `/api/v1/best_deals/`, `/api/v1/trends/`, `/api/v1/changelog`, or `/api/v1/game-history`.
-   * Settings: *Eligible for cache*, *Edge TTL: Respect origin*, *Browser TTL: Respect origin*, *Cache Key: include query string* (preserves `format`, `window`, `show_suspicious`, `from`, `to`, `bucket`, `group`, `hq`, `direction`, `limit`), *Ignore cookies*.
+   * Settings: *Eligible for cache*, *Edge TTL: Use cache-control header if present, bypass cache if not (`bypass_by_default`)*, *Browser TTL: Respect origin*, *Cache Key: include query string* (preserves `format`, `window`, `show_suspicious`, `from`, `to`, `bucket`, `group`, `hq`, `direction`, `limit`), *Ignore cookies*.
    * *(Never match `POST` batch routes like `/api/v1/sparklines/*`, `/api/v1/resale_quality/*`, or `/api/v1/floor_history/{world}`.)*
 
 ### 4.3 Why Shared SSR HTML Caching Is Deliberately Deferred Beyond Phase 0
@@ -158,10 +165,10 @@ Once Phase 0 and the 2-role split are live, apply self-built Rust optimizations 
 
 * **Phase 0 — Cloudflare & `Cache-Control` Prep (This PR)**
   * Standardize `public, max-age=..., stale-while-revalidate=..., stale-if-error=600` (without `s-maxage`) on cookie-independent public market `GET` endpoints (`listings`, `cheapest`, `item_stats`, `market_heat`, `recentSales`, `best_deals`, `trends`, `sale_stats`, `listing_stats`, `cached_json`) and `stale-if-error=86400` on cards.
-  * Emit `Cache-Control: no-store` on all `WebError`/`ApiError` responses and degraded `200` fallbacks (`market_pulse` soft-fail, `best_deals`/`trends` warm-up).
-  * Keep SSR HTML `private, no-store`; activate Cloudflare Cache Rules 1 & 2 + Tiered Cache.
+  * Emit `Cache-Control: no-store` on all `WebError`/`ApiError` responses and degraded `200` fallbacks (`market_pulse` soft-fail, `movers` sparkline failure, `best_deals`/`trends` warm-up or ClickHouse enrichment failure).
+  * Keep SSR HTML `private, no-store`; activate Cloudflare Cache Rules 1 & 2 (`bypass_by_default`) + Tiered Cache.
 * **Phase 1A — High-Leverage Local Fixes (In-Process, Zero Distributed Risk)**
-  * Move ClickHouse `SaleRow` writes off the analyzer broadcast onto a durable Postgres outbox/watermark covering both Universalis WS and `UpdateService` catch-up (fixes 1,342 dropped sales/day).
+  * Move ClickHouse `SaleRow` writes off the analyzer broadcast onto a transactional Postgres outbox covering both Universalis WS and `UpdateService` catch-up, with ClickHouse retry deduplication for `sales`, `sale_receipts`, and `listing_events` (fixes 1,342 dropped sales/day).
   * Move the 19.5s analyzer snapshot off SIGTERM (periodic background snapshot; skip shutdown write if a recent snapshot exists).
   * Upgrade `HomeFeedCache` to stale-while-revalidate and replace `market_pulse`'s Postgres `COUNT(*)` (fixes 9.75s p95 tail).
   * Add `Arc<EncodedBody>` pre-compressed caching for bulk market endpoints and measure/tune `POSTGRES_MAX_CONNECTIONS`.

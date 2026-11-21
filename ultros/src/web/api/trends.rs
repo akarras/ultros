@@ -4,14 +4,17 @@ use axum::{
     Json,
     extract::{Path, Query, State},
     http::header,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use tracing::instrument;
 use ultros_api_types::trends::TrendsData;
 use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
-use crate::{analyzer_service::AnalyzerService, web::error::WebError};
+use crate::{
+    analyzer_service::{AnalyzerQueryResult, AnalyzerService},
+    web::error::WebError,
+};
 
 #[derive(Debug, Deserialize, Default)]
 pub struct TrendsQuery {
@@ -55,44 +58,51 @@ pub async fn get_trends(
     // V2 path: ?window= supplied → return a flat sorted list under
     // `items`. Clamp the window to the values the rollup actually
     // produces (7/30/90); anything else falls back to 30.
-    let (trends, initialized) = if let Some(raw_window) = query.window {
+    let result = if let Some(raw_window) = query.window {
         let window_days = match raw_window {
             7 | 30 | 90 => raw_window,
             _ => 30,
         };
         let include_suspicious = query.show_suspicious.unwrap_or(false);
-        let maybe_items = analyzer
+        analyzer
             .get_trends_v2(world_id, window_days, include_suspicious)
-            .await;
-        let initialized = maybe_items.is_some();
-        (
-            TrendsData {
-                items: maybe_items.unwrap_or_default(),
-                high_velocity: vec![],
-                rising_price: vec![],
-                falling_price: vec![],
-            },
-            initialized,
-        )
+            .await
+            .map(|res| AnalyzerQueryResult {
+                data: TrendsData {
+                    items: res.data,
+                    high_velocity: vec![],
+                    rising_price: vec![],
+                    falling_price: vec![],
+                },
+                degraded: res.degraded,
+            })
     } else {
         // Legacy v1 path — pre-bucketed lists, kept for any older client.
-        let maybe_trends = analyzer.get_trends(world_id).await;
-        let initialized = maybe_trends.is_some();
-        (
-            maybe_trends.unwrap_or(TrendsData {
+        analyzer.get_trends(world_id).await
+    };
+
+    Ok(trends_response(result))
+}
+
+fn trends_response(result: Option<AnalyzerQueryResult<TrendsData>>) -> Response {
+    let (trends, cacheable) = match result {
+        Some(res) => (res.data, !res.degraded),
+        None => (
+            TrendsData {
                 items: vec![],
                 high_velocity: vec![],
                 rising_price: vec![],
                 falling_price: vec![],
-            }),
-            initialized,
-        )
+            },
+            false,
+        ),
     };
 
-    let cache_control = if initialized {
+    let cache_control = if cacheable {
         super::public_cache_control(60, 300, super::PUBLIC_STALE_IF_ERROR_SECS)
     } else {
-        // Analyzer is still warming up; do not cache an empty fallback at the CDN.
+        // Analyzer is warming up or ClickHouse enrichment failed; never cache
+        // an empty or degraded fallback at the CDN.
         axum::http::HeaderValue::from_static("no-store")
     };
 
@@ -100,14 +110,16 @@ pub async fn get_trends(
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, cache_control);
-    Ok(response)
+    response
 }
 
 #[cfg(test)]
 mod tests {
-    use super::TrendsQuery;
+    use super::{TrendsQuery, trends_response};
+    use crate::analyzer_service::AnalyzerQueryResult;
     use axum::extract::Query;
-    use axum::http::Uri;
+    use axum::http::{Uri, header};
+    use ultros_api_types::trends::TrendsData;
 
     fn extract(query: &str) -> Result<TrendsQuery, String> {
         let uri: Uri = format!("http://ultros.app/api/v1/trends/Sargatanas?{query}")
@@ -158,5 +170,39 @@ mod tests {
     #[test]
     fn nonsense_flag_is_still_rejected() {
         assert!(extract("window=30&show_suspicious=banana").is_err());
+    }
+
+    #[test]
+    fn trends_response_sets_no_store_when_uninitialized_or_degraded() {
+        let empty = TrendsData {
+            items: vec![],
+            high_velocity: vec![],
+            rising_price: vec![],
+            falling_price: vec![],
+        };
+
+        let uninitialized = trends_response(None);
+        assert_eq!(
+            uninitialized.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+
+        let degraded = trends_response(Some(AnalyzerQueryResult {
+            data: empty.clone(),
+            degraded: true,
+        }));
+        assert_eq!(
+            degraded.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+
+        let healthy = trends_response(Some(AnalyzerQueryResult {
+            data: empty,
+            degraded: false,
+        }));
+        assert_eq!(
+            healthy.headers().get(header::CACHE_CONTROL).unwrap(),
+            "public, max-age=60, stale-while-revalidate=300, stale-if-error=600"
+        );
     }
 }

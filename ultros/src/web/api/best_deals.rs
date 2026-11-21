@@ -1,12 +1,14 @@
 use crate::{
-    analyzer_service::{AnalyzerService, ResaleOptions, ResaleStats, SoldWithin},
+    analyzer_service::{
+        AnalyzerQueryResult, AnalyzerService, ResaleOptions, ResaleStats, SoldWithin,
+    },
     web::error::WebError,
 };
 use axum::{
     Json,
     extract::{Path, Query, State},
     http::header,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -126,19 +128,31 @@ pub(crate) async fn get_best_deals(
     };
     let limit = query.limit.unwrap_or(50).clamp(1, 200) as usize;
 
-    let stats = analyzer
+    let result = analyzer
         .get_best_resale(world_id, region.id, options, &world_cache)
         .await;
 
-    let cache_control = if stats.is_some() {
+    Ok(best_deals_response(result, limit))
+}
+
+fn best_deals_response(
+    result: Option<AnalyzerQueryResult<Vec<ResaleStats>>>,
+    limit: usize,
+) -> Response {
+    let (stats, cacheable) = match result {
+        Some(res) => (res.data, !res.degraded),
+        None => (Vec::new(), false),
+    };
+
+    let cache_control = if cacheable {
         super::public_cache_control(30, 120, super::PUBLIC_STALE_IF_ERROR_SECS)
     } else {
-        // Analyzer is still warming up; do not cache an empty fallback at the CDN.
+        // Analyzer is warming up or ClickHouse enrichment failed; never cache
+        // an empty or unfiltered fallback at the CDN.
         axum::http::HeaderValue::from_static("no-store")
     };
 
     let dtos: Vec<ResaleStatsDto> = stats
-        .unwrap_or_default()
         .into_iter()
         .take(limit)
         .map(ResaleStatsDto::from)
@@ -148,14 +162,15 @@ pub(crate) async fn get_best_deals(
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, cache_control);
-    Ok(response)
+    response
 }
 
 #[cfg(test)]
 mod tests {
-    use super::BestDealsQuery;
+    use super::{BestDealsQuery, best_deals_response};
+    use crate::analyzer_service::AnalyzerQueryResult;
     use axum::extract::Query;
-    use axum::http::Uri;
+    use axum::http::{Uri, header};
 
     fn extract(query: &str) -> Result<BestDealsQuery, String> {
         let uri: Uri = format!("http://ultros.app/api/v1/best_deals/Sargatanas?{query}")
@@ -219,6 +234,39 @@ mod tests {
                 .expect("omitted flag must extract")
                 .show_suspicious,
             None
+        );
+    }
+
+    #[test]
+    fn best_deals_response_sets_no_store_when_uninitialized_or_degraded() {
+        let uninitialized = best_deals_response(None, 50);
+        assert_eq!(
+            uninitialized.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+
+        let degraded = best_deals_response(
+            Some(AnalyzerQueryResult {
+                data: Vec::new(),
+                degraded: true,
+            }),
+            50,
+        );
+        assert_eq!(
+            degraded.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+
+        let healthy = best_deals_response(
+            Some(AnalyzerQueryResult {
+                data: Vec::new(),
+                degraded: false,
+            }),
+            50,
+        );
+        assert_eq!(
+            healthy.headers().get(header::CACHE_CONTROL).unwrap(),
+            "public, max-age=30, stale-while-revalidate=120, stale-if-error=600"
         );
     }
 }
