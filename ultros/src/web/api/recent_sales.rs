@@ -136,7 +136,7 @@ pub(crate) async fn recent_sales(
                 "disposition" => loaded.disposition.as_str()
             )
             .increment(1);
-            return Ok(crate::web::cached_encoded_json(&loaded.body, &headers, ttl).await);
+            return Ok(crate::web::cached_encoded_json(&loaded, &headers, ttl).await);
         }
     };
     let mut response: Response = Json(body(sales, columnar)).into_response();

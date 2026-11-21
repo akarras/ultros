@@ -168,7 +168,7 @@ pub(crate) async fn get_movers(
     if !loaded.cacheable {
         return Ok(crate::web::uncached_json(loaded.body.raw().clone()));
     }
-    Ok(cached_encoded_json(&loaded.body, &headers, ttl).await)
+    Ok(cached_encoded_json(&loaded, &headers, ttl).await)
 }
 
 /// POST /api/v1/sparklines/{world} — bulk sparkline fetch by item id list.

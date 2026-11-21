@@ -160,6 +160,14 @@ impl UltrosDb {
         status_on(&self.db).await
     }
 
+    pub(crate) fn sales_since_statement(&self, since: NaiveDateTime) -> Statement {
+        Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!("SELECT {COLUMNS} FROM recent_sale_history WHERE sold_date >= $1"),
+            [since.into()],
+        )
+    }
+
     pub(crate) async fn recent_sales_statement(&self, count: i32) -> Result<Statement, DbErr> {
         if count <= 0 {
             return Ok(Statement::from_string(

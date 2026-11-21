@@ -559,34 +559,78 @@ pub async fn market_pulse(
     Ok(row)
 }
 
+/// Maximum allowed age of the newest `listing_alive` refresh before
+/// [`active_listing_count`] reports [`ActiveListingCount::NotReady`].
+/// Three times the 15-minute refresh cadence (45 minutes) tolerates one
+/// transient refresh failure while rejecting a stalled rollup.
+pub const LISTING_ALIVE_MAX_STALENESS_SECS: i64 =
+    (crate::rollups::LISTING_ALIVE_REFRESH_SECS * 3) as i64;
+
+/// Result of [`active_listing_count`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveListingCount {
+    /// `_listing_events_seed` is present and `listing_alive` has completed a
+    /// post-seed refresh within [`LISTING_ALIVE_MAX_STALENESS_SECS`]. A `0`
+    /// here is a genuine zero for the requested scope.
+    Ready(u64),
+    /// The rollup is unseeded, has not completed a refresh since seeding, or
+    /// has missed its expected refresh window. Callers may still render the
+    /// placeholder `count` but must not cache it publicly.
+    NotReady { count: u64 },
+}
+
 #[derive(Debug, Clone, Row, Deserialize)]
 struct ActiveListingCountRow {
     total: u64,
+    is_seeded: u8,
+    seeded_at_unix: i64,
+    last_refresh_unix: i64,
+    now_unix: i64,
+}
+
+fn evaluate_active_listing_count(row: ActiveListingCountRow) -> ActiveListingCount {
+    if row.is_seeded == 0 {
+        return ActiveListingCount::NotReady { count: row.total };
+    }
+    if row.last_refresh_unix <= 0 || row.last_refresh_unix < row.seeded_at_unix {
+        return ActiveListingCount::NotReady { count: row.total };
+    }
+    if row.now_unix.saturating_sub(row.last_refresh_unix) > LISTING_ALIVE_MAX_STALENESS_SECS {
+        return ActiveListingCount::NotReady { count: row.total };
+    }
+    ActiveListingCount::Ready(row.total)
 }
 
 /// Total alive listings across `world_ids` from the scheduled `listing_alive`
-/// rollup (`ReplacingMergeTree(computed_at)` keyed starting with `world_id`).
+/// rollup (`ReplacingMergeTree(computed_at)` keyed starting with `world_id`),
+/// gated on `_listing_events_seed` completion and refresh freshness.
 ///
 /// Replaces `market_pulse`'s live Postgres `COUNT(*)` over `active_listing`
 /// (which scanned millions of churning rows and drove a ~9.75s p95 tail).
 pub async fn active_listing_count(
     ch: &ClickHouseClient,
     world_ids: &[i32],
-) -> Result<u64, ClickHouseError> {
+) -> Result<ActiveListingCount, ClickHouseError> {
     if world_ids.is_empty() {
-        return Ok(0);
+        return Ok(ActiveListingCount::Ready(0));
     }
     let worlds = id_list(world_ids);
+    let seed_table = crate::schema::LISTING_EVENTS_SEED_MARKER_TABLE;
     let row = ch
         .client()
         .query(&format!(
-            "SELECT toUInt64(sum(alive_count)) AS total
+            "SELECT
+                 toUInt64(sum(alive_count)) AS total,
+                 toUInt8((SELECT count() > 0 FROM {seed_table})) AS is_seeded,
+                 toInt64(toUnixTimestamp((SELECT max(seeded_at) FROM {seed_table}))) AS seeded_at_unix,
+                 toInt64(toUnixTimestamp((SELECT max(computed_at) FROM listing_alive))) AS last_refresh_unix,
+                 toInt64(toUnixTimestamp(now())) AS now_unix
              FROM listing_alive FINAL
              WHERE world_id IN ({worlds})"
         ))
         .fetch_one::<ActiveListingCountRow>()
         .await?;
-    Ok(row.total)
+    Ok(evaluate_active_listing_count(row))
 }
 
 /// One row of deep-scan data for a single (item_id, hq, world_id) tuple at
@@ -1710,5 +1754,84 @@ mod tests {
         assert_eq!(d.confidence_band(), ConfidenceBand::Unusable);
         d.confidence_band_raw = "garbage".to_string();
         assert_eq!(d.confidence_band(), ConfidenceBand::Unknown);
+    }
+
+    #[test]
+    fn active_listing_count_readiness_distinguishes_unseeded_unrefreshed_stale_and_genuine_zero() {
+        let now = 1_800_000_000;
+        let seeded = now - 600;
+        let fresh_refresh = now - 60;
+
+        // Unseeded table -> NotReady even if rows exist.
+        assert_eq!(
+            evaluate_active_listing_count(ActiveListingCountRow {
+                total: 100,
+                is_seeded: 0,
+                seeded_at_unix: 0,
+                last_refresh_unix: fresh_refresh,
+                now_unix: now,
+            }),
+            ActiveListingCount::NotReady { count: 100 }
+        );
+
+        // Seeded but never refreshed (empty or truncated `listing_alive`).
+        assert_eq!(
+            evaluate_active_listing_count(ActiveListingCountRow {
+                total: 0,
+                is_seeded: 1,
+                seeded_at_unix: seeded,
+                last_refresh_unix: 0,
+                now_unix: now,
+            }),
+            ActiveListingCount::NotReady { count: 0 }
+        );
+
+        // Seeded, but latest refresh ran BEFORE seed finished (partial snapshot).
+        assert_eq!(
+            evaluate_active_listing_count(ActiveListingCountRow {
+                total: 50,
+                is_seeded: 1,
+                seeded_at_unix: seeded,
+                last_refresh_unix: seeded - 5,
+                now_unix: now,
+            }),
+            ActiveListingCount::NotReady { count: 50 }
+        );
+
+        // Stale generation past `LISTING_ALIVE_MAX_STALENESS_SECS`.
+        assert_eq!(
+            evaluate_active_listing_count(ActiveListingCountRow {
+                total: 500,
+                is_seeded: 1,
+                seeded_at_unix: now - 10_000,
+                last_refresh_unix: now - LISTING_ALIVE_MAX_STALENESS_SECS - 1,
+                now_unix: now,
+            }),
+            ActiveListingCount::NotReady { count: 500 }
+        );
+
+        // Genuine zero: seeded, post-seed refresh completed and fresh.
+        assert_eq!(
+            evaluate_active_listing_count(ActiveListingCountRow {
+                total: 0,
+                is_seeded: 1,
+                seeded_at_unix: seeded,
+                last_refresh_unix: fresh_refresh,
+                now_unix: now,
+            }),
+            ActiveListingCount::Ready(0)
+        );
+
+        // Healthy positive count.
+        assert_eq!(
+            evaluate_active_listing_count(ActiveListingCountRow {
+                total: 12_345,
+                is_seeded: 1,
+                seeded_at_unix: seeded,
+                last_refresh_unix: fresh_refresh,
+                now_unix: now,
+            }),
+            ActiveListingCount::Ready(12_345)
+        );
     }
 }

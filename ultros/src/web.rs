@@ -1141,20 +1141,26 @@ fn cached_json(
 
 /// JSON response backed by a pre-compressed [`encoded_body::EncodedBody`] slab,
 /// negotiating `Accept-Encoding` (`zstd`/`br`/`gzip`/`identity`) and setting
-/// `Vary: accept-encoding` alongside public CDN `Cache-Control`.
+/// `Vary: accept-encoding` alongside age-adjusted public CDN `Cache-Control`.
 pub(crate) async fn cached_encoded_json(
-    body: &Arc<encoded_body::EncodedBody>,
+    loaded: &json_cache::SwrValue,
     headers: &axum::http::HeaderMap,
     ttl: std::time::Duration,
 ) -> axum::response::Response {
     let secs = ttl.as_secs();
     let swr = secs.saturating_mul(4).clamp(60, 1_800);
-    body.into_json_response(
-        headers,
-        api::public_cache_control(secs, swr, api::PUBLIC_STALE_IF_ERROR_SECS),
-        &[],
-    )
-    .await
+    let cache_control = api::public_cache_control_for_age(
+        ttl,
+        std::time::Duration::from_secs(swr),
+        api::PUBLIC_STALE_IF_ERROR_SECS,
+        loaded.disposition == json_cache::SwrDisposition::Stale,
+        loaded.age,
+        loaded.remaining_stale,
+    );
+    loaded
+        .body
+        .into_json_response(headers, cache_control, &[])
+        .await
 }
 
 /// JSON response for degraded `200 OK` fallbacks (e.g. ClickHouse soft-fail)

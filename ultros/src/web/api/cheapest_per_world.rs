@@ -14,7 +14,7 @@ use crate::{
     analyzer_service::{AnalyzerService, CheapestListings},
     web::{
         error::{SharedWebError, WebError},
-        json_cache::{JsonCache, SwrLoad},
+        json_cache::{JsonCache, SwrDisposition, SwrLoad},
     },
 };
 
@@ -23,7 +23,7 @@ use crate::{
 pub(crate) type CheapestCache = JsonCache<(AnySelector, bool)>;
 
 pub(crate) fn new_cheapest_cache() -> CheapestCache {
-    JsonCache::with_budget(256, 64 * 1024 * 1024, 8)
+    JsonCache::with_swr_budget(256, 64 * 1024 * 1024, 32)
 }
 
 #[derive(Serialize, Debug)]
@@ -136,13 +136,17 @@ pub(crate) async fn cheapest_per_world(
         "disposition" => cached.disposition.as_str()
     )
     .increment(1);
+    let cache_control = super::public_cache_control_for_age(
+        Duration::from_secs(15),
+        Duration::from_secs(60),
+        super::PUBLIC_STALE_IF_ERROR_SECS,
+        cached.disposition == SwrDisposition::Stale,
+        cached.age,
+        cached.remaining_stale,
+    );
     Ok(cached
         .body
-        .into_json_response(
-            &headers,
-            super::public_cache_control(15, 60, super::PUBLIC_STALE_IF_ERROR_SECS),
-            &[],
-        )
+        .into_json_response(&headers, cache_control, &[])
         .await)
 }
 

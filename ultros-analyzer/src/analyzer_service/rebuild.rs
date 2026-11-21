@@ -32,6 +32,41 @@ where
     Ok(history)
 }
 
+/// Stage incremental post-snapshot sales and merge them into existing per-world
+/// histories without holding any write lock across a database read or leaving
+/// partial updates if the stream fails midway.
+pub(super) async fn merge_history_since<S, E>(
+    worlds: &BTreeMap<i32, tokio::sync::RwLock<super::SaleHistory>>,
+    stream: S,
+) -> Result<u64, E>
+where
+    S: futures::Stream<Item = Result<ultros_db::sales::AbbreviatedSaleData, E>>,
+{
+    use futures::TryStreamExt;
+
+    let mut staged: BTreeMap<i32, Vec<ultros_db::sales::AbbreviatedSaleData>> = BTreeMap::new();
+    futures::pin_mut!(stream);
+    while let Some(value) = stream.try_next().await? {
+        if worlds.contains_key(&value.world_id) {
+            staged.entry(value.world_id).or_default().push(value);
+        } else {
+            super::skipped_event("db_backfill_sale", "unknown_world");
+        }
+    }
+    let mut merged = 0u64;
+    for (world_id, sales) in staged {
+        if let Some(lock) = worlds.get(&world_id) {
+            let mut history = lock.write().await;
+            for sale in &sales {
+                if history.merge_backfill_sale(sale) {
+                    merged += 1;
+                }
+            }
+        }
+    }
+    Ok(merged)
+}
+
 type ChangedKeys = BTreeMap<AnySelector, BTreeSet<ItemKey>>;
 
 #[derive(Default)]

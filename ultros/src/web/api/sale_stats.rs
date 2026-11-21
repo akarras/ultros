@@ -79,7 +79,7 @@ pub(crate) async fn get_sale_stats(
         "disposition" => disposition
     )
     .increment(1);
-    Ok(cached_response(&cached.body, &headers, disposition).await)
+    Ok(cached_response(&cached, &headers).await)
 }
 
 async fn load_sale_stats(

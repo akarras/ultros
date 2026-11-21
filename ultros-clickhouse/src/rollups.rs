@@ -678,10 +678,29 @@ pub async fn refresh_all(ch: &ClickHouseClient) -> Result<(), ClickHouseError> {
     if let Err(e) = refresh_sales_hourly(ch).await {
         tracing::warn!(error = ?e, "sales_hourly refresh failed");
     }
-    if let Err(e) = refresh_listing_alive(ch).await {
-        tracing::warn!(error = ?e, "listing_alive refresh failed");
-    }
+    refresh_listing_alive_if_seeded(ch).await;
     Ok(())
+}
+
+/// Run [`refresh_listing_alive`] only once `_listing_events_seed` exists so a
+/// scheduled refresh racing an in-flight seed stream cannot materialize a
+/// partial `listing_alive` snapshot.
+async fn refresh_listing_alive_if_seeded(ch: &ClickHouseClient) {
+    match crate::listing_seed::already_seeded(ch).await {
+        Ok(true) => {
+            if let Err(e) = refresh_listing_alive(ch).await {
+                tracing::warn!(error = ?e, "listing_alive refresh failed");
+            }
+        }
+        Ok(false) => {
+            tracing::info!(
+                "skipping listing_alive refresh while initial listing_events seed is pending"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(error = ?e, "could not check listing_events seed marker before listing_alive refresh");
+        }
+    }
 }
 
 // Convenience re-export so callers can pass &Client directly if they have
@@ -812,9 +831,7 @@ pub async fn run_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancel
                     }
                 }
                 _ = tick_listing_alive.tick() => {
-                    if let Err(e) = refresh_listing_alive(&ch).await {
-                        tracing::warn!(error = ?e, "listing_alive refresh failed");
-                    }
+                    refresh_listing_alive_if_seeded(&ch).await;
                 }
         }
     }

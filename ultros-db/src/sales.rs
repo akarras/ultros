@@ -366,6 +366,20 @@ impl UltrosDb {
             .await
     }
 
+    /// Stream compact recent-sale projection rows with `sold_date >= since`.
+    ///
+    /// Used after restoring an analyzer snapshot to backfill sales recorded
+    /// between the snapshot timestamp and restart without scanning all of
+    /// `sale_history`.
+    pub async fn sales_since(
+        &self,
+        since: NaiveDateTime,
+    ) -> Result<impl Stream<Item = Result<AbbreviatedSaleData, DbErr>> + '_, DbErr> {
+        AbbreviatedSaleData::find_by_statement(self.sales_since_statement(since))
+            .stream(&self.db)
+            .await
+    }
+
     #[instrument(skip(self))]
     pub async fn stream_sales_within_days(
         &self,

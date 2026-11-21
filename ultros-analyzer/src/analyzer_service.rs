@@ -4,11 +4,12 @@ use std::{
     cmp::Reverse,
     collections::{BTreeMap, BTreeSet, btree_map::Entry},
     fmt::Display,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::SystemTime,
 };
 
 use chrono::{Duration, NaiveDateTime, Utc};
@@ -211,6 +212,24 @@ impl SaleHistory {
             entries.push(sale);
         }
         entries.sort_by_key(|sale| Reverse(sale.sale_date));
+    }
+
+    /// Merge a backfilled sale from Postgres after snapshot restore, skipping
+    /// exact `(sale_date, price_per_item)` duplicates already captured in the
+    /// snapshot overlap window. Returns `true` when the sale was added.
+    fn merge_backfill_sale(&mut self, sale: &ultros_db::sales::AbbreviatedSaleData) -> bool {
+        let key: ItemKey = sale.into();
+        let summary: SaleSummary = sale.into();
+        if self.item_map.get(&key).is_some_and(|entries| {
+            entries.iter().any(|existing| {
+                existing.sale_date == summary.sale_date
+                    && existing.price_per_item == summary.price_per_item
+            })
+        }) {
+            return false;
+        }
+        self.add_sale(sale);
+        true
     }
 }
 
@@ -520,46 +539,36 @@ const INITIAL_SNAPSHOT_DELAY: std::time::Duration = std::time::Duration::from_se
 
 /// Maximum age of an existing on-disk snapshot that lets SIGTERM skip writing
 /// another snapshot. Keeps shutdown off the multi-second gzip write path when
-/// a recent periodic snapshot is already available for fast restart.
+/// a verified periodic snapshot is already intact on disk; the next boot
+/// backfills sales recorded after `snapshot_ts` from `recent_sale_history`.
 const SHUTDOWN_SNAPSHOT_MAX_AGE: Duration = Duration::minutes(20);
 
-/// Whether `directory` already holds a non-empty, valid-looking snapshot whose
-/// filename timestamp is between `0` and `max_age` old relative to `now`.
-///
-/// Ignores `.partial-snapshot-*` temp files, unparseable names, future-dated
-/// filenames (clock skew), and 0-byte files.
-async fn has_recent_snapshot_in(
-    directory: &Path,
-    now: chrono::DateTime<Utc>,
-    max_age: Duration,
-) -> bool {
-    let mut dir = match fs::read_dir(directory).await {
-        Ok(dir) => dir,
-        Err(_) => return false,
-    };
-    while let Ok(Some(entry)) = dir.next_entry().await {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if !is_snapshot_name(&name) {
-            continue;
-        }
-        let Some(age) = snapshot_age(&name, now) else {
-            continue;
-        };
-        if age < Duration::zero() || age > max_age {
-            continue;
-        }
-        if entry.metadata().await.is_ok_and(|meta| meta.len() > 0) {
-            return true;
-        }
-    }
-    false
+/// Overlap cushion subtracted from a restored snapshot's timestamp when
+/// backfilling sales from Postgres so sales committed during the snapshot
+/// write or with slight clock skew are never missed.
+const SNAPSHOT_BACKFILL_OVERLAP: Duration = Duration::seconds(60);
+
+/// Metadata for a snapshot generation that this process either wrote cleanly
+/// via [`snapshot::write`] + atomic rename or decoded cleanly via
+/// [`snapshot::read`]. Used at shutdown to decide in O(1) `stat` time whether
+/// a restorable snapshot is still intact on disk without decompressing during
+/// SIGTERM.
+#[derive(Clone, Debug)]
+struct VerifiedSnapshot {
+    path: PathBuf,
+    timestamp: chrono::DateTime<Utc>,
+    len: u64,
+    modified: Option<SystemTime>,
 }
 
 /// Whether `file_name` is a finished snapshot, as opposed to the
-/// `.partial-snapshot-*` temp file `serialize_state` renames from.
+/// `.partial-snapshot-*` temp file `serialize_state` renames from or any
+/// stray `.part` suffix.
 fn is_snapshot_name(file_name: &str) -> bool {
     file_name.starts_with("snapshot-")
+        && (file_name.ends_with(".columns.gz")
+            || file_name.ends_with(".bin.gz")
+            || file_name.ends_with(".bin"))
 }
 
 /// Age of a snapshot from its filename, which `serialize_state` writes as
@@ -616,6 +625,9 @@ pub struct AnalyzerService {
     /// collapses a burst into a single pass instead of queueing one per drop.
     cheapest_resync_in_flight: Arc<AtomicBool>,
     cheapest_rebuild: Arc<rebuild::RebuildTracker>,
+    /// Most recent snapshot generation verified by this process via a clean
+    /// [`snapshot::write`] + atomic rename or [`snapshot::read`].
+    last_verified_snapshot: Arc<Mutex<Option<VerifiedSnapshot>>>,
     /// Records every move of a world-level lowest price into the ClickHouse
     /// `floor_changes` table. Fire-and-forget; the periodic Postgres resync is
     /// what heals a dropped row.
@@ -681,6 +693,7 @@ impl AnalyzerService {
             initiated: Arc::default(),
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
+            last_verified_snapshot: Arc::default(),
             floor_writer,
             ch_client,
         };
@@ -730,6 +743,59 @@ impl AnalyzerService {
         (temp, shutdown)
     }
 
+    fn record_verified_snapshot(
+        &self,
+        path: PathBuf,
+        timestamp: chrono::DateTime<Utc>,
+        meta: &std::fs::Metadata,
+    ) {
+        let mut guard = self
+            .last_verified_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = Some(VerifiedSnapshot {
+            path,
+            timestamp,
+            len: meta.len(),
+            modified: meta.modified().ok(),
+        });
+    }
+
+    async fn has_verified_recent_snapshot_in(
+        &self,
+        directory: &Path,
+        now: chrono::DateTime<Utc>,
+        max_age: Duration,
+    ) -> bool {
+        let verified = self
+            .last_verified_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let Some(verified) = verified else {
+            return false;
+        };
+        if verified.path.parent() != Some(directory) {
+            return false;
+        }
+        let age = now - verified.timestamp;
+        if age < Duration::zero() || age > max_age {
+            return false;
+        }
+        let Ok(meta) = fs::metadata(&verified.path).await else {
+            return false;
+        };
+        if !meta.is_file() || meta.len() == 0 || meta.len() != verified.len {
+            return false;
+        }
+        if let Some(expected_mtime) = verified.modified
+            && meta.modified().ok() != Some(expected_mtime)
+        {
+            return false;
+        }
+        true
+    }
+
     async fn serialize_state_on_shutdown_in(&self, directory: &Path, now: chrono::DateTime<Utc>) {
         if !self.initiated.load(Ordering::Relaxed) {
             info!("Analyzer not initialized, skipping shutdown snapshot");
@@ -740,10 +806,13 @@ impl AnalyzerService {
             .increment(1);
             return;
         }
-        if has_recent_snapshot_in(directory, now, SHUTDOWN_SNAPSHOT_MAX_AGE).await {
+        if self
+            .has_verified_recent_snapshot_in(directory, now, SHUTDOWN_SNAPSHOT_MAX_AGE)
+            .await
+        {
             info!(
                 max_age_minutes = SHUTDOWN_SNAPSHOT_MAX_AGE.num_minutes(),
-                "skipping shutdown analyzer snapshot; recent periodic snapshot exists on disk"
+                "skipping shutdown analyzer snapshot; verified recent snapshot exists on disk"
             );
             metrics::counter!(
                 "ultros_analyzer_shutdown_snapshot_total",
@@ -816,6 +885,11 @@ impl AnalyzerService {
             }
         };
         fs::rename(&temp_filename, &filename).await?;
+        if let Some(snapshot_ts) = chrono::DateTime::from_timestamp(timestamp, 0)
+            && let Ok(meta) = fs::metadata(&filename).await
+        {
+            self.record_verified_snapshot(filename.clone(), snapshot_ts, &meta);
+        }
         metrics::gauge!("ultros_analyzer_snapshot_uncompressed_bytes")
             .set(stats.uncompressed_bytes as f64);
         metrics::gauge!("ultros_analyzer_snapshot_compressed_bytes")
@@ -848,20 +922,22 @@ impl AnalyzerService {
         Ok(())
     }
 
-    async fn try_restore_from_snapshot(&self) -> bool {
+    async fn try_restore_from_snapshot(&self) -> Option<chrono::DateTime<Utc>> {
         self.try_restore_from_snapshot_in(Path::new("analyzer-data"), Utc::now())
             .await
     }
 
     /// `now` is injected so the age check can be tested without sleeping.
+    /// Returns the timestamp embedded in the restored snapshot's filename so
+    /// the caller can backfill newer sales from Postgres.
     async fn try_restore_from_snapshot_in(
         &self,
         directory: &Path,
         now: chrono::DateTime<Utc>,
-    ) -> bool {
+    ) -> Option<chrono::DateTime<Utc>> {
         let mut dir = match fs::read_dir(directory).await {
             Ok(dir) => dir,
-            Err(_) => return false,
+            Err(_) => return None,
         };
         let mut entries = vec![];
         while let Ok(Some(entry)) = dir.next_entry().await {
@@ -921,7 +997,7 @@ impl AnalyzerService {
                 );
                 metrics::counter!("ultros_analyzer_snapshot_rejected_total", "reason" => "too_old")
                     .increment(1);
-                return false;
+                return None;
             }
 
             let read_path = path.clone();
@@ -953,15 +1029,19 @@ impl AnalyzerService {
                     *write = value;
                 }
             }
+            let snapshot_ts = now - age;
+            if let Ok(meta) = fs::metadata(&path).await {
+                self.record_verified_snapshot(path.clone(), snapshot_ts, &meta);
+            }
             info!(
                 ?path,
                 age_seconds = age.num_seconds(),
                 "restored analyzer snapshot"
             );
             metrics::gauge!("ultros_analyzer_snapshot_age_seconds").set(age.num_seconds() as f64);
-            return true;
+            return Some(snapshot_ts);
         }
-        false
+        None
     }
 
     /// Rebuilds [`Self::cheapest_items`] from Postgres, replacing whatever is
@@ -1173,16 +1253,35 @@ impl AnalyzerService {
         world_cache: Arc<WorldCache>,
         token: CancellationToken,
     ) {
-        let mut history_ready = self.try_restore_from_snapshot().await;
+        let restored_snapshot_ts = self.try_restore_from_snapshot().await;
+        let mut history_ready = false;
         loop {
             let load = async {
                 if !history_ready {
-                    let stream = ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32).await?;
-                    let history =
-                        rebuild::load_history(self.recent_sale_history.keys().copied(), stream)
-                            .await?;
-                    for (world, history) in history {
-                        *self.recent_sale_history[&world].write().await = history;
+                    if let Some(snapshot_ts) = restored_snapshot_ts {
+                        // A skipped shutdown snapshot can leave up to
+                        // `SHUTDOWN_SNAPSHOT_MAX_AGE` of sales missing from the
+                        // restored file. Replay only the compact delta since
+                        // `snapshot_ts - SNAPSHOT_BACKFILL_OVERLAP` from
+                        // `recent_sale_history` so graceful deploys and restart
+                        // loops lose zero sales.
+                        let since = (snapshot_ts - SNAPSHOT_BACKFILL_OVERLAP).naive_utc();
+                        let stream = ultros_db.sales_since(since).await?;
+                        let merged =
+                            rebuild::merge_history_since(&self.recent_sale_history, stream).await?;
+                        info!(
+                            merged_sales = merged,
+                            %since,
+                            "backfilled post-snapshot sales into analyzer history"
+                        );
+                    } else {
+                        let stream = ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32).await?;
+                        let history =
+                            rebuild::load_history(self.recent_sale_history.keys().copied(), stream)
+                                .await?;
+                        for (world, history) in history {
+                            *self.recent_sale_history[&world].write().await = history;
+                        }
                     }
                     history_ready = true;
                 }
@@ -2583,6 +2682,7 @@ mod test {
             initiated: Arc::new(AtomicBool::new(true)),
             cheapest_resync_in_flight: Arc::new(AtomicBool::new(false)),
             cheapest_rebuild: Arc::default(),
+            last_verified_snapshot: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client,
         }
@@ -3448,6 +3548,7 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
+            last_verified_snapshot: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -3502,6 +3603,7 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
+            last_verified_snapshot: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -3509,6 +3611,7 @@ mod tests {
             new_analyzer_service
                 .try_restore_from_snapshot_in(&data_dir, Utc::now())
                 .await
+                .is_some()
         );
 
         // Check that the data was restored correctly.
@@ -3539,6 +3642,7 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(true)),
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
+            last_verified_snapshot: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -3560,6 +3664,7 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
+            last_verified_snapshot: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -3567,6 +3672,7 @@ mod tests {
             restore_dc_analyzer_service
                 .try_restore_from_snapshot_in(&data_dir, Utc::now())
                 .await
+                .is_some()
         );
         let restored_listings = restore_dc_cheapest_items
             .get(&AnySelector::Datacenter(1))
@@ -3616,28 +3722,32 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(false)),
             cheapest_resync_in_flight: Arc::default(),
             cheapest_rebuild: Arc::default(),
+            last_verified_snapshot: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
         assert!(
             restore_target
                 .try_restore_from_snapshot_in(&data_dir, Utc::now())
-                .await,
+                .await
+                .is_some(),
             "a snapshot written seconds ago must still be restorable"
         );
         assert!(
-            !restore_target
+            restore_target
                 .try_restore_from_snapshot_in(
                     &data_dir,
                     Utc::now() + MAX_SNAPSHOT_AGE + chrono::Duration::minutes(1)
                 )
-                .await,
+                .await
+                .is_none(),
             "a snapshot past MAX_SNAPSHOT_AGE must be rejected so run_worker falls back to the DB"
         );
         assert!(
-            !restore_target
+            restore_target
                 .try_restore_from_snapshot_in(&data_dir, Utc::now() - chrono::Duration::hours(1))
-                .await,
+                .await
+                .is_none(),
             "a future-dated snapshot (clock skew / copied file) must be rejected, \
              not treated as fresh because its negative age passes the max-age check"
         );
@@ -3669,7 +3779,8 @@ mod tests {
         assert!(
             restore_target
                 .try_restore_from_snapshot_in(&data_dir, Utc::now() + chrono::Duration::seconds(2))
-                .await,
+                .await
+                .is_some(),
             "a truncated newest snapshot must be skipped, not abort the restore"
         );
         tokio::fs::remove_file(&torn).await.unwrap();
@@ -3687,7 +3798,8 @@ mod tests {
         assert!(
             restore_target
                 .try_restore_from_snapshot_in(&data_dir, Utc::now() + chrono::Duration::seconds(2))
-                .await,
+                .await
+                .is_some(),
             "a leftover partial write must be invisible to the restore scan"
         );
         tokio::fs::remove_file(&partial).await.unwrap();
@@ -3696,7 +3808,9 @@ mod tests {
     #[test]
     fn partial_writes_are_not_mistaken_for_snapshots() {
         assert!(is_snapshot_name("snapshot-1787249095.bin.gz"));
+        assert!(is_snapshot_name("snapshot-1787249095.columns.gz"));
         assert!(!is_snapshot_name(".partial-snapshot-1787249095.bin.gz"));
+        assert!(!is_snapshot_name("snapshot-1787249095.columns.gz.part"));
 
         // The reason the temp file is not named `snapshot-<ts>.bin.gz.part`:
         // `snapshot_age` stops at the first `.`, so such a name would parse as
@@ -3886,6 +4000,7 @@ mod tests {
             initiated: Arc::new(AtomicBool::new(true)),
             cheapest_resync_in_flight: Arc::new(AtomicBool::new(false)),
             cheapest_rebuild: Arc::default(),
+            last_verified_snapshot: Arc::default(),
             floor_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client,
         }
@@ -4016,69 +4131,193 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shutdown_snapshot_skips_when_recent_and_writes_when_stale_or_missing() {
+    async fn shutdown_snapshot_requires_verified_restorable_generation() {
         let dir = tempfile::tempdir().unwrap();
-        let now = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
-
-        // Empty dir -> no recent snapshot.
-        assert!(!has_recent_snapshot_in(dir.path(), now, SHUTDOWN_SNAPSHOT_MAX_AGE).await);
-
-        // Partial, future-dated, and zero-byte files must never suppress a shutdown write.
-        let partial = dir.path().join(format!(
-            ".partial-snapshot-{}.columns.gz",
-            now.timestamp() - 60
-        ));
-        tokio::fs::write(&partial, b"partial").await.unwrap();
-        let future = dir
-            .path()
-            .join(format!("snapshot-{}.columns.gz", now.timestamp() + 60));
-        tokio::fs::write(&future, b"future").await.unwrap();
-        let empty = dir
-            .path()
-            .join(format!("snapshot-{}.columns.gz", now.timestamp() - 30));
-        tokio::fs::write(&empty, b"").await.unwrap();
-        let stale = dir.path().join(format!(
-            "snapshot-{}.columns.gz",
-            now.timestamp() - SHUTDOWN_SNAPSHOT_MAX_AGE.num_seconds() - 60
-        ));
-        tokio::fs::write(&stale, b"stale").await.unwrap();
-
-        assert!(!has_recent_snapshot_in(dir.path(), now, SHUTDOWN_SNAPSHOT_MAX_AGE).await);
-
-        // With no recent snapshot on disk, shutdown writes one.
         let analyzer = populated_analyzer(ultros_clickhouse::ClickHouseClient::from_env());
-        analyzer
-            .serialize_state_on_shutdown_in(dir.path(), now)
-            .await;
 
-        let count_snapshots = || {
-            std::fs::read_dir(dir.path())
+        let snapshot_files = || {
+            let mut paths: Vec<PathBuf> = std::fs::read_dir(dir.path())
                 .unwrap()
                 .filter_map(|e| e.ok())
-                .filter(|e| {
-                    let name = e.file_name();
-                    let name = name.to_string_lossy();
-                    is_snapshot_name(&name) && e.metadata().is_ok_and(|m| m.len() > 0)
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(is_snapshot_name)
                 })
-                .count()
+                .collect();
+            paths.sort();
+            paths
         };
-        // `future` + `stale` + the newly written snapshot = 3 non-empty snapshot files.
-        assert_eq!(count_snapshots(), 3);
 
-        // Now place a fresh snapshot relative to `now` and confirm shutdown skips writing.
-        let fresh = dir
+        // Corrupt, truncated, and `.part` files on disk must NEVER suppress a
+        // shutdown write — even with recent timestamps.
+        let now = Utc::now();
+        let truncated = dir
             .path()
-            .join(format!("snapshot-{}.columns.gz", now.timestamp() - 300));
-        tokio::fs::write(&fresh, b"fresh-bytes").await.unwrap();
-        assert!(has_recent_snapshot_in(dir.path(), now, SHUTDOWN_SNAPSHOT_MAX_AGE).await);
-        let before = count_snapshots();
+            .join(format!("snapshot-{}.columns.gz", now.timestamp() - 30));
+        tokio::fs::write(&truncated, &[0x1f, 0x8b, 0x08, 0x00, 0x00])
+            .await
+            .unwrap();
+        let part_file = dir
+            .path()
+            .join(format!("snapshot-{}.columns.gz.part", now.timestamp() - 10));
+        tokio::fs::write(&part_file, b"partial-tail").await.unwrap();
+
+        // Attempt to restore from the corrupt directory -> fails, leaves
+        // `last_verified_snapshot` empty.
+        assert!(
+            analyzer
+                .try_restore_from_snapshot_in(dir.path(), now)
+                .await
+                .is_none()
+        );
+        assert!(
+            !analyzer
+                .has_verified_recent_snapshot_in(dir.path(), now, SHUTDOWN_SNAPSHOT_MAX_AGE)
+                .await
+        );
+
+        // Shutdown must therefore write a real, restorable snapshot.
         analyzer
             .serialize_state_on_shutdown_in(dir.path(), now)
             .await;
+        let files = snapshot_files();
         assert_eq!(
-            count_snapshots(),
-            before,
-            "shutdown must skip writing when a recent snapshot is already on disk"
+            files.len(),
+            2,
+            "shutdown must write a real snapshot when only a truncated file exists"
         );
+        let written_path = files
+            .iter()
+            .find(|p| *p != &truncated)
+            .expect("new snapshot written")
+            .clone();
+        // Verify the written file is genuinely restorable.
+        snapshot::read(&written_path).expect("shutdown snapshot must decode cleanly");
+
+        // Now that this analyzer holds a verified recent snapshot generation,
+        // another shutdown within `SHUTDOWN_SNAPSHOT_MAX_AGE` skips writing.
+        let before_count = snapshot_files().len();
+        analyzer
+            .serialize_state_on_shutdown_in(dir.path(), Utc::now() + chrono::Duration::seconds(5))
+            .await;
+        assert_eq!(
+            snapshot_files().len(),
+            before_count,
+            "verified intact snapshot within skip window must suppress shutdown write"
+        );
+
+        // If the verified snapshot ages past `SHUTDOWN_SNAPSHOT_MAX_AGE`,
+        // shutdown must NOT skip.
+        assert!(
+            !analyzer
+                .has_verified_recent_snapshot_in(
+                    dir.path(),
+                    Utc::now() + SHUTDOWN_SNAPSHOT_MAX_AGE + chrono::Duration::seconds(60),
+                    SHUTDOWN_SNAPSHOT_MAX_AGE,
+                )
+                .await
+        );
+
+        // If the verified snapshot on disk is truncated, the O(1) metadata
+        // check must catch it and force a fresh shutdown write.
+        tokio::fs::write(&written_path, b"trunc").await.unwrap();
+        assert!(
+            !analyzer
+                .has_verified_recent_snapshot_in(dir.path(), Utc::now(), SHUTDOWN_SNAPSHOT_MAX_AGE)
+                .await
+        );
+        // Sleep 1s so the new snapshot filename gets a distinct second.
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        analyzer
+            .serialize_state_on_shutdown_in(dir.path(), Utc::now())
+            .await;
+        assert_eq!(
+            snapshot_files().len(),
+            before_count + 1,
+            "truncating the verified snapshot must trigger a fresh shutdown write"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_from_snapshot_then_backfill_merges_newer_sales_without_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = populated_analyzer(ultros_clickhouse::ClickHouseClient::from_env());
+        source.serialize_state_in(dir.path(), false).await.unwrap();
+
+        let target = AnalyzerService {
+            recent_sale_history: Arc::new(BTreeMap::from([(54, RwLock::default())])),
+            cheapest_items: Arc::new(BTreeMap::from([(
+                AnySelector::World(54),
+                RwLock::default(),
+            )])),
+            initiated: Arc::new(AtomicBool::new(false)),
+            cheapest_resync_in_flight: Arc::default(),
+            cheapest_rebuild: Arc::default(),
+            last_verified_snapshot: Arc::default(),
+            floor_writer: ultros_clickhouse::writer::Writer::disabled(),
+            ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
+        };
+
+        let restored_ts = target
+            .try_restore_from_snapshot_in(dir.path(), Utc::now() + chrono::Duration::seconds(1))
+            .await
+            .expect("real snapshot must restore");
+        assert!(
+            target
+                .has_verified_recent_snapshot_in(
+                    dir.path(),
+                    restored_ts + chrono::Duration::seconds(30),
+                    SHUTDOWN_SNAPSHOT_MAX_AGE,
+                )
+                .await,
+            "restored snapshot must count as a verified generation"
+        );
+
+        let existing_sale = {
+            let guard = target.recent_sale_history[&54].read().await;
+            guard.item_map[&ItemKey {
+                item_id: 1,
+                hq: false,
+            }][0]
+        };
+
+        // Simulate post-restore backfill returning one overlapping sale already
+        // in the snapshot plus one newer sale recorded after the snapshot.
+        let newer_date = existing_sale.sale_date + chrono::Duration::minutes(5);
+        let backfill_rows = [
+            Ok::<_, &str>(ultros_db::sales::AbbreviatedSaleData {
+                sold_item_id: 1,
+                hq: false,
+                price_per_item: existing_sale.price_per_item,
+                sold_date: existing_sale.sale_date,
+                world_id: 54,
+            }),
+            Ok(ultros_db::sales::AbbreviatedSaleData {
+                sold_item_id: 1,
+                hq: false,
+                price_per_item: 2_500,
+                sold_date: newer_date,
+                world_id: 54,
+            }),
+        ];
+        let merged = rebuild::merge_history_since(
+            &target.recent_sale_history,
+            futures::stream::iter(backfill_rows),
+        )
+        .await
+        .unwrap();
+        assert_eq!(merged, 1, "overlapping sale must be deduplicated");
+
+        let guard = target.recent_sale_history[&54].read().await;
+        let sales = &guard.item_map[&ItemKey {
+            item_id: 1,
+            hq: false,
+        }];
+        assert_eq!(sales.len(), 4);
+        assert_eq!(sales[0].price_per_item, 2_500);
+        assert_eq!(sales[0].sale_date, newer_date);
+        assert_eq!(sales[1].price_per_item, existing_sale.price_per_item);
     }
 }
