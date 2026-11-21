@@ -195,12 +195,12 @@ impl UltrosDb {
             return Ok(vec![]);
         }
         // Insert with RETURNING so the rows we hand back carry their real
-        // Postgres ids. The ClickHouse dual-write uses `sale_history.id` as the
-        // discriminator in the `sales` ORDER BY key, so returning `id: 0` here
-        // would (a) collapse distinct same-second sales of the same
-        // item/hq/world into one ClickHouse row and (b) make the backfill --
-        // which reads real ids straight out of Postgres -- write a *second*,
-        // never-merging copy of every sale the live path already wrote.
+        // Postgres ids. `clickhouse_sale_outbox` and ClickHouse `sales` use
+        // `sale_history.id` as the discriminator in the `sales` ORDER BY key,
+        // so returning `id: 0` here would (a) collapse distinct same-second
+        // sales of the same item/hq/world into one ClickHouse row and (b) make
+        // the backfill -- which reads real ids straight out of Postgres --
+        // write a *second*, never-merging copy of every sale the outbox wrote.
         let inserted = Entity::insert_many(sales.into_iter().map(|sale| {
             let buyer = buyers
                 .get(&sale.buyer_name)

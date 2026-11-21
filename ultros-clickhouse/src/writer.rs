@@ -187,7 +187,7 @@ impl<R: TableRow> Writer<R> {
     }
 }
 
-pub(crate) async fn initialize(client: &ClickHouseClient, token: &CancellationToken) -> bool {
+async fn initialize(client: &ClickHouseClient, token: &CancellationToken) -> bool {
     loop {
         let result = tokio::select! {
             _ = token.cancelled() => return false,

@@ -2,13 +2,16 @@
 //!
 //! [`enqueue_sales`] runs inside the same transaction as `sale_history`
 //! inserts (`UltrosDb::update_sales`). A background drainer fetches committed
-//! batches in `id ASC` order, writes them to ClickHouse's `ReplacingMergeTree`
-//! `sales` table, and deletes acknowledged outbox IDs only after ClickHouse
-//! confirms the insert.
+//! non-quarantined batches in `id ASC` order, writes them to ClickHouse's
+//! `ReplacingMergeTree` `sales` table, and deletes acknowledged outbox IDs
+//! only after ClickHouse confirms the insert.
 //!
 //! Because acknowledgement deletes exact row IDs rather than advancing a
 //! high-water mark, transactions that commit out of `id` order — and wrapped
-//! negative `sale_history.id` (`pg_id`) values — can never be skipped.
+//! negative `sale_history.id` (`pg_id`) values — can never be skipped. Rows
+//! whose payload cannot be represented in ClickHouse (such as pre-1970
+//! timestamps) are durably marked with `quarantined_reason` so they stay
+//! operator-visible without stalling valid sales behind them.
 
 use anyhow::Result;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -35,6 +38,16 @@ pub struct SaleOutboxRow {
     pub buying_character_id: i32,
     pub buyer_name: String,
     pub created_at: DateTime<Utc>,
+}
+
+/// Cheap O(1) outbox backlog snapshot computed from the partial pending index.
+#[derive(Clone, Copy, Debug, Default, PartialEq, FromQueryResult)]
+pub struct SaleOutboxMetrics {
+    /// Approximate pending rows (`max(id) - min(id) + 1`, or `0` when empty).
+    /// Avoids full-table `COUNT(*)` scans during multi-hour ClickHouse outages.
+    pub approx_pending_rows: i64,
+    /// Age in seconds of the oldest non-quarantined row (`0.0` when empty).
+    pub oldest_age_seconds: f64,
 }
 
 /// Insert newly recorded sales into `clickhouse_sale_outbox` inside the
@@ -114,13 +127,9 @@ fn build_ack_sql(chunk: &[i64]) -> (String, Vec<Value>) {
     (sql, values)
 }
 
-#[derive(FromQueryResult)]
-struct CountRow {
-    count: i64,
-}
-
 impl UltrosDb {
-    /// Fetch up to `limit` oldest committed rows from `clickhouse_sale_outbox`.
+    /// Fetch up to `limit` oldest committed non-quarantined rows from
+    /// `clickhouse_sale_outbox`.
     ///
     /// Runs outside any long-lived transaction so ClickHouse HTTP round-trips
     /// never hold Postgres connections or locks open.
@@ -133,6 +142,7 @@ impl UltrosDb {
             "SELECT id, pg_id, sold_date, item_id, hq, world_id, price_per_item, \
                     quantity, buying_character_id, buyer_name, created_at \
              FROM clickhouse_sale_outbox \
+             WHERE quarantined_reason IS NULL \
              ORDER BY id ASC \
              LIMIT $1",
             [limit.into()],
@@ -163,15 +173,55 @@ impl UltrosDb {
         Ok(deleted)
     }
 
-    /// Count rows currently pending in `clickhouse_sale_outbox` for metrics.
-    pub async fn count_sale_outbox_pending(&self) -> Result<u64> {
-        let row = CountRow::find_by_statement(Statement::from_string(
+    /// Durably quarantine rows that cannot be serialized into ClickHouse (for
+    /// example, timestamps outside ClickHouse's `DateTime` bounds) so valid
+    /// sales behind them keep draining while preserving operator visibility.
+    pub async fn quarantine_sale_outbox_rows(&self, rows: &[(i64, String)]) -> Result<u64> {
+        let mut updated = 0u64;
+        for (id, reason) in rows {
+            let res = self
+                .db
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "UPDATE clickhouse_sale_outbox \
+                     SET quarantined_reason = $2 \
+                     WHERE id = $1 AND quarantined_reason IS NULL",
+                    [(*id).into(), reason.clone().into()],
+                ))
+                .await?;
+            updated += res.rows_affected();
+        }
+        Ok(updated)
+    }
+
+    /// O(1) outbox backlog depth and oldest-row age from the partial pending
+    /// index (`clickhouse_sale_outbox_pending_idx`), safe to poll even during
+    /// prolonged ClickHouse outages without scanning the table.
+    pub async fn sale_outbox_metrics(&self) -> Result<SaleOutboxMetrics> {
+        let row = SaleOutboxMetrics::find_by_statement(Statement::from_string(
             DbBackend::Postgres,
-            "SELECT COUNT(*)::bigint AS count FROM clickhouse_sale_outbox",
+            "SELECT \
+                COALESCE( \
+                    (SELECT max(id) - min(id) + 1 \
+                     FROM clickhouse_sale_outbox \
+                     WHERE quarantined_reason IS NULL), \
+                    0 \
+                )::bigint AS approx_pending_rows, \
+                GREATEST( \
+                    COALESCE( \
+                        (SELECT EXTRACT(EPOCH FROM (now() - created_at)) \
+                         FROM clickhouse_sale_outbox \
+                         WHERE quarantined_reason IS NULL \
+                         ORDER BY id ASC \
+                         LIMIT 1), \
+                        0 \
+                    ), \
+                    0 \
+                )::double precision AS oldest_age_seconds",
         ))
         .one(&self.db)
         .await?;
-        Ok(row.map_or(0, |r| r.count.max(0) as u64))
+        Ok(row.unwrap_or_default())
     }
 }
 
@@ -231,12 +281,11 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires ULTROS_PLUGIN_TEST_DATABASE_URL pointing at a disposable loopback database"]
-    async fn update_sales_enqueues_and_drains_outbox_atomically_postgres() {
+    async fn update_sales_enqueues_quarantines_and_drains_outbox_atomically_postgres() {
         use universalis::{ItemId, SaleView, WorldId};
 
         let db = crate::common::test_db::connect().await;
         crate::common::test_db::seed_market(&db).await;
-        // Clear any leftover outbox rows from previous tests in this scratch DB.
         db.db
             .execute_raw(Statement::from_string(
                 DbBackend::Postgres,
@@ -268,11 +317,92 @@ mod tests {
         assert_eq!(pending[0].item_id, item.0);
         assert_eq!(pending[0].world_id, world.0);
         assert_eq!(pending[0].buyer_name, "OutboxBuyer");
-        assert_eq!(db.count_sale_outbox_pending().await.unwrap(), 1);
+        let stats = db.sale_outbox_metrics().await.unwrap();
+        assert_eq!(stats.approx_pending_rows, 1);
+
+        // Quarantining hides the row from future fetches without deleting it.
+        assert_eq!(
+            db.quarantine_sale_outbox_rows(&[(pending[0].id, "bad timestamp".into())])
+                .await
+                .unwrap(),
+            1
+        );
+        assert!(db.fetch_sale_outbox_batch(10).await.unwrap().is_empty());
+        assert_eq!(
+            db.sale_outbox_metrics().await.unwrap().approx_pending_rows,
+            0
+        );
 
         let acked = db.ack_sale_outbox_ids(&[pending[0].id]).await.unwrap();
         assert_eq!(acked, 1);
-        assert!(db.fetch_sale_outbox_batch(10).await.unwrap().is_empty());
-        assert_eq!(db.count_sale_outbox_pending().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires ULTROS_PLUGIN_TEST_DATABASE_URL pointing at a disposable loopback database"]
+    async fn failed_outbox_enqueue_rolls_back_sale_history_postgres() {
+        use crate::entity::sale_history;
+        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+        use universalis::{ItemId, SaleView, WorldId};
+
+        let db = crate::common::test_db::connect().await;
+        crate::common::test_db::seed_market(&db).await;
+        let world = WorldId(30001);
+        let item = ItemId(9098);
+        sale_history::Entity::delete_many()
+            .filter(sale_history::Column::WorldId.eq(world.0))
+            .filter(sale_history::Column::SoldItemId.eq(item.0))
+            .exec(&db.db)
+            .await
+            .unwrap();
+
+        // Force outbox inserts for this test item to fail inside the
+        // transaction so we can assert `sale_history` rolls back atomically.
+        db.db
+            .execute_raw(Statement::from_string(
+                DbBackend::Postgres,
+                "ALTER TABLE clickhouse_sale_outbox \
+                 DROP CONSTRAINT IF EXISTS test_reject_item_9098; \
+                 ALTER TABLE clickhouse_sale_outbox \
+                 ADD CONSTRAINT test_reject_item_9098 CHECK (item_id <> 9098)",
+            ))
+            .await
+            .unwrap();
+
+        let sale = SaleView {
+            hq: false,
+            price_per_unit: 999,
+            quantity: 1,
+            timestamp: DateTime::from_timestamp(1_700_222_222, 0).unwrap().into(),
+            on_mannequin: false,
+            world_name: None,
+            world_id: None,
+            buyer_name: "RollbackBuyer".into(),
+            total: 999,
+        };
+        let res = db.update_sales(vec![sale], item, world).await;
+
+        db.db
+            .execute_raw(Statement::from_string(
+                DbBackend::Postgres,
+                "ALTER TABLE clickhouse_sale_outbox \
+                 DROP CONSTRAINT IF EXISTS test_reject_item_9098",
+            ))
+            .await
+            .unwrap();
+
+        assert!(
+            res.is_err(),
+            "outbox constraint violation must fail update_sales"
+        );
+        let remaining = sale_history::Entity::find()
+            .filter(sale_history::Column::WorldId.eq(world.0))
+            .filter(sale_history::Column::SoldItemId.eq(item.0))
+            .all(&db.db)
+            .await
+            .unwrap();
+        assert!(
+            remaining.is_empty(),
+            "failed outbox enqueue must roll back the sale_history insert"
+        );
     }
 }

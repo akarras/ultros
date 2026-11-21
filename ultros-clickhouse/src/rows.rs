@@ -73,11 +73,28 @@ impl SaleRow {
         }
     }
 
-    /// Build a `SaleRow` from a transactional `clickhouse_sale_outbox` row.
-    pub fn from_outbox_row(r: &ultros_db::clickhouse_outbox::SaleOutboxRow) -> Self {
-        Self {
+    /// Build a `SaleRow` from a transactional `clickhouse_sale_outbox` row,
+    /// rejecting timestamps outside ClickHouse's unsigned 32-bit `DateTime`
+    /// range (`1970-01-01T00:00:00Z..=2106-02-07T06:28:15Z`).
+    ///
+    /// ClickHouse's `DateTime` serializer rejects out-of-range timestamps;
+    /// validating before batch insertion lets the outbox drainer durably
+    /// quarantine a single corrupt row instead of stalling every valid sale
+    /// behind it.
+    pub fn try_from_outbox_row(
+        r: &ultros_db::clickhouse_outbox::SaleOutboxRow,
+    ) -> Result<Self, String> {
+        let sold_date = chrono::DateTime::from_naive_utc_and_offset(r.sold_date, chrono::Utc);
+        let ts = sold_date.timestamp();
+        if !(0..=i64::from(u32::MAX)).contains(&ts) {
+            return Err(format!(
+                "sold_date {sold_date} (unix {ts}) is outside ClickHouse DateTime range 0..={}",
+                u32::MAX
+            ));
+        }
+        Ok(Self {
             pg_id: r.pg_id,
-            sold_date: chrono::DateTime::from_naive_utc_and_offset(r.sold_date, chrono::Utc),
+            sold_date,
             item_id: r.item_id,
             hq: r.hq as u8,
             world_id: r.world_id,
@@ -85,7 +102,7 @@ impl SaleRow {
             quantity: clamp_qty(r.quantity),
             buying_character_id: r.buying_character_id as i64,
             buyer_name: r.buyer_name.clone(),
-        }
+        })
     }
 
     /// Build a `SaleRow` from the API type (used by the dual-write path, which
@@ -443,9 +460,33 @@ mod tests {
             created_at: Utc::now(),
         };
         let backfill_row = SaleRow::from_db_model(&recorded, "Test Buyer".to_string());
-        let outbox_row = SaleRow::from_outbox_row(&outbox);
+        let outbox_row = SaleRow::try_from_outbox_row(&outbox).expect("valid timestamp");
         assert_eq!(outbox_row, backfill_row);
         assert_eq!(outbox_row.pg_id, i32::MIN);
+    }
+
+    #[test]
+    fn try_from_outbox_row_rejects_timestamps_outside_clickhouse_datetime_range() {
+        let make = |secs: i64| ultros_db::clickhouse_outbox::SaleOutboxRow {
+            id: 1,
+            pg_id: 1,
+            sold_date: chrono::DateTime::from_timestamp(secs, 0)
+                .unwrap()
+                .naive_utc(),
+            item_id: 7,
+            hq: false,
+            world_id: 40,
+            price_per_item: 100,
+            quantity: 1,
+            buying_character_id: 1,
+            buyer_name: String::new(),
+            created_at: Utc::now(),
+        };
+
+        assert!(SaleRow::try_from_outbox_row(&make(-1)).is_err());
+        assert!(SaleRow::try_from_outbox_row(&make(i64::from(u32::MAX) + 1)).is_err());
+        assert!(SaleRow::try_from_outbox_row(&make(0)).is_ok());
+        assert!(SaleRow::try_from_outbox_row(&make(i64::from(u32::MAX))).is_ok());
     }
 
     #[test]

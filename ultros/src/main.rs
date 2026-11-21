@@ -947,7 +947,6 @@ async fn main() -> Result<()> {
                 stages.run("clickhouse_floor", floor_writer.shutdown())
             );
         };
-        let drain_sale_outbox = stages.run("clickhouse_sale_outbox", sale_outbox.shutdown());
         let drain_web = async {
             if !web_finished && let Err(e) = stages.run("web", web_task).await {
                 error!("Web shutdown failed: {e:?}");
@@ -961,20 +960,19 @@ async fn main() -> Result<()> {
                 error!(?error, "Listing snapshot worker shutdown failed");
             }
         };
+        tokio::join!(drain_analytics, drain_web, drain_snapshots);
+        // Every listing_events and sale producer (socket task, update service,
+        // web) has been cancelled or drained by now. Run the durable
+        // sale_outbox shutdown concurrently with listing_events (and under its
+        // own 8s ceiling) so Postgres latency can never starve the non-durable
+        // listing_events flush.
         tokio::join!(
-            drain_analytics,
-            drain_sale_outbox,
-            drain_web,
-            drain_snapshots
-        );
-        // Every listing_events producer (socket task, update service, web) has
-        // been cancelled or drained by now.
-        stages
-            .run(
+            stages.run(
                 "clickhouse_listing_events",
                 listing_events_writer.shutdown(),
-            )
-            .await;
+            ),
+            stages.run("clickhouse_sale_outbox", sale_outbox.shutdown()),
+        );
     };
     if tokio::time::timeout(std::time::Duration::from_secs(30), shutdown)
         .await
