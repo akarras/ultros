@@ -565,7 +565,7 @@ impl BootSaleDedup {
     }
 
     fn is_active(&self) -> bool {
-        !self.loaded_pg_ids.is_empty()
+        self.loaded_pg_ids.capacity() > 0
     }
 
     fn clear(&mut self) {
@@ -577,13 +577,20 @@ impl BootSaleDedup {
     /// startup and should be skipped by the live consumer.
     fn should_skip(&mut self, pg_id: i32, now: tokio::time::Instant) -> bool {
         if self.loaded_pg_ids.is_empty() {
+            if self.loaded_pg_ids.capacity() > 0 {
+                self.loaded_pg_ids.shrink_to_fit();
+            }
             return false;
         }
         if now >= self.expires_at {
             self.clear();
             return false;
         }
-        self.loaded_pg_ids.remove(&pg_id)
+        let skipped = self.loaded_pg_ids.remove(&pg_id);
+        if skipped && self.loaded_pg_ids.is_empty() {
+            self.loaded_pg_ids.shrink_to_fit();
+        }
+        skipped
     }
 }
 
@@ -1327,57 +1334,32 @@ impl AnalyzerService {
             }
             let load = async {
                 if !history_ready {
-                    let projection_complete =
-                        ultros_db.is_recent_sales_projection_complete().await?;
+                    // Always reload authoritative sale history with `pg_id`s on
+                    // boot (from the compact `recent_sale_history` projection
+                    // when complete, or from `sale_history` otherwise). This
+                    // guarantees zero lost sales across skipped shutdown
+                    // snapshots, crashes, or pre-backfill deploys while
+                    // populating `loaded_pg_ids` for idempotent live handoff.
+                    let (projection_complete, stream) = ultros_db
+                        .last_n_sales_with_ids(SALE_HISTORY_SIZE as i32)
+                        .await?;
                     self.projection_complete
                         .store(projection_complete, Ordering::Release);
-                    if projection_complete {
-                        // Authoritative complete projection: replace histories
-                        // wholesale from the compact `recent_sale_history`
-                        // table (preserving exact multiplicity and catching
-                        // late-arriving sales regardless of `sold_date`) and
-                        // record `pg_id`s for idempotent live-event handoff.
-                        let stream = ultros_db.stream_recent_sale_projection().await?;
-                        let (history, pg_ids, loaded) = rebuild::load_history_with_ids(
-                            self.recent_sale_history.keys().copied(),
-                            stream,
-                        )
-                        .await?;
-                        for (world, history) in history {
-                            *self.recent_sale_history[&world].write().await = history;
-                        }
-                        loaded_pg_ids = pg_ids;
-                        info!(
-                            loaded_sales = loaded,
-                            restored_snapshot = restored_snapshot_ts.is_some(),
-                            "loaded authoritative analyzer sale history from recent_sale_history"
-                        );
-                    } else if restored_snapshot_ts.is_none() {
-                        // Pre-backfill DB with no restorable snapshot: use
-                        // `last_n_sales_with_ids` so even the legacy scan
-                        // records `pg_id`s for idempotent live-event handoff.
-                        let (_, stream) = ultros_db
-                            .last_n_sales_with_ids(SALE_HISTORY_SIZE as i32)
-                            .await?;
-                        let (history, pg_ids, loaded) = rebuild::load_history_with_ids(
-                            self.recent_sale_history.keys().copied(),
-                            stream,
-                        )
-                        .await?;
-                        for (world, history) in history {
-                            *self.recent_sale_history[&world].write().await = history;
-                        }
-                        loaded_pg_ids = pg_ids;
-                        info!(
-                            loaded_sales = loaded,
-                            "loaded analyzer sale history from legacy sale_history scan"
-                        );
+                    let (history, pg_ids, loaded) = rebuild::load_history_with_ids(
+                        self.recent_sale_history.keys().copied(),
+                        stream,
+                    )
+                    .await?;
+                    for (world, history) in history {
+                        *self.recent_sale_history[&world].write().await = history;
                     }
-                    // When `!projection_complete && restored_snapshot_ts.is_some()`,
-                    // shutdown wrote a full snapshot up to SIGTERM (because
-                    // skipping shutdown snapshots requires `projection_complete`),
-                    // so the restored snapshot is already complete without a
-                    // heuristic merge that could drop distinct purchases.
+                    loaded_pg_ids = pg_ids;
+                    info!(
+                        loaded_sales = loaded,
+                        projection_complete,
+                        restored_snapshot = restored_snapshot_ts.is_some(),
+                        "loaded authoritative analyzer sale history"
+                    );
                     history_ready = true;
                 }
                 // Rebuild on every boot, including when a snapshot restored.

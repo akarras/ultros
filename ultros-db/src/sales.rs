@@ -388,24 +388,6 @@ impl UltrosDb {
         Ok((complete, stream))
     }
 
-    /// Check whether the compact `recent_sale_history` projection is complete
-    /// and matches `RECENT_SALE_LIMIT`.
-    pub async fn is_recent_sales_projection_complete(&self) -> Result<bool, DbErr> {
-        let status = self.recent_sales_backfill_status().await?;
-        Ok(status.complete && status.retention == crate::recent_sales::RECENT_SALE_LIMIT as i32)
-    }
-
-    /// Stream the complete `recent_sale_history` projection along with each
-    /// row's `pg_id`. Callers should gate on
-    /// [`Self::is_recent_sales_projection_complete`] first.
-    pub async fn stream_recent_sale_projection(
-        &self,
-    ) -> Result<impl Stream<Item = Result<RecentProjectionSale, DbErr>> + '_, DbErr> {
-        RecentProjectionSale::find_by_statement(self.projection_rows_statement())
-            .stream(&self.db)
-            .await
-    }
-
     #[instrument(skip(self))]
     pub async fn stream_sales_within_days(
         &self,

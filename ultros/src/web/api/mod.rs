@@ -77,14 +77,28 @@ pub(crate) fn public_cache_control_for_deadlines(
         return public_cache_control(0, 0, sie_secs);
     }
     let age_secs = now.saturating_duration_since(stored_at).as_secs();
-    let remaining_stale_secs = stale_until.saturating_duration_since(now).as_secs();
     if now >= fresh_until {
+        let remaining_stale_secs = stale_until.saturating_duration_since(now).as_secs();
         let elapsed_past_fresh = age_secs.saturating_sub(configured_max_age.as_secs());
         let swr_budget = configured_swr.as_secs().saturating_sub(elapsed_past_fresh);
         return public_cache_control(0, swr_budget.min(remaining_stale_secs), sie_secs);
     }
-    let remaining_fresh_secs = configured_max_age.as_secs().saturating_sub(age_secs);
-    public_cache_control(remaining_fresh_secs, configured_swr.as_secs(), sie_secs)
+    let origin_fresh_secs = fresh_until
+        .saturating_duration_since(stored_at)
+        .as_secs()
+        .saturating_sub(age_secs);
+    let origin_stale_secs = stale_until
+        .saturating_duration_since(stored_at)
+        .as_secs()
+        .saturating_sub(age_secs);
+    let max_age_secs = configured_max_age
+        .as_secs()
+        .saturating_sub(age_secs)
+        .min(origin_fresh_secs)
+        .min(origin_stale_secs);
+    let remaining_after_fresh = origin_stale_secs.saturating_sub(max_age_secs);
+    let swr_secs = configured_swr.as_secs().min(remaining_after_fresh);
+    public_cache_control(max_age_secs, swr_secs, sie_secs)
 }
 
 /// Default `stale-if-error` window for public market JSON responses so
@@ -160,6 +174,21 @@ mod tests {
                 t0 + Duration::from_secs(299),
             ),
             "public, max-age=0, stale-if-error=600"
+        );
+
+        // Freshly loaded /cheapest (fresh 5s, stale 15s) caps max-age to 5s
+        // and combined max-age + SWR to the 15s origin stale cutoff.
+        assert_eq!(
+            super::public_cache_control_for_deadlines(
+                Duration::from_secs(15),
+                Duration::from_secs(60),
+                PUBLIC_STALE_IF_ERROR_SECS,
+                t0,
+                t0 + Duration::from_secs(5),
+                t0 + Duration::from_secs(15),
+                t0,
+            ),
+            "public, max-age=5, stale-while-revalidate=10, stale-if-error=600"
         );
 
         // 14s-old stale /cheapest (fresh 5s, stale 15s) gets max-age=0, swr=1.

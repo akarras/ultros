@@ -870,18 +870,18 @@ mod tests {
             payload,
             Arc::new(Semaphore::new(2)),
             Arc::new(|raw, enc| {
-                std::thread::sleep(Duration::from_millis(1250));
+                std::thread::sleep(Duration::from_millis(2250));
                 compress_bytes(raw, enc)
             }),
         );
 
         let before = Instant::now();
-        let stored_at = before - Duration::from_secs(14);
-        // Entry is still "fresh" with >1s remaining before compression begins
-        // (would emit max-age=1, swr=60 if computed pre-encode), and waiting
-        // 1.25s for compression crosses BOTH `fresh_until` and `stale_until`.
+        let stored_at = before - Duration::from_secs(13);
+        // Entry is still fresh before compression begins (1s fresh + 1s SWR
+        // capped to the 15s origin stale cutoff), and waiting 2.25s for
+        // compression crosses BOTH `fresh_until` and `stale_until`.
         let fresh_until = before + Duration::from_millis(1100);
-        let stale_until = before + Duration::from_millis(1150);
+        let stale_until = before + Duration::from_millis(2150);
         assert_eq!(
             crate::web::api::public_cache_control_for_deadlines(
                 Duration::from_secs(15),
@@ -892,7 +892,7 @@ mod tests {
                 stale_until,
                 before,
             ),
-            "public, max-age=1, stale-while-revalidate=60, stale-if-error=600"
+            "public, max-age=1, stale-while-revalidate=1, stale-if-error=600"
         );
         let resp = body
             .into_json_response_with_cache_control(
