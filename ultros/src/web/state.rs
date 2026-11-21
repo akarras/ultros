@@ -56,6 +56,9 @@ pub(crate) struct WebState {
     /// Same contract for `/api/v1/listing_stats`, as its own instance so a
     /// listing snapshot never evicts a sale snapshot (or the reverse).
     pub(crate) listing_stats_cache: crate::web::stats_cache::ListingStatsCache,
+    /// Pre-compressed short-TTL SWR cache for `/api/v1/cheapest/{world}` bulk
+    /// payloads (`(selector, columnar)`).
+    pub(crate) cheapest_cache: crate::web::api::CheapestCache,
     pub(crate) refresh_jobs: crate::web::refresh_jobs::RefreshJobs,
     /// The local-first list document's server side: merge path, activity
     /// classification, and the legacy-event/relay fanout.
@@ -175,6 +178,12 @@ impl FromRef<WebState> for crate::web::stats_cache::SaleStatsCache {
 impl FromRef<WebState> for crate::web::stats_cache::ListingStatsCache {
     fn from_ref(input: &WebState) -> Self {
         input.listing_stats_cache.clone()
+    }
+}
+
+impl FromRef<WebState> for crate::web::api::CheapestCache {
+    fn from_ref(input: &WebState) -> Self {
+        input.cheapest_cache.clone()
     }
 }
 

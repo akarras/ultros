@@ -18,6 +18,7 @@ use std::{collections::HashMap, sync::Arc};
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::IntoResponse,
 };
 use serde::Deserialize;
@@ -47,6 +48,7 @@ pub(crate) async fn get_sale_stats(
     State(ch): State<ClickHouseClient>,
     State(world_cache): State<Arc<WorldCache>>,
     State(cache): State<SaleStatsCache>,
+    headers: HeaderMap,
     Path(world): Path<String>,
     Query(query): Query<SaleStatsQuery>,
 ) -> Result<impl IntoResponse, WebError> {
@@ -77,7 +79,7 @@ pub(crate) async fn get_sale_stats(
         "disposition" => disposition
     )
     .increment(1);
-    Ok(cached_response(cached.body, disposition))
+    Ok(cached_response(&cached, &headers).await)
 }
 
 async fn load_sale_stats(

@@ -1,10 +1,11 @@
 mod alerts_websocket;
 pub(crate) mod api;
 pub(crate) mod country_code_decoder;
+pub(crate) mod encoded_body;
 pub(crate) mod error;
 pub(crate) mod home_feed_cache;
 pub(crate) mod item_card;
-mod json_cache;
+pub(crate) mod json_cache;
 #[cfg(feature = "test-auth")]
 mod list_market_fixture;
 pub(crate) mod list_permission;
@@ -1138,8 +1139,44 @@ fn cached_json(
         .into_response()
 }
 
+/// JSON response backed by a pre-compressed [`encoded_body::EncodedBody`] slab,
+/// negotiating `Accept-Encoding` (`zstd`/`br`/`gzip`/`identity`) and setting
+/// `Vary: accept-encoding` alongside age-adjusted public CDN `Cache-Control`
+/// computed *after* encoding finishes so cold-encode latency never extends
+/// downstream freshness or SWR past the origin cache deadline.
+pub(crate) async fn cached_encoded_json(
+    loaded: &json_cache::SwrValue,
+    headers: &axum::http::HeaderMap,
+    ttl: std::time::Duration,
+) -> axum::response::Response {
+    let secs = ttl.as_secs();
+    let swr = std::time::Duration::from_secs(secs.saturating_mul(4).clamp(60, 1_800));
+    let stored_at = loaded.stored_at;
+    let fresh_until = loaded.fresh_until;
+    let stale_until = loaded.stale_until;
+    loaded
+        .body
+        .into_json_response_with_cache_control(
+            headers,
+            move || {
+                api::public_cache_control_for_deadlines(
+                    ttl,
+                    swr,
+                    api::PUBLIC_STALE_IF_ERROR_SECS,
+                    stored_at,
+                    fresh_until,
+                    stale_until,
+                    std::time::Instant::now(),
+                )
+            },
+            &[],
+        )
+        .await
+}
+
 /// JSON response for degraded `200 OK` fallbacks (e.g. ClickHouse soft-fail)
 /// that must never be stored in a browser or CDN cache.
+#[cfg(test)]
 fn uncached_json(body: impl Into<axum::body::Bytes>) -> axum::response::Response {
     let body = body.into();
     (

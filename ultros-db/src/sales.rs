@@ -366,6 +366,28 @@ impl UltrosDb {
             .await
     }
 
+    /// Stream up to `n_sales` recent sales per `(world, item, hq)` including
+    /// each row's Postgres `pg_id` (from `recent_sale_history` when the
+    /// backfill projection is complete, or from `sale_history` otherwise) so
+    /// startup can deduplicate buffered live broadcast events on every boot
+    /// path.
+    pub async fn last_n_sales_with_ids(
+        &self,
+        n_sales: i32,
+    ) -> Result<
+        (
+            bool,
+            impl Stream<Item = Result<RecentProjectionSale, DbErr>> + '_,
+        ),
+        DbErr,
+    > {
+        let (complete, stmt) = self.recent_sales_with_ids_statement(n_sales).await?;
+        let stream = RecentProjectionSale::find_by_statement(stmt)
+            .stream(&self.db)
+            .await?;
+        Ok((complete, stream))
+    }
+
     #[instrument(skip(self))]
     pub async fn stream_sales_within_days(
         &self,
@@ -432,6 +454,16 @@ fn attach_buyers(
 
 #[derive(Debug, FromQueryResult)]
 pub struct AbbreviatedSaleData {
+    pub sold_item_id: i32,
+    pub hq: bool,
+    pub price_per_item: i32,
+    pub sold_date: NaiveDateTime,
+    pub world_id: i32,
+}
+
+#[derive(Debug, Clone, FromQueryResult)]
+pub struct RecentProjectionSale {
+    pub pg_id: i32,
     pub sold_item_id: i32,
     pub hq: bool,
     pub price_per_item: i32,

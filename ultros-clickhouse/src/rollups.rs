@@ -25,7 +25,10 @@
 use clickhouse::Client;
 use tracing::{info, instrument};
 
-use crate::{ClickHouseClient, ClickHouseError, schema::LISTING_EVENTS_SEED_MARKER_TABLE};
+use crate::{
+    ClickHouseClient, ClickHouseError,
+    schema::{LISTING_ALIVE_REFRESH_MARKER_TABLE, LISTING_EVENTS_SEED_MARKER_TABLE},
+};
 
 // Consumers use the same cadence to distinguish a current snapshot from an
 // abandoned ReplacingMergeTree key when a rolling-window group disappears.
@@ -486,6 +489,12 @@ fn build_sale_stats_refresh_sql(window_days: u16) -> String {
 pub async fn refresh_listing_alive(ch: &ClickHouseClient) -> Result<u64, ClickHouseError> {
     let sql = build_listing_alive_refresh_sql();
     ch.client().query(&sql).execute().await?;
+    ch.client()
+        .query(&format!(
+            "INSERT INTO {LISTING_ALIVE_REFRESH_MARKER_TABLE} (refreshed_at) VALUES (now())"
+        ))
+        .execute()
+        .await?;
 
     #[derive(clickhouse::Row, serde::Deserialize)]
     struct Count {
@@ -678,10 +687,29 @@ pub async fn refresh_all(ch: &ClickHouseClient) -> Result<(), ClickHouseError> {
     if let Err(e) = refresh_sales_hourly(ch).await {
         tracing::warn!(error = ?e, "sales_hourly refresh failed");
     }
-    if let Err(e) = refresh_listing_alive(ch).await {
-        tracing::warn!(error = ?e, "listing_alive refresh failed");
-    }
+    refresh_listing_alive_if_seeded(ch).await;
     Ok(())
+}
+
+/// Run [`refresh_listing_alive`] only once `_listing_events_seed` exists so a
+/// scheduled refresh racing an in-flight seed stream cannot materialize a
+/// partial `listing_alive` snapshot.
+async fn refresh_listing_alive_if_seeded(ch: &ClickHouseClient) {
+    match crate::listing_seed::already_seeded(ch).await {
+        Ok(true) => {
+            if let Err(e) = refresh_listing_alive(ch).await {
+                tracing::warn!(error = ?e, "listing_alive refresh failed");
+            }
+        }
+        Ok(false) => {
+            tracing::info!(
+                "skipping listing_alive refresh while initial listing_events seed is pending"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(error = ?e, "could not check listing_events seed marker before listing_alive refresh");
+        }
+    }
 }
 
 // Convenience re-export so callers can pass &Client directly if they have
@@ -812,9 +840,7 @@ pub async fn run_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancel
                     }
                 }
                 _ = tick_listing_alive.tick() => {
-                    if let Err(e) = refresh_listing_alive(&ch).await {
-                        tracing::warn!(error = ?e, "listing_alive refresh failed");
-                    }
+                    refresh_listing_alive_if_seeded(&ch).await;
                 }
         }
     }
