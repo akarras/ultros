@@ -10604,6 +10604,7 @@ dependencies = [
  "ultros-character",
  "ultros-charts",
  "ultros-clickhouse",
+ "ultros-crafting",
  "ultros-db",
  "ultros-discord",
  "ultros-game-sources",

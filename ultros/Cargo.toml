@@ -11,6 +11,7 @@ universalis = { path = "../universalis", features = ["websocket"] }
 ultros-db = { path = "../ultros-db", features = ["rkyv"] }
 ultros-list-doc = { path = "../ultros-list-doc" }
 ultros-calc = { path = "../ultros-frontend/ultros-calc" }
+ultros-crafting = { path = "../ultros-frontend/ultros-crafting" }
 uuid = { version = "1", features = ["v4"] }
 getrandom = "0.4.2"
 tempfile = "3.27.0"

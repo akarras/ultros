@@ -1,3 +1,4 @@
+pub(crate) mod agent;
 mod alerts_websocket;
 pub(crate) mod api;
 pub(crate) mod country_code_decoder;
@@ -4089,6 +4090,8 @@ pub(crate) async fn start_web(
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))
         .route("/listings/{world}/{item}", get(listings_redirect))
+        .merge(agent::discovery_router())
+        .merge(agent::agent_router())
         .merge(test_auth_routes())
         .merge(
             create_leptos_app(state.world_helper.clone(), ssr_api.clone())
@@ -4110,8 +4113,12 @@ pub(crate) async fn start_web(
                 |options| shell(options, String::new(), false),
             ),
         ))
-        .with_state(state)
+        .with_state(state.clone())
         .route_layer(middleware::from_fn(track_metrics))
+        .layer(middleware::from_fn_with_state(
+            state,
+            agent::markdown::markdown_negotiation,
+        ))
         .layer(middleware::from_fn(redirect_legacy_book_host))
         .layer(middleware::from_fn(restore_analyzer_view))
         // tower-http's default `on_failure` logs every 5xx via `tracing::error!`,
