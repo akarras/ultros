@@ -361,8 +361,14 @@ mod tests {
             .execute_raw(Statement::from_string(
                 DbBackend::Postgres,
                 "ALTER TABLE clickhouse_sale_outbox \
-                 DROP CONSTRAINT IF EXISTS test_reject_item_9098; \
-                 ALTER TABLE clickhouse_sale_outbox \
+                 DROP CONSTRAINT IF EXISTS test_reject_item_9098",
+            ))
+            .await
+            .unwrap();
+        db.db
+            .execute_raw(Statement::from_string(
+                DbBackend::Postgres,
+                "ALTER TABLE clickhouse_sale_outbox \
                  ADD CONSTRAINT test_reject_item_9098 CHECK (item_id <> 9098)",
             ))
             .await
@@ -390,9 +396,10 @@ mod tests {
             .await
             .unwrap();
 
+        let err = res.expect_err("outbox constraint violation must fail update_sales");
         assert!(
-            res.is_err(),
-            "outbox constraint violation must fail update_sales"
+            format!("{err:?}").contains("test_reject_item_9098"),
+            "expected named outbox check constraint failure, got: {err:?}"
         );
         let remaining = sale_history::Entity::find()
             .filter(sale_history::Column::WorldId.eq(world.0))
