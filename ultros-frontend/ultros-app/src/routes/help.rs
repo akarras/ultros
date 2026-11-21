@@ -1,7 +1,7 @@
 use crate::components::app_link::AppLink;
 use crate::components::{
     icon::Icon,
-    meta::{MetaDescription, MetaTitle},
+    meta::{MetaCanonical, MetaDescription, MetaTitle},
 };
 use crate::i18n::*;
 use icondata as i;
@@ -385,6 +385,7 @@ fn TopicSection(#[prop(into)] title: String, items: &'static [&'static str]) -> 
 pub fn HelpIndex() -> impl IntoView {
     let i18n = use_i18n();
     view! {
+        <MetaCanonical href="https://ultros.app/help" />
         <MetaTitle title=t_string!(i18n, help_meta_title).to_string() />
         <MetaDescription text=t_string!(i18n, help_meta_desc).to_string() />
         <div class="main-content p-2 sm:p-6">
@@ -424,6 +425,7 @@ pub fn HelpArticle() -> impl IntoView {
             <div class="container mx-auto max-w-5xl flex flex-col gap-6">
                 {move || match topic() {
                     Some(topic) => view! {
+                        <MetaCanonical href=format!("https://ultros.app/help/{}", topic.slug) />
                         <MetaTitle title=format!("{} - Ultros Help", topic.title) />
                         <MetaDescription text=topic.summary />
                         <AppLink href="/help" attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] inline-flex items-center gap-2">

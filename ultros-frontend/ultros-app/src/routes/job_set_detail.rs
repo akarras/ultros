@@ -21,7 +21,7 @@ use crate::components::crafting_cost::{CRYSTAL_SEARCH_CATEGORY, IngredientsIter}
 use crate::components::gil::{Gil, GilOrDash};
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::job_set_grouping::{GroupableItem, JobSetGroup, group_into_sets};
-use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::meta::{MetaCanonical, MetaDescription, MetaTitle};
 use crate::components::tool_help::ToolHeader;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::xiv_data::tracked_data;
@@ -278,6 +278,41 @@ where
     groups.into_iter().next()
 }
 
+/// Every `/items/jobset/{ACRONYM}/set/{ilvl}` path that resolves to a non-empty
+/// marketable gear set, sorted deterministically for sitemap generation.
+pub fn job_set_sitemap_paths(data: &xiv_gen::Data) -> Vec<String> {
+    use crate::routes::item_explorer::{canonical_job_acronym, collect_job_items_sorted};
+    let mut acronyms: Vec<&'static str> = data
+        .class_jobs
+        .keys()
+        .filter_map(|id| canonical_job_acronym(*id))
+        .collect();
+    acronyms.sort_unstable();
+    acronyms.dedup();
+
+    let mut paths = Vec::new();
+    for abbr in acronyms {
+        let projections: Vec<GroupableItem> = collect_job_items_sorted(data, abbr, true)
+            .into_iter()
+            .filter(|(_, item)| item.level_item > 0)
+            .map(|(id, item)| GroupableItem {
+                id: *id,
+                name: item.name.clone(),
+                ilvl: item.level_item,
+                level_equip: item.level_equip,
+            })
+            .collect();
+        let (groups, _) = group_into_sets(projections);
+        let mut ilvls: Vec<i32> = groups.into_iter().map(|g| g.ilvl).collect();
+        ilvls.sort_unstable();
+        ilvls.dedup();
+        for ilvl in ilvls {
+            paths.push(format!("/items/jobset/{abbr}/set/{ilvl}"));
+        }
+    }
+    paths
+}
+
 /// Aggregated crafting material entry across every craftable item in
 /// the set. `amount` is the sum of `recipe.amount_ingredient` across
 /// every recipe whose `item_result` lands in the set, so the user sees
@@ -500,7 +535,19 @@ pub fn JobSetDetail() -> impl IntoView {
         hydrated.set(true);
     });
 
+    let canonical_href = move || {
+        let abbr = canonical_abbr
+            .get()
+            .or_else(|| params().get("jobset").map(|s| s.to_string()))
+            .unwrap_or_default();
+        format!(
+            "https://ultros.app/items/jobset/{abbr}/set/{}",
+            target_ilvl.get()
+        )
+    };
+
     view! {
+        <MetaCanonical href=canonical_href />
         <MetaTitle title=move || t_string!(i18n, job_set_detail_title).to_string().replace("%set%", &set_stem()) />
         <MetaDescription text=move || t_string!(i18n, job_set_detail_desc).to_string().replace("%set%", &set_stem()) />
 

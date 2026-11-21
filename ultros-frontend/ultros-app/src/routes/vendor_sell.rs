@@ -13,7 +13,7 @@ use crate::analyzer_kit::{
 };
 use crate::columnar_wire::columnar_resource;
 use crate::components::item_actions::ItemActions;
-use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::meta::{MetaCanonical, MetaDescription, MetaTitle, canonical_tool_href};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::{FilterOp, GridMetric, GridValue};
 use crate::components::virtual_grid::registry::FilterAlias;
@@ -544,8 +544,13 @@ pub fn VendorSell() -> impl IntoView {
     });
     let connected_listings = scope.connected_listings();
 
+    let route_params = leptos_router::hooks::use_params_map();
+    let canonical_href =
+        move || route_params.with(|p| canonical_tool_href("/vendor-sell", p.get_str("world")));
+
     view! {
         <div class="flex flex-col gap-4 h-full">
+            <MetaCanonical href=canonical_href />
             <MetaTitle title=move || t_string!(i18n, vendor_sell_meta_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, vendor_sell_meta_desc).to_string() />
 

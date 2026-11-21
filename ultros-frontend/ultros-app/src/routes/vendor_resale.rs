@@ -895,6 +895,7 @@ pub fn VendorWorldView() -> impl IntoView {
 
     view! {
         <div class="main-content p-2 sm:p-6">
+            <crate::components::meta::MetaCanonical href=move || crate::components::meta::canonical_tool_href("/vendor-resale", Some(&world())) />
             <MetaTitle title=move || format!("{} - {}", t_string!(i18n, vendor_resale_title), world()) />
             <MetaDescription text=move || {
                 t_string!(i18n, vendor_resale_meta_desc).to_string().replace("%world%", &world())
@@ -1017,6 +1018,7 @@ fn VendorWorldNavigator() -> impl IntoView {
 pub fn VendorResale() -> impl IntoView {
     let i18n = use_i18n();
     view! {
+        <crate::components::meta::MetaCanonical href="https://ultros.app/vendor-resale" />
         <MetaTitle title=t_string!(i18n, vendor_resale_meta_title_ultros) />
         <MetaDescription text=t_string!(i18n, vendor_resale_meta_desc_default) />
 

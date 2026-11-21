@@ -1,5 +1,5 @@
 use crate::components::icon::Icon;
-use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::meta::{MetaCanonical, MetaDescription, MetaTitle};
 use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
@@ -9,6 +9,7 @@ pub fn About() -> impl IntoView {
     let i18n = use_i18n();
     view! {
         <div class="main-content container mx-auto p-2 sm:p-6 space-y-6">
+            <MetaCanonical href="https://ultros.app/about" />
             <MetaTitle title=move || t_string!(i18n, about_ultros_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, about_ultros_desc).to_string() />
 

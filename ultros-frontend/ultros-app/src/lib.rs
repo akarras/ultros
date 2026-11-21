@@ -17,6 +17,7 @@ pub(crate) use ultros_calc::recipe_planner;
 pub mod recipe_work;
 pub use ultros_game_sources as game_sources;
 pub(crate) mod routes;
+pub use crate::routes::job_set_detail::job_set_sitemap_paths;
 pub use ultros_ui_market::sales_cadence;
 pub mod social_card;
 pub(crate) mod social_meta;

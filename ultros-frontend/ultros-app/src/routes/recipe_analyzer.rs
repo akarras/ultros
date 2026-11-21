@@ -38,7 +38,7 @@ use crate::components::crafting_cost::{
     vendor_price_map,
 };
 use crate::components::item_actions::ItemActions;
-use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::meta::{MetaCanonical, MetaDescription, MetaTitle, canonical_tool_href};
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
 use crate::components::related_items::shard_item_ids;
 use crate::components::term_badge::TermRole;
@@ -5096,8 +5096,12 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
     let sell_history_for_header = sell_history.clone();
     let raw_sales_for_header = raw_sales.clone();
+    let route_params = leptos_router::hooks::use_params_map();
+    let canonical_href =
+        move || route_params.with(|p| canonical_tool_href("/recipe-analyzer", p.get_str("world")));
     view! {
         <div class="flex flex-col gap-4 h-full">
+            <MetaCanonical href=canonical_href />
             <MetaTitle title=move || t_string!(i18n, recipe_analyzer_title).to_string() />
             <MetaDescription text=t_string!(i18n, recipe_analyzer_meta_desc) />
 
