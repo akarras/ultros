@@ -13,7 +13,7 @@ pub(crate) fn openapi_spec() -> &'static Value {
             "info": {
                 "title": "Ultros Public Market & Gil-Making API",
                 "version": "1.0.0",
-                "description": "Read-only, enriched Final Fantasy XIV market board analytics, crafting profit calculator, flip finder, leve/venture/scrip analyzers, and shopping-list planner. Every response includes resolved item/world names plus canonical Ultros URLs (item_url and view_url) for attribution and interactive inspection. An MCP Streamable HTTP server exposing these same tools is available at https://ultros.app/mcp.",
+                "description": "Read-only, enriched Final Fantasy XIV market board analytics, crafting profit calculator, flip finder, leve/venture/scrip analyzers, and shopping-list planner. Every response includes resolved item/world names plus canonical Ultros URLs (item_url and view_url) for attribution and interactive inspection. An MCP Streamable HTTP server exposing these same tools is available at https://ultros.app/mcp (metadata at /api/v1/public/mcp).",
                 "contact": {
                     "name": "Ultros",
                     "url": "https://ultros.app"
@@ -26,6 +26,15 @@ pub(crate) fn openapi_spec() -> &'static Value {
                 }
             ],
             "paths": {
+                "/api/v1/public/mcp": {
+                    "get": {
+                        "operationId": "getMcpMetadata",
+                        "summary": "Read human- and agent-friendly metadata for Ultros's remote MCP server",
+                        "responses": {
+                            "200": { "description": "MCP endpoint and available tool names" }
+                        }
+                    }
+                },
                 "/api/v1/public/worlds": {
                     "get": {
                         "operationId": "listWorlds",
@@ -77,7 +86,8 @@ pub(crate) fn openapi_spec() -> &'static Value {
                             { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 } }
                         ],
                         "responses": {
-                            "200": { "description": "Ranked cross-world flips with item names, buy worlds, and pre-filtered Flip Finder URL" }
+                            "200": { "description": "Ranked cross-world flips with item names, buy worlds, and pre-filtered Flip Finder URL" },
+                            "503": { "description": "Analyzer warm-up in progress" }
                         }
                     }
                 },
@@ -96,7 +106,7 @@ pub(crate) fn openapi_spec() -> &'static Value {
                             { "name": "exclude_shards", "in": "query", "schema": { "type": "boolean", "default": true }, "description": "Exclude crystal/shard/cluster cost from recipe cost" },
                             { "name": "min_profit", "in": "query", "schema": { "type": "integer" }, "description": "Minimum post-tax profit per unit in gil" },
                             { "name": "min_roi", "in": "query", "schema": { "type": "integer" }, "description": "Minimum return on investment (%)" },
-                            { "name": "min_sales", "in": "query", "schema": { "type": "integer" }, "description": "Minimum recent sales count" },
+                            { "name": "min_sales", "in": "query", "schema": { "type": "integer" }, "description": "Minimum recent sales count in buffer" },
                             { "name": "min_daily_sales", "in": "query", "schema": { "type": "number" }, "description": "Minimum daily sales velocity" },
                             { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["profit", "roi", "profit_per_day", "daily_sales", "cost", "price"], "default": "profit" } },
                             { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 } }
@@ -109,7 +119,7 @@ pub(crate) fn openapi_spec() -> &'static Value {
                 "/api/v1/public/vendor-resale/{world}": {
                     "get": {
                         "operationId": "analyzeVendorResale",
-                        "summary": "Find NPC gil-shop items that resell profitably on the market board",
+                        "summary": "Find NPC gil-shop items that resell profitably on the NQ market board",
                         "parameters": [
                             { "name": "world", "in": "path", "required": true, "schema": { "type": "string" } },
                             { "name": "min_profit", "in": "query", "schema": { "type": "integer" } },
@@ -121,20 +131,20 @@ pub(crate) fn openapi_spec() -> &'static Value {
                             { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 } }
                         ],
                         "responses": {
-                            "200": { "description": "Ranked vendor resale items with Vendor Resale deep link" }
+                            "200": { "description": "Ranked NQ vendor resale items with Vendor Resale deep link" }
                         }
                     }
                 },
                 "/api/v1/public/leves/{world}": {
                     "get": {
                         "operationId": "analyzeLeves",
-                        "summary": "Find the most profitable guildleve turn-ins on a world",
+                        "summary": "Find the most profitable guildleve turn-ins on a world (includes expected item rewards)",
                         "parameters": [
                             { "name": "world", "in": "path", "required": true, "schema": { "type": "string" } },
                             { "name": "job", "in": "query", "schema": { "type": "string" }, "description": "Crafter job name or 3-letter acronym" },
                             { "name": "min_level", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } },
                             { "name": "max_level", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } },
-                            { "name": "hq", "in": "query", "schema": { "type": "boolean", "default": true }, "description": "Assume HQ turn-ins (doubles gil reward)" },
+                            { "name": "hq", "in": "query", "schema": { "type": "boolean", "default": false }, "description": "Assume HQ turn-ins (2x gil reward only for items that can be HQ)" },
                             { "name": "min_profit", "in": "query", "schema": { "type": "integer" } },
                             { "name": "buy_scope", "in": "query", "schema": { "type": "string", "enum": ["world", "datacenter", "region"], "default": "world" } },
                             { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["profit", "level", "cost"], "default": "profit" } },
@@ -148,7 +158,7 @@ pub(crate) fn openapi_spec() -> &'static Value {
                 "/api/v1/public/ventures/{world}": {
                     "get": {
                         "operationId": "analyzeVentures",
-                        "summary": "Find the most profitable fixed-reward retainer ventures",
+                        "summary": "Find the most profitable fixed-reward retainer ventures (NQ market basis)",
                         "parameters": [
                             { "name": "world", "in": "path", "required": true, "schema": { "type": "string" } },
                             { "name": "min_level", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } },
@@ -165,7 +175,7 @@ pub(crate) fn openapi_spec() -> &'static Value {
                 "/api/v1/public/scrips/{world}": {
                     "get": {
                         "operationId": "analyzeScrips",
-                        "summary": "Find the cheapest gil-per-scrip collectable turn-ins",
+                        "summary": "Find the cheapest gil-per-scrip collectable turn-ins (priced rows ranked ahead of unpriced/gathered rows)",
                         "parameters": [
                             { "name": "world", "in": "path", "required": true, "schema": { "type": "string" } },
                             { "name": "scrip", "in": "query", "schema": { "type": "string", "enum": ["OrangeCrafters", "PurpleCrafters", "OrangeGatherers", "PurpleGatherers"] } },
@@ -191,14 +201,15 @@ pub(crate) fn openapi_spec() -> &'static Value {
                             { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 } }
                         ],
                         "responses": {
-                            "200": { "description": "Enriched market trends with Trends deep link" }
+                            "200": { "description": "Enriched market trends with Trends deep link" },
+                            "503": { "description": "Trend data temporarily unavailable" }
                         }
                     }
                 },
                 "/api/v1/public/plan-craft": {
                     "post": {
                         "operationId": "planCraft",
-                        "summary": "Expand target crafts into an aggregated raw-material shopping list and crafting order",
+                        "summary": "Expand target crafts in one unified demand graph into a raw-material shopping list and topological crafting order",
                         "requestBody": {
                             "required": true,
                             "content": {
@@ -263,6 +274,7 @@ mod tests {
         assert_eq!(spec["openapi"], "3.1.0");
         let paths = spec["paths"].as_object().expect("paths object");
         for route in [
+            "/api/v1/public/mcp",
             "/api/v1/public/worlds",
             "/api/v1/public/search",
             "/api/v1/public/item/{world}/{item}",

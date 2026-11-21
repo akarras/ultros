@@ -1,6 +1,6 @@
 //! Enriched public market & gil-making query functions, HTTP handlers, and Markdown formatters.
 //!
-//! Each analyzer has one pure query function returning an `AgentEnvelope<T>` that is shared by:
+//! Each analyzer has one core query function returning an `AgentEnvelope<T>` shared by:
 //! 1. The public REST API (`/api/v1/public/*`)
 //! 2. The remote MCP server (`/mcp`)
 //! 3. `Accept: text/markdown` / `?format=md` content negotiation on web routes
@@ -12,16 +12,18 @@ use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum_extra::headers::{CacheControl, HeaderMapExt};
 use chrono::Utc;
 use futures::future::try_join3;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use ultros_api_types::cheapest_listings::CheapestListingsMap;
 use ultros_api_types::recent_sales::{SaleData, Sales};
 use ultros_api_types::trends::ConfidenceBand;
 use ultros_api_types::world_helper::{AnyResult, WorldHelper};
-use ultros_calc::analysis::{SalesStats, analyze_sales};
+use ultros_calc::analysis::{SalesStats, analyze_sales, flip_profit, sale_tax};
 use ultros_calc::recipe_planner;
 use ultros_crafting::cost::{
     CraftingCostOptions, EmptyOnHand, PriceSource, ShardsMode, compute_cost,
@@ -29,9 +31,14 @@ use ultros_crafting::cost::{
 use ultros_db::world_data::world_cache::AnySelector as DbAnySelector;
 use ultros_game_sources::{ScripType, scrip_turn_ins, venture_rewards};
 use universalis::ItemId as UnivItemId;
-use xiv_gen::{ClassJobCategoryId, ItemId, LeveId, RecipeLevelTableId};
+use xiv_gen::{
+    ClassJobCategoryId, ItemId, LeveId, LeveRewardItemGroupId, LeveRewardItemId, Recipe,
+    RecipeLevelTableId,
+};
 
-use crate::analyzer_service::{AnalyzerService, ResaleOptions, SoldAmount, SoldWithin};
+use crate::analyzer_service::{
+    AnalyzerError, AnalyzerService, ResaleOptions, SoldAmount, SoldWithin,
+};
 use crate::web::api::query::optional_flag;
 use crate::web::error::WebError;
 use crate::web::state::WebState;
@@ -39,12 +46,12 @@ use crate::web::state::WebState;
 use super::{
     AgentEnvelope, SITE_ORIGIN, craft_type_info, db_selector, is_shard_item, item_category_name,
     item_name, item_url, normalize_crafter_job, recipe_url, recipes_by_output, resolve_item_arg,
-    snapshot_cheapest_map, tool_url, vendor_price_map, world_name_by_id,
+    shared_heavy_semaphore, shared_result_cache, snapshot_cheapest_map, static_planner_graph,
+    tool_url, vendor_price_map, world_name_by_id,
 };
 
 const DEFAULT_LIMIT: usize = 20;
 const MAX_LIMIT: usize = 50;
-const MARKET_TAX_RATE: f64 = 0.05;
 const SUSPICIOUS_PRICE_MULTIPLE: i64 = 5;
 
 fn clamp_limit(limit: Option<usize>) -> usize {
@@ -58,20 +65,105 @@ fn json_cached<T: Serialize>(value: T, secs: u64) -> Response {
     resp
 }
 
-fn post_tax_price(price: i32, include_tax: bool) -> i32 {
+fn cached_json_bytes(body: String, secs: u64) -> Response {
+    let mut resp = (StatusCode::OK, body).into_response();
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    resp.headers_mut()
+        .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(secs)));
+    resp
+}
+
+/// Net sale proceeds after 5% market-board tax, using `ultros_calc`'s shared rule for `i32`.
+pub(crate) fn post_tax_price_i32(price: i32, include_tax: bool) -> i32 {
     if include_tax {
-        ((price as f64) * (1.0 - MARKET_TAX_RATE)).floor() as i32
+        flip_profit(price, 0, true)
     } else {
         price
     }
 }
 
-fn tax_amount(price: i32, include_tax: bool) -> i32 {
+pub(crate) fn tax_amount_i32(price: i32, include_tax: bool) -> i32 {
+    if include_tax { sale_tax(price) } else { 0 }
+}
+
+/// Exact integer 5% market-board tax deduction on `i64` totals (never narrows to `i32`).
+pub(crate) fn post_tax_price_i64(gross: i64, include_tax: bool) -> i64 {
     if include_tax {
-        price - post_tax_price(price, true)
+        gross - (gross * 5 + 99) / 100
     } else {
-        0
+        gross
     }
+}
+
+/// Whole-batch crafting cost for `total_qty` units of a recipe whose single execution yields
+/// `yield_amount` units and costs `batch_cost`.
+pub(crate) fn whole_batch_craft_cost(total_qty: u32, yield_amount: i32, batch_cost: i32) -> i64 {
+    let yield_per_craft = yield_amount.max(1) as i64;
+    let batches = (total_qty as i64 + yield_per_craft - 1) / yield_per_craft;
+    batches.saturating_mul(batch_cost as i64)
+}
+
+/// Expected market gil value of a guildleve's `LeveRewardItem` groups (mirrors the frontend
+/// `leve_analyzer.rs` calculation so API profit matches the linked Leve Analyzer page).
+fn leve_expected_item_reward_value(
+    reward_item_id: i32,
+    prices: &CheapestListingsMap,
+    data: &xiv_gen::Data,
+) -> i32 {
+    let Some(entry) = data
+        .leve_reward_items
+        .get(&LeveRewardItemId(reward_item_id))
+    else {
+        return 0;
+    };
+    let groups = [
+        (entry.leve_reward_item_group_0, entry.probability_percent_0),
+        (entry.leve_reward_item_group_1, entry.probability_percent_1),
+        (entry.leve_reward_item_group_2, entry.probability_percent_2),
+        (entry.leve_reward_item_group_3, entry.probability_percent_3),
+        (entry.leve_reward_item_group_4, entry.probability_percent_4),
+        (entry.leve_reward_item_group_5, entry.probability_percent_5),
+        (entry.leve_reward_item_group_6, entry.probability_percent_6),
+        (entry.leve_reward_item_group_7, entry.probability_percent_7),
+    ];
+    let mut expected = 0.0_f64;
+    for (group_id, probability) in groups {
+        if group_id == 0 || probability == 0 {
+            continue;
+        }
+        let Some(group) = data
+            .leve_reward_item_groups
+            .get(&LeveRewardItemGroupId(group_id.into()))
+        else {
+            continue;
+        };
+        let group_items = [
+            (group.item_0, group.count_0),
+            (group.item_1, group.count_1),
+            (group.item_2, group.count_2),
+            (group.item_3, group.count_3),
+            (group.item_4, group.count_4),
+            (group.item_5, group.count_5),
+            (group.item_6, group.count_6),
+            (group.item_7, group.count_7),
+            (group.item_8, group.count_8),
+        ];
+        for (item_id, count) in group_items {
+            if item_id == 0 || count == 0 {
+                continue;
+            }
+            let unit_price = prices
+                .find_matching_listings(item_id.into())
+                .lq
+                .map(|l| l.price)
+                .unwrap_or(0);
+            expected += (unit_price as f64) * (count as f64) * (probability as f64 / 100.0);
+        }
+    }
+    expected.round() as i32
 }
 
 /// Resolve a world name to a single world (`world_id`, `world_name`, `datacenter_id`, `region_id`).
@@ -495,7 +587,6 @@ pub(crate) async fn query_item_market(
     let nq = build_quality(false);
     let hq = item.can_be_hq.then(|| build_quality(true));
 
-    // Crafting cost summary if this item has recipes (uses current scope's cheapest map).
     let mut recipe_summaries = Vec::new();
     if let Some(item_recipes) = recipes_by_output().get(&ItemId(item_id)) {
         let buy_sel = match scope {
@@ -611,6 +702,37 @@ pub(crate) struct PublicFlipRow {
     pub(crate) item_url: String,
 }
 
+pub(crate) fn build_flips_view_url(world_name: &str, q: &PublicFlipsQuery) -> String {
+    let show_suspicious = q.show_suspicious.unwrap_or(false);
+    let mut params: Vec<(&str, String)> = vec![
+        ("tax", "true".into()),
+        ("show-suspicious", show_suspicious.to_string()),
+        ("sort", "profit".into()),
+        ("dir", "desc".into()),
+    ];
+    if let Some(min_p) = q.min_profit {
+        params.push(("profit", min_p.to_string()));
+    }
+    if let Some(min_s) = q.min_buffer_sales {
+        params.push(("sales", min_s.to_string()));
+    }
+    if let Some(vel) = q.min_velocity {
+        params.push(("vel", vel.to_string()));
+    }
+    if let Some(ref fs) = q.filter_sale {
+        let next = match fs.to_ascii_lowercase().as_str() {
+            "day" => Some("1d"),
+            "week" => Some("7d"),
+            "month" => Some("1M"),
+            _ => None,
+        };
+        if let Some(next_val) = next {
+            params.push(("next-sale", next_val.into()));
+        }
+    }
+    tool_url("flip-finder", world_name, &params)
+}
+
 pub(crate) async fn query_flips(
     state: &WebState,
     world_arg: &str,
@@ -642,6 +764,7 @@ pub(crate) async fn query_flips(
         max_roi: q.max_roi,
     };
 
+    // Propagate analyzer warm-up (`None`) as 503 instead of caching a misleading empty list.
     let all_rows = state
         .analyzer_service
         .get_best_resale(
@@ -651,7 +774,7 @@ pub(crate) async fn query_flips(
             &state.world_cache,
         )
         .await
-        .unwrap_or_default();
+        .ok_or(AnalyzerError::Uninitialized)?;
     let total = all_rows.len();
     let data = xiv_gen_db::data();
 
@@ -684,34 +807,7 @@ pub(crate) async fn query_flips(
         })
         .collect();
 
-    let mut params: Vec<(&str, String)> = vec![
-        ("tax", "true".into()),
-        ("show-suspicious", show_suspicious.to_string()),
-        ("sort", "profit".into()),
-        ("dir", "desc".into()),
-    ];
-    if let Some(min_p) = q.min_profit {
-        params.push(("profit", min_p.to_string()));
-    }
-    if let Some(min_s) = q.min_buffer_sales {
-        params.push(("sales", min_s.to_string()));
-    }
-    if let Some(vel) = q.min_velocity {
-        params.push(("vel", vel.to_string()));
-    }
-    if let Some(ref fs) = q.filter_sale {
-        let next = match fs.to_ascii_lowercase().as_str() {
-            "day" => Some("1d"),
-            "week" => Some("7d"),
-            "month" => Some("1M"),
-            _ => None,
-        };
-        if let Some(next_val) = next {
-            params.push(("next-sale", next_val.into()));
-        }
-    }
-
-    let view_url = tool_url("flip-finder", &resolved.world_name, &params);
+    let view_url = build_flips_view_url(&resolved.world_name, &q);
     Ok(
         AgentEnvelope::new(view_url, Some(resolved.world_name), rows)
             .with_filters(json!({
@@ -795,6 +891,69 @@ pub(crate) struct PublicRecipeRow {
     pub(crate) recipe_url: String,
 }
 
+/// Build a Recipe Analyzer `view_url` matching `ultros-app/src/routes/recipe_analyzer.rs`
+/// (`RECIPE_COLUMNS` sort_id + `recipe_filter_aliases`: `min-sales` filters daily sales/day,
+/// `cost` sorts ascending by default, `velocity` sorts daily sales).
+pub(crate) fn build_recipes_view_url(
+    world_name: &str,
+    job_code: Option<&str>,
+    buy_scope_label: &str,
+    sort_mode: &str,
+    q: &PublicRecipesQuery,
+) -> String {
+    let use_subcrafts = q.use_subcrafts.unwrap_or(false);
+    let require_hq = q.require_hq.unwrap_or(false);
+    let exclude_shards = q.exclude_shards.unwrap_or(true);
+    let (ui_sort, ui_dir) = match sort_mode {
+        "roi" => ("roi", "desc"),
+        "cost" => ("cost", "asc"),
+        "price" => ("price", "desc"),
+        "daily_sales" => ("velocity", "desc"),
+        _ => ("profit", "desc"),
+    };
+    let mut params: Vec<(&str, String)> = vec![
+        ("buy-scope", buy_scope_label.into()),
+        ("subcrafts", use_subcrafts.to_string()),
+        ("require-hq", require_hq.to_string()),
+        ("shards-exclude", exclude_shards.to_string()),
+        ("sort", ui_sort.into()),
+        ("dir", ui_dir.into()),
+    ];
+    if let Some(code) = job_code {
+        params.push(("job", code.into()));
+    }
+    if let Some(min_p) = q.min_profit {
+        params.push(("profit", min_p.to_string()));
+    }
+    if let Some(min_r) = q.min_roi {
+        params.push(("roi", min_r.to_string()));
+    }
+    // Note: in the frontend `min-sales` is aliased to `daily-sales >= value`, NOT buffer count.
+    if let Some(min_d) = q.min_daily_sales {
+        params.push(("min-sales", min_d.to_string()));
+    }
+    tool_url("recipe-analyzer", world_name, &params)
+}
+
+/// Lightweight intermediate row kept during full-catalog scan; full ingredient breakdowns are
+/// computed ONLY for the final `limit` rows after sorting & truncation.
+struct ScoredRecipe {
+    recipe: &'static Recipe,
+    item_name: &'static str,
+    job: &'static str,
+    job_name: &'static str,
+    recipe_level: i8,
+    hq: bool,
+    crafting_cost: i32,
+    sell_price: i32,
+    tax: i32,
+    profit: i32,
+    roi_pct: i32,
+    daily_sales: f32,
+    profit_per_day: i64,
+    recent_sales_count: usize,
+}
+
 pub(crate) async fn query_recipes(
     state: &WebState,
     world_arg: &str,
@@ -817,6 +976,13 @@ pub(crate) async fn query_recipes(
         .map(str::to_ascii_lowercase)
         .unwrap_or_else(|| "profit".to_string());
 
+    // Bound concurrent heavy scans so bursts never starve Tokio workers.
+    let _permit = shared_heavy_semaphore()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| AnalyzerError::Uninitialized)?;
+
     let (sell_map, buy_map, sales_map) = try_join3(
         snapshot_cheapest_map(
             &state.analyzer_service,
@@ -827,215 +993,229 @@ pub(crate) async fn query_recipes(
     )
     .await?;
 
-    let data = xiv_gen_db::data();
-    let recipes_map = recipes_by_output();
-    let vendors = vendor_price_map();
-    let on_hand = EmptyOnHand;
-    let opts = CraftingCostOptions {
-        require_hq,
-        max_subcraft_depth: if use_subcrafts { 3 } else { 0 },
-        shards: if exclude_shards {
-            ShardsMode::ExcludeShards
-        } else {
-            ShardsMode::IncludeMarket
-        },
-        on_hand: &on_hand,
-        vendor_prices: Some(vendors),
-    };
+    let world_helper = state.world_helper.clone();
+    let world_name = resolved.world_name.clone();
+    let min_level = q.min_level;
+    let max_level = q.max_level;
+    let min_profit = q.min_profit;
+    let min_roi = q.min_roi;
+    let min_sales = q.min_sales;
+    let min_daily_sales = q.min_daily_sales;
+    let sort_for_task = sort_mode.clone();
 
-    let mut rows: Vec<PublicRecipeRow> = Vec::new();
-    for recipe in data.recipes.values() {
-        let Some((job_code, job_name)) = craft_type_info(recipe.craft_type) else {
-            continue;
+    let (rows, total) = tokio::task::spawn_blocking(move || {
+        let data = xiv_gen_db::data();
+        let recipes_map = recipes_by_output();
+        let vendors = vendor_price_map();
+        let on_hand = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq,
+            max_subcraft_depth: if use_subcrafts { 3 } else { 0 },
+            shards: if exclude_shards {
+                ShardsMode::ExcludeShards
+            } else {
+                ShardsMode::IncludeMarket
+            },
+            on_hand: &on_hand,
+            vendor_prices: Some(vendors),
         };
-        if let Some((wanted_code, _)) = job_filter
-            && wanted_code != job_code
-        {
-            continue;
-        }
-        let recipe_level = data
-            .recipe_level_tables
-            .get(&RecipeLevelTableId(recipe.recipe_level_table))
-            .map(|t| t.class_job_level)
-            .unwrap_or(1);
-        if let Some(min_l) = q.min_level
-            && recipe_level < min_l
-        {
-            continue;
-        }
-        if let Some(max_l) = q.max_level
-            && recipe_level > max_l
-        {
-            continue;
-        }
-        let Some(item) = data.items.get(&ItemId(recipe.item_result)) else {
-            continue;
-        };
-        if item.item_search_category == 0 {
-            continue;
-        }
 
-        // Sell price on home world: prefer HQ for items that can be HQ, otherwise NQ.
-        let sell_summary = sell_map.find_matching_listings(recipe.item_result);
-        let (sell_price, is_hq) = if item.can_be_hq {
-            match (sell_summary.hq, sell_summary.lq) {
-                (Some(hq), _) if hq.price > 0 => (hq.price, true),
-                (_, Some(lq)) if lq.price > 0 => (lq.price, false),
-                _ => continue,
+        let mut scored: Vec<ScoredRecipe> = Vec::new();
+        for recipe in data.recipes.values() {
+            let Some((job_code, job_name)) = craft_type_info(recipe.craft_type) else {
+                continue;
+            };
+            if let Some((wanted_code, _)) = job_filter
+                && wanted_code != job_code
+            {
+                continue;
             }
-        } else if let Some(lq) = sell_summary.lq.filter(|l| l.price > 0) {
-            (lq.price, false)
-        } else {
-            continue;
-        };
+            let recipe_level = data
+                .recipe_level_tables
+                .get(&RecipeLevelTableId(recipe.recipe_level_table))
+                .map(|t| t.class_job_level)
+                .unwrap_or(1);
+            if let Some(min_l) = min_level
+                && recipe_level < min_l
+            {
+                continue;
+            }
+            if let Some(max_l) = max_level
+                && recipe_level > max_l
+            {
+                continue;
+            }
+            let Some(item) = data.items.get(&ItemId(recipe.item_result)) else {
+                continue;
+            };
+            if item.item_search_category == 0 {
+                continue;
+            }
 
-        let (sales_stats, median_sale) =
-            summarize_item_sales(&sales_map, recipe.item_result, Some(is_hq));
-        // Skip troll/manipulated listings where the listing is >5x the median sale price.
-        if let Some(median) = median_sale
-            && median > 0
-            && sales_stats.total_sales >= 2
-            && (sell_price as i64) > (median as i64) * SUSPICIOUS_PRICE_MULTIPLE
-        {
-            continue;
+            let sell_summary = sell_map.find_matching_listings(recipe.item_result);
+            let (sell_price, is_hq) = if item.can_be_hq {
+                match (sell_summary.hq, sell_summary.lq) {
+                    (Some(hq), _) if hq.price > 0 => (hq.price, true),
+                    (_, Some(lq)) if lq.price > 0 => (lq.price, false),
+                    _ => continue,
+                }
+            } else if let Some(lq) = sell_summary.lq.filter(|l| l.price > 0) {
+                (lq.price, false)
+            } else {
+                continue;
+            };
+
+            let (sales_stats, median_sale) =
+                summarize_item_sales(&sales_map, recipe.item_result, Some(is_hq));
+            if let Some(median) = median_sale
+                && median > 0
+                && sales_stats.total_sales > 0
+                && (sell_price as i64) > (median as i64) * SUSPICIOUS_PRICE_MULTIPLE
+            {
+                continue;
+            }
+
+            if let Some(min_s) = min_sales
+                && sales_stats.total_sales < min_s
+            {
+                continue;
+            }
+            if let Some(min_d) = min_daily_sales
+                && sales_stats.daily_sales < min_d
+            {
+                continue;
+            }
+
+            let breakdown = compute_cost(recipe, &buy_map, recipes_map, &opts, &is_shard_item);
+            if breakdown.unpriced_market_lines > 0 || breakdown.cost <= 0 {
+                continue;
+            }
+            let unit = breakdown.per_unit(recipe.amount_result);
+            if unit.cost <= 0 {
+                continue;
+            }
+
+            let net_sell = post_tax_price_i32(sell_price, true);
+            let tax = tax_amount_i32(sell_price, true);
+            let profit = net_sell - unit.cost;
+            let roi_pct = ((profit as f64 / unit.cost as f64) * 100.0).round() as i32;
+
+            if let Some(min_p) = min_profit
+                && profit < min_p
+            {
+                continue;
+            }
+            if let Some(min_r) = min_roi
+                && roi_pct < min_r
+            {
+                continue;
+            }
+
+            let profit_per_day = if profit > 0 && sales_stats.daily_sales > 0.0 {
+                (profit as f64 * sales_stats.daily_sales as f64).round() as i64
+            } else {
+                0
+            };
+
+            scored.push(ScoredRecipe {
+                recipe,
+                item_name: item.name.as_str(),
+                job: job_code,
+                job_name,
+                recipe_level,
+                hq: is_hq,
+                crafting_cost: unit.cost,
+                sell_price,
+                tax,
+                profit,
+                roi_pct,
+                daily_sales: (sales_stats.daily_sales * 100.0).round() / 100.0,
+                profit_per_day,
+                recent_sales_count: sales_stats.total_sales,
+            });
         }
 
-        if let Some(min_s) = q.min_sales
-            && sales_stats.total_sales < min_s
-        {
-            continue;
-        }
-        if let Some(min_d) = q.min_daily_sales
-            && sales_stats.daily_sales < min_d
-        {
-            continue;
-        }
-
-        let breakdown = compute_cost(recipe, &buy_map, recipes_map, &opts, &is_shard_item);
-        // Drop recipes whose required market ingredients have no listings at all.
-        if breakdown.unpriced_market_lines > 0 || breakdown.cost <= 0 {
-            continue;
-        }
-        let unit = breakdown.per_unit(recipe.amount_result);
-        if unit.cost <= 0 {
-            continue;
+        match sort_for_task.as_str() {
+            "roi" => scored.sort_by(|a, b| b.roi_pct.cmp(&a.roi_pct).then(b.profit.cmp(&a.profit))),
+            "profit_per_day" | "ppd" => scored.sort_by(|a, b| {
+                b.profit_per_day
+                    .cmp(&a.profit_per_day)
+                    .then(b.profit.cmp(&a.profit))
+            }),
+            "daily_sales" => scored.sort_by(|a, b| {
+                b.daily_sales
+                    .total_cmp(&a.daily_sales)
+                    .then(b.profit.cmp(&a.profit))
+            }),
+            "cost" => scored.sort_by_key(|a| a.crafting_cost),
+            "price" => scored.sort_by_key(|a| std::cmp::Reverse(a.sell_price)),
+            _ => scored.sort_by(|a, b| b.profit.cmp(&a.profit).then(b.roi_pct.cmp(&a.roi_pct))),
         }
 
-        let net_sell = post_tax_price(sell_price, true);
-        let tax = tax_amount(sell_price, true);
-        let profit = net_sell - unit.cost;
-        let roi_pct = ((profit as f64 / unit.cost as f64) * 100.0).round() as i32;
+        let total = scored.len();
+        scored.truncate(limit);
 
-        if let Some(min_p) = q.min_profit
-            && profit < min_p
-        {
-            continue;
-        }
-        if let Some(min_r) = q.min_roi
-            && roi_pct < min_r
-        {
-            continue;
-        }
+        // Build full ingredient breakdowns ONLY for the surviving top `limit` rows.
+        let rows: Vec<PublicRecipeRow> = scored
+            .into_iter()
+            .map(|s| {
+                let breakdown =
+                    compute_cost(s.recipe, &buy_map, recipes_map, &opts, &is_shard_item);
+                let ingredients = breakdown
+                    .ingredient_lines
+                    .iter()
+                    .filter(|l| !(exclude_shards && l.is_shard))
+                    .map(|l| PublicIngredientCost {
+                        item_id: l.item_id.0,
+                        item_name: item_name(l.item_id.0).to_string(),
+                        quantity: l.needed_total,
+                        unit_price: l.unit_price,
+                        source: match l.source {
+                            PriceSource::Market => "market",
+                            PriceSource::Vendor => "vendor",
+                            PriceSource::Subcraft => "subcraft",
+                        },
+                        world_name: (l.world_id > 0)
+                            .then(|| world_name_by_id(&world_helper, l.world_id)),
+                    })
+                    .collect();
 
-        let profit_per_day = if profit > 0 && sales_stats.daily_sales > 0.0 {
-            (profit as f64 * sales_stats.daily_sales as f64).round() as i64
-        } else {
-            0
-        };
-
-        let ingredients = breakdown
-            .ingredient_lines
-            .iter()
-            .filter(|l| !(exclude_shards && l.is_shard))
-            .map(|l| PublicIngredientCost {
-                item_id: l.item_id.0,
-                item_name: item_name(l.item_id.0).to_string(),
-                quantity: l.needed_total,
-                unit_price: l.unit_price,
-                source: match l.source {
-                    PriceSource::Market => "market",
-                    PriceSource::Vendor => "vendor",
-                    PriceSource::Subcraft => "subcraft",
-                },
-                world_name: (l.world_id > 0)
-                    .then(|| world_name_by_id(&state.world_helper, l.world_id)),
+                PublicRecipeRow {
+                    recipe_id: s.recipe.key_id.0,
+                    item_id: s.recipe.item_result,
+                    item_name: s.item_name.to_string(),
+                    job: s.job,
+                    job_name: s.job_name,
+                    recipe_level: s.recipe_level,
+                    yield_amount: s.recipe.amount_result.max(1),
+                    hq: s.hq,
+                    crafting_cost: s.crafting_cost,
+                    sell_price: s.sell_price,
+                    tax: s.tax,
+                    profit: s.profit,
+                    roi_pct: s.roi_pct,
+                    daily_sales: s.daily_sales,
+                    profit_per_day: s.profit_per_day,
+                    recent_sales_count: s.recent_sales_count,
+                    ingredients,
+                    item_url: item_url(&world_name, s.recipe.item_result),
+                    recipe_url: recipe_url(s.recipe.key_id.0),
+                }
             })
             .collect();
 
-        rows.push(PublicRecipeRow {
-            recipe_id: recipe.key_id.0,
-            item_id: recipe.item_result,
-            item_name: item.name.clone(),
-            job: job_code,
-            job_name,
-            recipe_level,
-            yield_amount: recipe.amount_result.max(1),
-            hq: is_hq,
-            crafting_cost: unit.cost,
-            sell_price,
-            tax,
-            profit,
-            roi_pct,
-            daily_sales: (sales_stats.daily_sales * 100.0).round() / 100.0,
-            profit_per_day,
-            recent_sales_count: sales_stats.total_sales,
-            ingredients,
-            item_url: item_url(&resolved.world_name, recipe.item_result),
-            recipe_url: recipe_url(recipe.key_id.0),
-        });
-    }
+        (rows, total)
+    })
+    .await
+    .map_err(|e| WebError::AnyhowError(anyhow::anyhow!("recipe scan task failed: {e}")))?;
 
-    match sort_mode.as_str() {
-        "roi" => rows.sort_by(|a, b| b.roi_pct.cmp(&a.roi_pct).then(b.profit.cmp(&a.profit))),
-        "profit_per_day" | "ppd" => rows.sort_by(|a, b| {
-            b.profit_per_day
-                .cmp(&a.profit_per_day)
-                .then(b.profit.cmp(&a.profit))
-        }),
-        "daily_sales" => rows.sort_by(|a, b| {
-            b.daily_sales
-                .total_cmp(&a.daily_sales)
-                .then(b.profit.cmp(&a.profit))
-        }),
-        "cost" => rows.sort_by_key(|a| a.crafting_cost),
-        "price" => rows.sort_by_key(|a| std::cmp::Reverse(a.sell_price)),
-        _ => rows.sort_by(|a, b| b.profit.cmp(&a.profit).then(b.roi_pct.cmp(&a.roi_pct))),
-    }
-
-    let total = rows.len();
-    rows.truncate(limit);
-
-    let mut params: Vec<(&str, String)> = vec![
-        ("buy-scope", buy_scope_label.into()),
-        ("subcrafts", use_subcrafts.to_string()),
-        ("require-hq", require_hq.to_string()),
-        ("shards-exclude", exclude_shards.to_string()),
-        (
-            "sort",
-            match sort_mode.as_str() {
-                "roi" => "roi",
-                "cost" => "cost",
-                "price" => "price",
-                _ => "profit",
-            }
-            .into(),
-        ),
-        ("dir", "desc".into()),
-    ];
-    if let Some((code, _)) = job_filter {
-        params.push(("job", code.into()));
-    }
-    if let Some(min_p) = q.min_profit {
-        params.push(("profit", min_p.to_string()));
-    }
-    if let Some(min_r) = q.min_roi {
-        params.push(("roi", min_r.to_string()));
-    }
-    if let Some(min_s) = q.min_sales {
-        params.push(("min-sales", min_s.to_string()));
-    }
-
-    let view_url = tool_url("recipe-analyzer", &resolved.world_name, &params);
+    let view_url = build_recipes_view_url(
+        &resolved.world_name,
+        job_filter.map(|(c, _)| c),
+        buy_scope_label,
+        &sort_mode,
+        &q,
+    );
     Ok(
         AgentEnvelope::new(view_url, Some(resolved.world_name), rows)
             .with_filters(json!({
@@ -1064,11 +1244,34 @@ pub(crate) async fn http_recipes(
 ) -> Result<Response, WebError> {
     metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "recipes")
         .increment(1);
-    Ok(json_cached(query_recipes(&state, &world, query).await?, 30))
+    let cache_key = format!(
+        "recipes:{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+        world.to_ascii_lowercase(),
+        query.job.as_deref().map(str::to_ascii_lowercase),
+        query.min_level,
+        query.max_level,
+        query.buy_scope.as_deref().map(str::to_ascii_lowercase),
+        query.use_subcrafts,
+        query.require_hq,
+        query.exclude_shards,
+        query.min_profit,
+        query.min_roi,
+        query.min_sales,
+        query.min_daily_sales.map(|v| (v * 100.0).round() as i32),
+        query.sort.as_deref().map(str::to_ascii_lowercase),
+        clamp_limit(query.limit),
+    );
+    if let Some(hit) = shared_result_cache().get(&cache_key) {
+        return Ok(cached_json_bytes(hit, 30));
+    }
+    let env = query_recipes(&state, &world, query).await?;
+    let body = serde_json::to_string(&env).map_err(anyhow::Error::from)?;
+    shared_result_cache().insert(cache_key, body.clone(), Duration::from_secs(30));
+    Ok(cached_json_bytes(body, 30))
 }
 
 // ============================================================================
-// 6. Vendor Resale Analyzer (NPC Gil Shop -> Market Board)
+// 6. Vendor Resale Analyzer (NPC Gil Shop -> NQ Market Board)
 // ============================================================================
 
 #[derive(Debug, Default, Deserialize)]
@@ -1089,6 +1292,7 @@ pub(crate) struct PublicVendorResaleRow {
     pub(crate) item_id: i32,
     pub(crate) item_name: String,
     pub(crate) category: Option<String>,
+    pub(crate) price_basis: &'static str,
     pub(crate) vendor_price: i32,
     pub(crate) market_price: i32,
     pub(crate) median_sale_price: Option<i32>,
@@ -1114,6 +1318,12 @@ pub(crate) async fn query_vendor_resale(
         .map(str::to_ascii_lowercase)
         .unwrap_or_else(|| "profit".to_string());
 
+    let _permit = shared_heavy_semaphore()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| AnalyzerError::Uninitialized)?;
+
     let (cheapest_map, sales_map) = futures::future::try_join(
         snapshot_cheapest_map(
             &state.analyzer_service,
@@ -1123,80 +1333,93 @@ pub(crate) async fn query_vendor_resale(
     )
     .await?;
 
-    let data = xiv_gen_db::data();
-    let mut rows = Vec::new();
-    for (&item_id, &vendor_price) in vendor_price_map() {
-        if vendor_price <= 0 {
-            continue;
-        }
-        let Some(item) = data.items.get(&ItemId(item_id)) else {
-            continue;
-        };
-        if item.item_search_category == 0 {
-            continue;
-        }
-        let summary = cheapest_map.find_matching_listings(item_id);
-        let Some(market_price) = summary.lowest_gil().filter(|&p| p > 0) else {
-            continue;
-        };
-        let (sales_stats, median) = summarize_item_sales(&sales_map, item_id, Some(false));
-        if !show_suspicious
-            && let Some(med) = median
-            && med > 0
-            && sales_stats.total_sales > 0
-            && (market_price as i64) > (med as i64) * SUSPICIOUS_PRICE_MULTIPLE
-        {
-            continue;
-        }
-        let net_sell = post_tax_price(market_price, include_tax);
-        let profit = net_sell - vendor_price;
-        if profit <= 0 {
-            continue;
-        }
-        let roi_pct = ((profit as f64 / vendor_price as f64) * 100.0).round() as i32;
+    let world_name = resolved.world_name.clone();
+    let min_profit = q.min_profit;
+    let min_roi = q.min_roi;
+    let min_sales = q.min_sales;
+    let sort_for_task = sort_mode.clone();
 
-        if let Some(min_p) = q.min_profit
-            && profit < min_p
-        {
-            continue;
-        }
-        if let Some(min_r) = q.min_roi
-            && roi_pct < min_r
-        {
-            continue;
-        }
-        if let Some(min_s) = q.min_sales
-            && sales_stats.total_sales < min_s
-        {
-            continue;
+    let (rows, total) = tokio::task::spawn_blocking(move || {
+        let data = xiv_gen_db::data();
+        let mut rows = Vec::new();
+        for (&item_id, &vendor_price) in vendor_price_map() {
+            if vendor_price <= 0 {
+                continue;
+            }
+            let Some(item) = data.items.get(&ItemId(item_id)) else {
+                continue;
+            };
+            if item.item_search_category == 0 {
+                continue;
+            }
+            // NPC gil shops sell NQ only — never price against an HQ-only listing.
+            let summary = cheapest_map.find_matching_listings(item_id);
+            let Some(market_price) = summary.lq.map(|l| l.price).filter(|&p| p > 0) else {
+                continue;
+            };
+            let (sales_stats, median) = summarize_item_sales(&sales_map, item_id, Some(false));
+            if !show_suspicious
+                && let Some(med) = median
+                && med > 0
+                && sales_stats.total_sales > 0
+                && (market_price as i64) > (med as i64) * SUSPICIOUS_PRICE_MULTIPLE
+            {
+                continue;
+            }
+            let net_sell = post_tax_price_i32(market_price, include_tax);
+            let profit = net_sell - vendor_price;
+            if profit <= 0 {
+                continue;
+            }
+            let roi_pct = ((profit as f64 / vendor_price as f64) * 100.0).round() as i32;
+
+            if let Some(min_p) = min_profit
+                && profit < min_p
+            {
+                continue;
+            }
+            if let Some(min_r) = min_roi
+                && roi_pct < min_r
+            {
+                continue;
+            }
+            if let Some(min_s) = min_sales
+                && sales_stats.total_sales < min_s
+            {
+                continue;
+            }
+
+            rows.push(PublicVendorResaleRow {
+                item_id,
+                item_name: item.name.clone(),
+                category: item_category_name(item).map(ToOwned::to_owned),
+                price_basis: "nq_listing",
+                vendor_price,
+                market_price,
+                median_sale_price: median,
+                profit,
+                roi_pct,
+                daily_sales: (sales_stats.daily_sales * 100.0).round() / 100.0,
+                recent_sales_count: sales_stats.total_sales,
+                item_url: item_url(&world_name, item_id),
+            });
         }
 
-        rows.push(PublicVendorResaleRow {
-            item_id,
-            item_name: item.name.clone(),
-            category: item_category_name(item).map(ToOwned::to_owned),
-            vendor_price,
-            market_price,
-            median_sale_price: median,
-            profit,
-            roi_pct,
-            daily_sales: (sales_stats.daily_sales * 100.0).round() / 100.0,
-            recent_sales_count: sales_stats.total_sales,
-            item_url: item_url(&resolved.world_name, item_id),
-        });
-    }
-
-    match sort_mode.as_str() {
-        "roi" => rows.sort_by(|a, b| b.roi_pct.cmp(&a.roi_pct).then(b.profit.cmp(&a.profit))),
-        "daily_sales" => rows.sort_by(|a, b| {
-            b.daily_sales
-                .total_cmp(&a.daily_sales)
-                .then(b.profit.cmp(&a.profit))
-        }),
-        _ => rows.sort_by(|a, b| b.profit.cmp(&a.profit).then(b.roi_pct.cmp(&a.roi_pct))),
-    }
-    let total = rows.len();
-    rows.truncate(limit);
+        match sort_for_task.as_str() {
+            "roi" => rows.sort_by(|a, b| b.roi_pct.cmp(&a.roi_pct).then(b.profit.cmp(&a.profit))),
+            "daily_sales" => rows.sort_by(|a, b| {
+                b.daily_sales
+                    .total_cmp(&a.daily_sales)
+                    .then(b.profit.cmp(&a.profit))
+            }),
+            _ => rows.sort_by(|a, b| b.profit.cmp(&a.profit).then(b.roi_pct.cmp(&a.roi_pct))),
+        }
+        let total = rows.len();
+        rows.truncate(limit);
+        (rows, total)
+    })
+    .await
+    .map_err(|e| WebError::AnyhowError(anyhow::anyhow!("vendor resale task failed: {e}")))?;
 
     let mut params: Vec<(&str, String)> = vec![
         ("tax", include_tax.to_string()),
@@ -1237,12 +1460,30 @@ pub(crate) async fn http_vendor_resale(
     Path(world): Path<String>,
     Query(query): Query<PublicVendorResaleQuery>,
 ) -> Result<Response, WebError> {
-    metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "vendor_resale")
-        .increment(1);
-    Ok(json_cached(
-        query_vendor_resale(&state, &world, query).await?,
-        30,
-    ))
+    metrics::counter!(
+        "ultros_agent_requests_total",
+        "surface" => "rest",
+        "tool" => "vendor_resale"
+    )
+    .increment(1);
+    let cache_key = format!(
+        "vendor:{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{}",
+        world.to_ascii_lowercase(),
+        query.min_profit,
+        query.min_roi,
+        query.min_sales,
+        query.tax,
+        query.show_suspicious,
+        query.sort.as_deref().map(str::to_ascii_lowercase),
+        clamp_limit(query.limit),
+    );
+    if let Some(hit) = shared_result_cache().get(&cache_key) {
+        return Ok(cached_json_bytes(hit, 30));
+    }
+    let env = query_vendor_resale(&state, &world, query).await?;
+    let body = serde_json::to_string(&env).map_err(anyhow::Error::from)?;
+    shared_result_cache().insert(cache_key, body.clone(), Duration::from_secs(30));
+    Ok(cached_json_bytes(body, 30))
 }
 
 // ============================================================================
@@ -1273,12 +1514,29 @@ pub(crate) struct PublicLeveRow {
     pub(crate) quantity_required: u32,
     pub(crate) hq: bool,
     pub(crate) gil_reward: i32,
-    pub(crate) market_buy_cost: Option<i32>,
-    pub(crate) craft_cost: Option<i32>,
-    pub(crate) best_cost: i32,
+    pub(crate) expected_item_reward_value: i32,
+    pub(crate) total_revenue: i32,
+    pub(crate) market_buy_cost: Option<i64>,
+    pub(crate) craft_batch_cost: Option<i64>,
+    pub(crate) best_cost: i64,
     pub(crate) best_method: &'static str,
-    pub(crate) profit: i32,
+    pub(crate) profit: i64,
     pub(crate) item_url: String,
+}
+
+/// Effective HQ gil reward for a single delivery: only doubles if `assume_hq && can_be_hq`.
+pub(crate) fn leve_effective_gil_reward(
+    base_gil: i32,
+    assume_hq: bool,
+    can_be_hq: bool,
+) -> (bool, i32) {
+    let effective_hq = assume_hq && can_be_hq;
+    let gil = if effective_hq {
+        base_gil.saturating_mul(2)
+    } else {
+        base_gil
+    };
+    (effective_hq, gil)
 }
 
 pub(crate) async fn query_leves(
@@ -1291,7 +1549,9 @@ pub(crate) async fn query_leves(
         Some(raw) => Some(normalize_crafter_job(raw).ok_or(WebError::BadRequest)?),
         None => None,
     };
-    let assume_hq = q.hq.unwrap_or(true);
+    // Default to NQ baseline (matching the web Leve Analyzer UI); HQ doubles reward only when
+    // requested AND the turn-in item actually supports HQ.
+    let assume_hq = q.hq.unwrap_or(false);
     let (buy_selector, buy_scope_label) =
         buy_scope_selector(&resolved, q.buy_scope.as_deref().unwrap_or("world"));
     let limit = clamp_limit(q.limit);
@@ -1301,117 +1561,171 @@ pub(crate) async fn query_leves(
         .map(str::to_ascii_lowercase)
         .unwrap_or_else(|| "profit".to_string());
 
-    let prices = snapshot_cheapest_map(&state.analyzer_service, &buy_selector).await?;
-    let data = xiv_gen_db::data();
-    let recipes_map = recipes_by_output();
-    let on_hand = EmptyOnHand;
-    let craft_opts = CraftingCostOptions {
-        require_hq: false,
-        max_subcraft_depth: 1,
-        shards: ShardsMode::ExcludeShards,
-        on_hand: &on_hand,
-        vendor_prices: Some(vendor_price_map()),
-    };
+    let _permit = shared_heavy_semaphore()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| AnalyzerError::Uninitialized)?;
 
-    let mut rows = Vec::new();
-    for craft_leve in data.craft_leves.values() {
-        if craft_leve.leve == 0 || craft_leve.item_0 == 0 || craft_leve.item_count_0 == 0 {
-            continue;
-        }
-        let Some(leve) = data.leves.get(&LeveId(craft_leve.leve)) else {
-            continue;
+    let (prices, reward_prices) = futures::future::try_join(
+        snapshot_cheapest_map(&state.analyzer_service, &buy_selector),
+        snapshot_cheapest_map(
+            &state.analyzer_service,
+            &DbAnySelector::World(resolved.world_id),
+        ),
+    )
+    .await?;
+
+    let world_name = resolved.world_name.clone();
+    let min_level = q.min_level;
+    let max_level = q.max_level;
+    let min_profit = q.min_profit;
+    let sort_for_task = sort_mode.clone();
+
+    let (rows, total) = tokio::task::spawn_blocking(move || {
+        let data = xiv_gen_db::data();
+        let recipes_map = recipes_by_output();
+        let on_hand = EmptyOnHand;
+        let craft_opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 1,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &on_hand,
+            vendor_prices: Some(vendor_price_map()),
         };
-        let level = u16::try_from(leve.class_job_level).unwrap_or(1);
-        if let Some(min_l) = q.min_level
-            && level < min_l
-        {
-            continue;
+
+        let mut rows = Vec::new();
+        for craft_leve in data.craft_leves.values() {
+            if craft_leve.leve == 0 || craft_leve.item_0 == 0 || craft_leve.item_count_0 == 0 {
+                continue;
+            }
+            let Some(leve) = data.leves.get(&LeveId(craft_leve.leve)) else {
+                continue;
+            };
+            let level = u16::try_from(leve.class_job_level).unwrap_or(1);
+            if let Some(min_l) = min_level
+                && level < min_l
+            {
+                continue;
+            }
+            if let Some(max_l) = max_level
+                && level > max_l
+            {
+                continue;
+            }
+            let job_name = data
+                .class_job_categorys
+                .get(&ClassJobCategoryId(leve.class_job_category))
+                .map(|c| c.name.as_str())
+                .unwrap_or("");
+            if let Some((code, full)) = job_filter
+                && !job_name.contains(full)
+                && !job_name.contains(code)
+            {
+                continue;
+            }
+
+            let item_id = craft_leve.item_0;
+            let Some(item) = data.items.get(&ItemId(item_id)) else {
+                continue;
+            };
+            let total_qty = craft_leve.item_count_0 as u32;
+            let (effective_hq, gil_reward) =
+                leve_effective_gil_reward(leve.gil_reward, assume_hq, item.can_be_hq);
+            let expected_item_reward_value =
+                leve_expected_item_reward_value(leve.leve_reward_item, &reward_prices, data);
+            let total_revenue = gil_reward.saturating_add(expected_item_reward_value);
+
+            let summary = prices.find_matching_listings(item_id);
+            let unit_buy = if effective_hq {
+                summary.hq.map(|l| l.price)
+            } else {
+                summary.lq.map(|l| l.price)
+            };
+            let market_buy_cost = unit_buy
+                .filter(|&p| p > 0)
+                .map(|p| p as i64 * total_qty as i64);
+
+            // Whole-batch crafting cost (charges for full crafts required, not prorated units).
+            let craft_batch_cost = recipes_map.get(&ItemId(item_id)).and_then(|recipes| {
+                recipes
+                    .iter()
+                    .filter_map(|recipe| {
+                        let b =
+                            compute_cost(recipe, &prices, recipes_map, &craft_opts, &is_shard_item);
+                        if b.unpriced_market_lines > 0 || b.cost <= 0 {
+                            return None;
+                        }
+                        Some(whole_batch_craft_cost(
+                            total_qty,
+                            recipe.amount_result,
+                            b.cost,
+                        ))
+                    })
+                    .min()
+            });
+
+            // For HQ turn-ins, crafting uses NQ mats as a baseline estimate (actual HQ synthesis
+            // requires crafter stats), so label it transparently as `craft_hq_estimate`.
+            let (best_cost, best_method) = match (market_buy_cost, craft_batch_cost) {
+                (Some(b), Some(c)) if c < b => (
+                    c,
+                    if effective_hq {
+                        "craft_hq_estimate"
+                    } else {
+                        "craft"
+                    },
+                ),
+                (Some(b), _) => (b, if effective_hq { "buy_hq" } else { "buy_nq" }),
+                (None, Some(c)) => (
+                    c,
+                    if effective_hq {
+                        "craft_hq_estimate"
+                    } else {
+                        "craft"
+                    },
+                ),
+                (None, None) => continue,
+            };
+            let profit = total_revenue as i64 - best_cost;
+            if let Some(min_p) = min_profit
+                && profit < min_p as i64
+            {
+                continue;
+            }
+
+            rows.push(PublicLeveRow {
+                leve_id: craft_leve.leve,
+                leve_name: leve.name.clone(),
+                job: job_name.to_string(),
+                level,
+                item_id,
+                item_name: item.name.clone(),
+                quantity_required: total_qty,
+                hq: effective_hq,
+                gil_reward,
+                expected_item_reward_value,
+                total_revenue,
+                market_buy_cost,
+                craft_batch_cost,
+                best_cost,
+                best_method,
+                profit,
+                item_url: item_url(&world_name, item_id),
+            });
         }
-        if let Some(max_l) = q.max_level
-            && level > max_l
-        {
-            continue;
+
+        match sort_for_task.as_str() {
+            "level" => rows.sort_by(|a, b| b.level.cmp(&a.level).then(b.profit.cmp(&a.profit))),
+            "cost" => rows.sort_by_key(|a| a.best_cost),
+            _ => rows.sort_by_key(|a| std::cmp::Reverse(a.profit)),
         }
-        let job_name = data
-            .class_job_categorys
-            .get(&ClassJobCategoryId(leve.class_job_category))
-            .map(|c| c.name.as_str())
-            .unwrap_or("");
-        if let Some((code, full)) = job_filter
-            && !job_name.contains(full)
-            && !job_name.contains(code)
-        {
-            continue;
-        }
-
-        let item_id = craft_leve.item_0;
-        let total_qty = craft_leve.item_count_0 as u32;
-        let base_gil = leve.gil_reward as i64;
-        let gil_reward = (if assume_hq { base_gil * 2 } else { base_gil }) as i32;
-
-        let summary = prices.find_matching_listings(item_id);
-        let unit_buy = if assume_hq {
-            summary.hq.map(|l| l.price)
-        } else {
-            summary.lowest_gil()
-        };
-        let market_buy_cost = unit_buy
-            .filter(|&p| p > 0)
-            .map(|p| (p as i64 * total_qty as i64).min(i32::MAX as i64) as i32);
-
-        let craft_cost = recipes_map.get(&ItemId(item_id)).and_then(|recipes| {
-            recipes
-                .iter()
-                .filter_map(|recipe| {
-                    let b = compute_cost(recipe, &prices, recipes_map, &craft_opts, &is_shard_item);
-                    if b.unpriced_market_lines > 0 || b.cost <= 0 {
-                        return None;
-                    }
-                    let unit = b.per_unit(recipe.amount_result).cost;
-                    (unit > 0).then(|| (unit as i64 * total_qty as i64).min(i32::MAX as i64) as i32)
-                })
-                .min()
-        });
-
-        let (best_cost, best_method) = match (market_buy_cost, craft_cost) {
-            (Some(b), Some(c)) if c < b => (c, "craft"),
-            (Some(b), _) => (b, "buy"),
-            (None, Some(c)) => (c, "craft"),
-            (None, None) => continue,
-        };
-        let profit = gil_reward - best_cost;
-        if let Some(min_p) = q.min_profit
-            && profit < min_p
-        {
-            continue;
-        }
-
-        rows.push(PublicLeveRow {
-            leve_id: craft_leve.leve,
-            leve_name: leve.name.clone(),
-            job: job_name.to_string(),
-            level,
-            item_id,
-            item_name: item_name(item_id).to_string(),
-            quantity_required: total_qty,
-            hq: assume_hq,
-            gil_reward,
-            market_buy_cost,
-            craft_cost,
-            best_cost,
-            best_method,
-            profit,
-            item_url: item_url(&resolved.world_name, item_id),
-        });
-    }
-
-    match sort_mode.as_str() {
-        "level" => rows.sort_by(|a, b| b.level.cmp(&a.level).then(b.profit.cmp(&a.profit))),
-        "cost" => rows.sort_by_key(|a| a.best_cost),
-        _ => rows.sort_by_key(|a| std::cmp::Reverse(a.profit)),
-    }
-    let total = rows.len();
-    rows.truncate(limit);
+        let total = rows.len();
+        rows.truncate(limit);
+        (rows, total)
+    })
+    .await
+    .map_err(|e| WebError::AnyhowError(anyhow::anyhow!("leve scan task failed: {e}")))?;
 
     let mut params: Vec<(&str, String)> = vec![(
         "sort",
@@ -1441,6 +1755,7 @@ pub(crate) async fn query_leves(
                 "buy_scope": buy_scope_label,
                 "sort": sort_mode,
                 "limit": limit,
+                "basis": "per_single_delivery_including_expected_item_rewards",
             }))
             .with_total_matches(total),
     )
@@ -1453,18 +1768,36 @@ pub(crate) async fn http_leves(
 ) -> Result<Response, WebError> {
     metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "leves")
         .increment(1);
-    Ok(json_cached(query_leves(&state, &world, query).await?, 60))
+    let cache_key = format!(
+        "leves:{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{}",
+        world.to_ascii_lowercase(),
+        query.job.as_deref().map(str::to_ascii_lowercase),
+        query.min_level,
+        query.max_level,
+        query.hq,
+        query.min_profit,
+        query.buy_scope.as_deref().map(str::to_ascii_lowercase),
+        query.sort.as_deref().map(str::to_ascii_lowercase),
+        clamp_limit(query.limit),
+    );
+    if let Some(hit) = shared_result_cache().get(&cache_key) {
+        return Ok(cached_json_bytes(hit, 60));
+    }
+    let env = query_leves(&state, &world, query).await?;
+    let body = serde_json::to_string(&env).map_err(anyhow::Error::from)?;
+    shared_result_cache().insert(cache_key, body.clone(), Duration::from_secs(60));
+    Ok(cached_json_bytes(body, 60))
 }
 
 // ============================================================================
-// 8. Venture Analyzer (Retainer Ventures)
+// 8. Venture Analyzer (Retainer Ventures — NQ Listing Basis)
 // ============================================================================
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct PublicVenturesQuery {
     pub(crate) min_level: Option<u8>,
     pub(crate) max_level: Option<u8>,
-    pub(crate) min_profit: Option<i32>,
+    pub(crate) min_profit: Option<i64>,
     pub(crate) sort: Option<String>,
     pub(crate) limit: Option<usize>,
 }
@@ -1475,10 +1808,11 @@ pub(crate) struct PublicVentureRow {
     pub(crate) item_id: i32,
     pub(crate) item_name: String,
     pub(crate) job_category: String,
+    pub(crate) price_basis: &'static str,
     pub(crate) level: u8,
     pub(crate) quantity: i32,
     pub(crate) unit_price: i32,
-    pub(crate) total_value: i32,
+    pub(crate) total_value: i64,
     pub(crate) daily_sales: f32,
     pub(crate) recent_sales_count: usize,
     pub(crate) item_url: String,
@@ -1497,6 +1831,12 @@ pub(crate) async fn query_ventures(
         .map(str::to_ascii_lowercase)
         .unwrap_or_else(|| "profit".to_string());
 
+    let _permit = shared_heavy_semaphore()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| AnalyzerError::Uninitialized)?;
+
     let (cheapest_map, sales_map) = futures::future::try_join(
         snapshot_cheapest_map(
             &state.analyzer_service,
@@ -1506,76 +1846,88 @@ pub(crate) async fn query_ventures(
     )
     .await?;
 
-    let data = xiv_gen_db::data();
-    let mut rows = Vec::new();
-    for reward in venture_rewards(data) {
-        if let Some(min_l) = q.min_level
-            && reward.level < min_l
-        {
-            continue;
-        }
-        if let Some(max_l) = q.max_level
-            && reward.level > max_l
-        {
-            continue;
-        }
-        let summary = cheapest_map.find_matching_listings(reward.item.0);
-        let Some(unit_price) = summary.lowest_gil().filter(|&p| p > 0) else {
-            continue;
-        };
-        let (sales_stats, median) = summarize_item_sales(&sales_map, reward.item.0, None);
-        if let Some(med) = median
-            && med > 0
-            && sales_stats.total_sales > 0
-            && (unit_price as i64) > (med as i64) * SUSPICIOUS_PRICE_MULTIPLE
-        {
-            continue;
-        }
-        let total_value = post_tax_price(
-            (unit_price as i64 * reward.quantity as i64).min(i32::MAX as i64) as i32,
-            true,
-        );
-        if let Some(min_p) = q.min_profit
-            && total_value < min_p
-        {
-            continue;
-        }
-        let job_category = data
-            .class_job_categorys
-            .get(&reward.class_job_category)
-            .map(|c| c.name.clone())
-            .unwrap_or_default();
+    let world_name = resolved.world_name.clone();
+    let min_level = q.min_level;
+    let max_level = q.max_level;
+    let min_profit = q.min_profit;
+    let sort_for_task = sort_mode.clone();
 
-        rows.push(PublicVentureRow {
-            task_id: reward.task.0,
-            item_id: reward.item.0,
-            item_name: item_name(reward.item.0).to_string(),
-            job_category,
-            level: reward.level,
-            quantity: reward.quantity,
-            unit_price,
-            total_value,
-            daily_sales: (sales_stats.daily_sales * 100.0).round() / 100.0,
-            recent_sales_count: sales_stats.total_sales,
-            item_url: item_url(&resolved.world_name, reward.item.0),
-        });
-    }
+    let (rows, total) = tokio::task::spawn_blocking(move || {
+        let data = xiv_gen_db::data();
+        let mut rows = Vec::new();
+        for reward in venture_rewards(data) {
+            if let Some(min_l) = min_level
+                && reward.level < min_l
+            {
+                continue;
+            }
+            if let Some(max_l) = max_level
+                && reward.level > max_l
+            {
+                continue;
+            }
+            // Retainer fixed ventures yield NQ goods — price from NQ listings & NQ history.
+            let summary = cheapest_map.find_matching_listings(reward.item.0);
+            let Some(unit_price) = summary.lq.map(|l| l.price).filter(|&p| p > 0) else {
+                continue;
+            };
+            let (sales_stats, median) =
+                summarize_item_sales(&sales_map, reward.item.0, Some(false));
+            if let Some(med) = median
+                && med > 0
+                && sales_stats.total_sales > 0
+                && (unit_price as i64) > (med as i64) * SUSPICIOUS_PRICE_MULTIPLE
+            {
+                continue;
+            }
+            let gross_value = unit_price as i64 * reward.quantity as i64;
+            let total_value = post_tax_price_i64(gross_value, true);
+            if let Some(min_p) = min_profit
+                && total_value < min_p
+            {
+                continue;
+            }
+            let job_category = data
+                .class_job_categorys
+                .get(&reward.class_job_category)
+                .map(|c| c.name.clone())
+                .unwrap_or_default();
 
-    match sort_mode.as_str() {
-        "daily_sales" => rows.sort_by(|a, b| {
-            b.daily_sales
-                .total_cmp(&a.daily_sales)
-                .then(b.total_value.cmp(&a.total_value))
-        }),
-        "level" => rows.sort_by(|a, b| {
-            b.level
-                .cmp(&a.level)
-                .then(b.total_value.cmp(&a.total_value))
-        }),
-        _ => rows.sort_by_key(|a| std::cmp::Reverse(a.total_value)),
-    }
-    let total = rows.len();
-    rows.truncate(limit);
+            rows.push(PublicVentureRow {
+                task_id: reward.task.0,
+                item_id: reward.item.0,
+                item_name: item_name(reward.item.0).to_string(),
+                job_category,
+                price_basis: "nq_listing",
+                level: reward.level,
+                quantity: reward.quantity,
+                unit_price,
+                total_value,
+                daily_sales: (sales_stats.daily_sales * 100.0).round() / 100.0,
+                recent_sales_count: sales_stats.total_sales,
+                item_url: item_url(&world_name, reward.item.0),
+            });
+        }
+
+        match sort_for_task.as_str() {
+            "daily_sales" => rows.sort_by(|a, b| {
+                b.daily_sales
+                    .total_cmp(&a.daily_sales)
+                    .then(b.total_value.cmp(&a.total_value))
+            }),
+            "level" => rows.sort_by(|a, b| {
+                b.level
+                    .cmp(&a.level)
+                    .then(b.total_value.cmp(&a.total_value))
+            }),
+            _ => rows.sort_by_key(|a| std::cmp::Reverse(a.total_value)),
+        }
+        let total = rows.len();
+        rows.truncate(limit);
+        (rows, total)
+    })
+    .await
+    .map_err(|e| WebError::AnyhowError(anyhow::anyhow!("venture scan task failed: {e}")))?;
 
     let mut params: Vec<(&str, String)> = vec![(
         "sort",
@@ -1611,10 +1963,22 @@ pub(crate) async fn http_ventures(
 ) -> Result<Response, WebError> {
     metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "ventures")
         .increment(1);
-    Ok(json_cached(
-        query_ventures(&state, &world, query).await?,
-        60,
-    ))
+    let cache_key = format!(
+        "ventures:{}:{:?}:{:?}:{:?}:{:?}:{}",
+        world.to_ascii_lowercase(),
+        query.min_level,
+        query.max_level,
+        query.min_profit,
+        query.sort.as_deref().map(str::to_ascii_lowercase),
+        clamp_limit(query.limit),
+    );
+    if let Some(hit) = shared_result_cache().get(&cache_key) {
+        return Ok(cached_json_bytes(hit, 60));
+    }
+    let env = query_ventures(&state, &world, query).await?;
+    let body = serde_json::to_string(&env).map_err(anyhow::Error::from)?;
+    shared_result_cache().insert(cache_key, body.clone(), Duration::from_secs(60));
+    Ok(cached_json_bytes(body, 60))
 }
 
 // ============================================================================
@@ -1637,15 +2001,28 @@ pub(crate) struct PublicScripRow {
     pub(crate) item_name: String,
     pub(crate) scrip_type: String,
     pub(crate) scrip_amount: u32,
+    pub(crate) reward_tier: &'static str,
+    pub(crate) acquisition: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) job: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) recipe_id: Option<i32>,
-    pub(crate) craft_cost: i32,
-    pub(crate) gil_per_scrip: f32,
+    pub(crate) craft_cost: Option<i32>,
+    pub(crate) gil_per_scrip: Option<f32>,
     pub(crate) item_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) recipe_url: Option<String>,
+}
+
+/// Sort priced scrip turn-ins ascending by `gil_per_scrip`, placing unpriced/gathered rows LAST
+/// so zero-gil gathered collectables never crowd out priced crafted turn-ins.
+pub(crate) fn sort_scrip_rows(rows: &mut [PublicScripRow]) {
+    rows.sort_by(|a, b| match (a.gil_per_scrip, b.gil_per_scrip) {
+        (Some(ag), Some(bg)) => ag.total_cmp(&bg).then(b.scrip_amount.cmp(&a.scrip_amount)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => b.scrip_amount.cmp(&a.scrip_amount),
+    });
 }
 
 fn parse_scrip_filter(raw: &str) -> Option<ScripType> {
@@ -1684,92 +2061,107 @@ pub(crate) async fn query_scrips(
     let use_subcrafts = q.use_subcrafts.unwrap_or(false);
     let limit = clamp_limit(q.limit);
 
-    let buy_map = snapshot_cheapest_map(&state.analyzer_service, &buy_selector).await?;
-    let data = xiv_gen_db::data();
-    let recipes_map = recipes_by_output();
-    let on_hand = EmptyOnHand;
-    let opts = CraftingCostOptions {
-        require_hq: false,
-        max_subcraft_depth: if use_subcrafts { 2 } else { 0 },
-        shards: ShardsMode::ExcludeShards,
-        on_hand: &on_hand,
-        vendor_prices: Some(vendor_price_map()),
-    };
+    let _permit = shared_heavy_semaphore()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| AnalyzerError::Uninitialized)?;
 
-    let mut rows = Vec::new();
-    for turn_in in scrip_turn_ins(data) {
-        if turn_in.scrip_amount == 0 {
-            continue;
-        }
-        if let Some(wanted) = scrip_filter
-            && turn_in.scrip_type != wanted
-        {
-            continue;
-        }
-        let Some(scrip_key) = turn_in.scrip_type.filter_key() else {
-            continue;
+    let buy_map = snapshot_cheapest_map(&state.analyzer_service, &buy_selector).await?;
+    let world_name = resolved.world_name.clone();
+
+    let (rows, total) = tokio::task::spawn_blocking(move || {
+        let data = xiv_gen_db::data();
+        let recipes_map = recipes_by_output();
+        let on_hand = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: if use_subcrafts { 2 } else { 0 },
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &on_hand,
+            vendor_prices: Some(vendor_price_map()),
         };
 
-        // Crafted collectables are priced via their recipe cost; gathered collectables have no craft cost.
-        let Some(recipes) = recipes_map.get(&ItemId(turn_in.item_id)) else {
-            if job_filter.is_some() {
+        let mut rows = Vec::new();
+        for turn_in in scrip_turn_ins(data) {
+            if turn_in.scrip_amount == 0 {
                 continue;
             }
-            if turn_in.scrip_type.is_gatherer() {
+            if let Some(wanted) = scrip_filter
+                && turn_in.scrip_type != wanted
+            {
+                continue;
+            }
+            let Some(scrip_key) = turn_in.scrip_type.filter_key() else {
+                continue;
+            };
+
+            let Some(recipes) = recipes_map.get(&ItemId(turn_in.item_id)) else {
+                if job_filter.is_some() {
+                    continue;
+                }
+                if turn_in.scrip_type.is_gatherer() {
+                    // Gathered collectables have no market gil outlay (effort-based);
+                    // keep `gil_per_scrip: None` so priced crafted turn-ins rank first.
+                    rows.push(PublicScripRow {
+                        item_id: turn_in.item_id,
+                        item_name: item_name(turn_in.item_id).to_string(),
+                        scrip_type: scrip_key.to_string(),
+                        scrip_amount: turn_in.scrip_amount,
+                        reward_tier: "max_collectability",
+                        acquisition: "gathered",
+                        job: None,
+                        recipe_id: None,
+                        craft_cost: None,
+                        gil_per_scrip: None,
+                        item_url: item_url(&world_name, turn_in.item_id),
+                        recipe_url: None,
+                    });
+                }
+                continue;
+            };
+
+            for recipe in recipes {
+                let job = craft_type_info(recipe.craft_type).map(|(c, _)| c);
+                if let Some((wanted_code, _)) = job_filter
+                    && job != Some(wanted_code)
+                {
+                    continue;
+                }
+                let breakdown = compute_cost(recipe, &buy_map, recipes_map, &opts, &is_shard_item);
+                if breakdown.unpriced_market_lines > 0 || breakdown.cost <= 0 {
+                    continue;
+                }
+                let unit_cost = breakdown.per_unit(recipe.amount_result).cost;
+                if unit_cost <= 0 {
+                    continue;
+                }
+                let gps =
+                    ((unit_cost as f64 / turn_in.scrip_amount as f64) * 100.0).round() / 100.0;
                 rows.push(PublicScripRow {
                     item_id: turn_in.item_id,
                     item_name: item_name(turn_in.item_id).to_string(),
                     scrip_type: scrip_key.to_string(),
                     scrip_amount: turn_in.scrip_amount,
-                    job: None,
-                    recipe_id: None,
-                    craft_cost: 0,
-                    gil_per_scrip: 0.0,
-                    item_url: item_url(&resolved.world_name, turn_in.item_id),
-                    recipe_url: None,
+                    reward_tier: "max_collectability",
+                    acquisition: "crafted",
+                    job,
+                    recipe_id: Some(recipe.key_id.0),
+                    craft_cost: Some(unit_cost),
+                    gil_per_scrip: Some(gps as f32),
+                    item_url: item_url(&world_name, turn_in.item_id),
+                    recipe_url: Some(recipe_url(recipe.key_id.0)),
                 });
             }
-            continue;
-        };
-
-        for recipe in recipes {
-            let job = craft_type_info(recipe.craft_type).map(|(c, _)| c);
-            if let Some((wanted_code, _)) = job_filter
-                && job != Some(wanted_code)
-            {
-                continue;
-            }
-            let breakdown = compute_cost(recipe, &buy_map, recipes_map, &opts, &is_shard_item);
-            if breakdown.unpriced_market_lines > 0 || breakdown.cost <= 0 {
-                continue;
-            }
-            let unit_cost = breakdown.per_unit(recipe.amount_result).cost;
-            if unit_cost <= 0 {
-                continue;
-            }
-            let gps = ((unit_cost as f64 / turn_in.scrip_amount as f64) * 100.0).round() / 100.0;
-            rows.push(PublicScripRow {
-                item_id: turn_in.item_id,
-                item_name: item_name(turn_in.item_id).to_string(),
-                scrip_type: scrip_key.to_string(),
-                scrip_amount: turn_in.scrip_amount,
-                job,
-                recipe_id: Some(recipe.key_id.0),
-                craft_cost: unit_cost,
-                gil_per_scrip: gps as f32,
-                item_url: item_url(&resolved.world_name, turn_in.item_id),
-                recipe_url: Some(recipe_url(recipe.key_id.0)),
-            });
         }
-    }
 
-    rows.sort_by(|a, b| {
-        a.gil_per_scrip
-            .total_cmp(&b.gil_per_scrip)
-            .then(b.scrip_amount.cmp(&a.scrip_amount))
-    });
-    let total = rows.len();
-    rows.truncate(limit);
+        sort_scrip_rows(&mut rows);
+        let total = rows.len();
+        rows.truncate(limit);
+        (rows, total)
+    })
+    .await
+    .map_err(|e| WebError::AnyhowError(anyhow::anyhow!("scrip scan task failed: {e}")))?;
 
     let mut params: Vec<(&str, String)> = Vec::new();
     if let Some(s) = scrip_filter.and_then(ScripType::filter_key) {
@@ -1799,7 +2191,22 @@ pub(crate) async fn http_scrips(
 ) -> Result<Response, WebError> {
     metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "scrips")
         .increment(1);
-    Ok(json_cached(query_scrips(&state, &world, query).await?, 60))
+    let cache_key = format!(
+        "scrips:{}:{:?}:{:?}:{:?}:{:?}:{}",
+        world.to_ascii_lowercase(),
+        query.scrip.as_deref().map(str::to_ascii_lowercase),
+        query.job.as_deref().map(str::to_ascii_lowercase),
+        query.buy_scope.as_deref().map(str::to_ascii_lowercase),
+        query.use_subcrafts,
+        clamp_limit(query.limit),
+    );
+    if let Some(hit) = shared_result_cache().get(&cache_key) {
+        return Ok(cached_json_bytes(hit, 60));
+    }
+    let env = query_scrips(&state, &world, query).await?;
+    let body = serde_json::to_string(&env).map_err(anyhow::Error::from)?;
+    shared_result_cache().insert(cache_key, body.clone(), Duration::from_secs(60));
+    Ok(cached_json_bytes(body, 60))
 }
 
 // ============================================================================
@@ -1831,6 +2238,18 @@ pub(crate) struct PublicTrendRow {
     pub(crate) item_url: String,
 }
 
+pub(crate) fn build_trends_view_url(
+    world_name: &str,
+    window_days: u16,
+    show_suspicious: bool,
+) -> String {
+    let mut params: Vec<(&str, String)> = vec![("window", window_days.to_string())];
+    if show_suspicious {
+        params.push(("show_suspicious", "true".into()));
+    }
+    tool_url("trends", world_name, &params)
+}
+
 pub(crate) async fn query_trends(
     state: &WebState,
     world_arg: &str,
@@ -1850,18 +2269,22 @@ pub(crate) async fn query_trends(
         .map(str::to_ascii_lowercase)
         .unwrap_or_else(|| "gil_volume".to_string());
 
-    let mut items = state
+    let mut items = match state
         .analyzer_service
         .get_trends_v2(resolved.world_id, window_days, show_suspicious)
         .await
-        .unwrap_or_default();
-
-    // Fall back to v1 in-memory trends when ClickHouse rollup has no rows yet.
-    if items.is_empty()
-        && let Some(v1) = state.analyzer_service.get_trends(resolved.world_id).await
     {
-        items = v1.high_velocity;
-    }
+        Some(v2) if !v2.is_empty() => v2,
+        v2_opt => {
+            // Fall back to v1 in-memory trends when CH rollup is absent; if both are
+            // unavailable (`None`), return 503 instead of caching a misleading empty list.
+            match state.analyzer_service.get_trends(resolved.world_id).await {
+                Some(v1) => v1.high_velocity,
+                None if v2_opt.is_none() => return Err(AnalyzerError::Uninitialized.into()),
+                None => Vec::new(),
+            }
+        }
+    };
 
     match sort_mode.as_str() {
         "sales_per_day" => items.sort_by(|a, b| b.sales_per_day.total_cmp(&a.sales_per_day)),
@@ -1900,7 +2323,7 @@ pub(crate) async fn query_trends(
         })
         .collect();
 
-    let view_url = tool_url("trends", &resolved.world_name, &[]);
+    let view_url = build_trends_view_url(&resolved.world_name, window_days, show_suspicious);
     Ok(
         AgentEnvelope::new(view_url, Some(resolved.world_name), rows)
             .with_filters(json!({
@@ -1924,7 +2347,7 @@ pub(crate) async fn http_trends(
 }
 
 // ============================================================================
-// 11. Craft Shopping List Planner (`ultros_calc::recipe_planner::expand`)
+// 11. Craft Shopping List Planner (Unified Multi-Target Demand Graph)
 // ============================================================================
 
 #[derive(Debug, Deserialize)]
@@ -1976,6 +2399,59 @@ pub(crate) struct PlanCraftResponse {
     pub(crate) craft_steps: Vec<PlannedCraftStep>,
 }
 
+const SYNTHETIC_ROOT_ITEM_ID: i32 = -1;
+const SYNTHETIC_ROOT_RECIPE_ID: i32 = -1;
+
+/// Expand a combined list of `(item_id, quantity, root_recipe_id)` targets through a single
+/// synthetic root recipe so shared multi-yield subcrafts round ONCE for the combined demand,
+/// recipe choices remain deterministic, and craft steps come out in exact topological order.
+pub(crate) fn expand_unified_plan(
+    targets: &[(i32, i64, i32)],
+    recipes: &BTreeMap<i32, recipe_planner::Recipe>,
+    default_choices: &BTreeMap<i32, i32>,
+    use_subcrafts: bool,
+    excluded: &BTreeSet<i32>,
+) -> Result<Vec<recipe_planner::Material>, String> {
+    // Combine duplicate target items into one demand entry before expanding.
+    let mut combined_targets: BTreeMap<i32, i64> = BTreeMap::new();
+    let mut choices: BTreeMap<i32, i32> = if use_subcrafts {
+        default_choices.clone()
+    } else {
+        BTreeMap::new()
+    };
+    for &(item_id, qty, recipe_id) in targets {
+        let clamped = qty.clamp(1, 9999);
+        *combined_targets.entry(item_id).or_insert(0) += clamped;
+        choices.insert(item_id, recipe_id);
+    }
+
+    let synthetic_root = recipe_planner::Recipe {
+        id: SYNTHETIC_ROOT_RECIPE_ID,
+        output: SYNTHETIC_ROOT_ITEM_ID,
+        yield_amount: 1,
+        ingredients: combined_targets.into_iter().collect(),
+    };
+    let mut working_recipes = recipes.clone();
+    working_recipes.insert(SYNTHETIC_ROOT_RECIPE_ID, synthetic_root.clone());
+
+    let owned = BTreeMap::new();
+    let expanded = recipe_planner::expand(
+        &synthetic_root,
+        1,
+        &working_recipes,
+        &choices,
+        &owned,
+        excluded,
+    )?;
+
+    // Drop the synthetic root node; `expand` returns parent-first topological order,
+    // so reversing yields exact bottom-up crafting order.
+    Ok(expanded
+        .into_iter()
+        .filter(|m| m.item != SYNTHETIC_ROOT_ITEM_ID)
+        .collect())
+}
+
 pub(crate) async fn query_plan_craft(
     state: &WebState,
     req: PlanCraftRequest,
@@ -1989,166 +2465,118 @@ pub(crate) async fn query_plan_craft(
     let use_subcrafts = req.use_subcrafts.unwrap_or(true);
     let exclude_shards = req.exclude_shards.unwrap_or(true);
 
-    let buy_map = snapshot_cheapest_map(&state.analyzer_service, &buy_selector).await?;
-    let data = xiv_gen_db::data();
+    // Validate and resolve every target BEFORE acquiring semaphore or reading market data.
     let recipes_by_out = recipes_by_output();
-    let vendors = vendor_price_map();
-
-    // Build `ultros_calc::recipe_planner` recipe table for all recipes.
-    let mut planner_recipes: BTreeMap<i32, recipe_planner::Recipe> = BTreeMap::new();
-    let mut default_choices: BTreeMap<i32, i32> = BTreeMap::new();
-    for recipe in data.recipes.values() {
-        if recipe.item_result <= 0 {
-            continue;
-        }
-        let ingredients: Vec<(i32, i64)> = recipe
-            .ingredient
-            .iter()
-            .zip(recipe.amount_ingredient.iter())
-            .filter_map(|(&id, &amt)| (id > 0 && amt > 0).then_some((id, amt as i64)))
-            .collect();
-        planner_recipes.insert(
-            recipe.key_id.0,
-            recipe_planner::Recipe {
-                id: recipe.key_id.0,
-                output: recipe.item_result,
-                yield_amount: recipe.amount_result.max(1) as i64,
-                ingredients,
-            },
-        );
-        if use_subcrafts {
-            default_choices
-                .entry(recipe.item_result)
-                .or_insert(recipe.key_id.0);
-        }
-    }
-
-    let excluded: BTreeSet<i32> = if exclude_shards {
-        data.items
-            .iter()
-            .filter(|(_, item)| {
-                item.item_search_category == ultros_crafting::cost::CRYSTAL_SEARCH_CATEGORY
-            })
-            .map(|(id, _)| id.0)
-            .collect()
-    } else {
-        BTreeSet::new()
-    };
-
-    let mut aggregated_buy: BTreeMap<i32, i64> = BTreeMap::new();
-    let mut aggregated_crafts: BTreeMap<i32, (i32, i64, i64, i64, usize)> = BTreeMap::new();
-    let owned = BTreeMap::new();
-    let mut first_recipe_id: Option<i32> = None;
-
+    let mut resolved_targets: Vec<(i32, i64, i32)> = Vec::with_capacity(req.items.len());
     for target in &req.items {
+        if target.quantity <= 0 {
+            return Err(WebError::BadRequest);
+        }
         let item_id =
             resolve_item_arg(&target.item, &state.search_service).ok_or(WebError::NotFound)?;
-        let qty = target.quantity.clamp(1, 9999);
         let root_recipe = recipes_by_out
             .get(&ItemId(item_id))
             .and_then(|v| v.first().copied())
             .ok_or(WebError::BadRequest)?;
-        if first_recipe_id.is_none() {
-            first_recipe_id = Some(root_recipe.key_id.0);
-        }
-        let planner_root = planner_recipes
-            .get(&root_recipe.key_id.0)
-            .ok_or(WebError::BadRequest)?;
-        let choices = if use_subcrafts {
-            &default_choices
-        } else {
-            // Only expand the requested root item; buy all direct ingredients.
-            &BTreeMap::new()
-        };
-        let materials = recipe_planner::expand(
-            planner_root,
-            qty,
-            &planner_recipes,
-            choices,
-            &owned,
-            &excluded,
-        )
-        .map_err(|_| WebError::BadRequest)?;
+        resolved_targets.push((item_id, target.quantity, root_recipe.key_id.0));
+    }
+    let first_recipe_id = resolved_targets.first().map(|t| t.2);
 
-        for mat in materials {
-            if let Some(rid) = mat.recipe {
-                let entry = aggregated_crafts
-                    .entry(mat.item)
-                    .or_insert((rid, 0, 0, 0, mat.depth));
-                entry.1 += mat.crafts;
-                entry.2 += mat.needed;
-                entry.3 += mat.surplus;
-                entry.4 = entry.4.max(mat.depth);
+    let _permit = shared_heavy_semaphore()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| AnalyzerError::Uninitialized)?;
+
+    let buy_map = snapshot_cheapest_map(&state.analyzer_service, &buy_selector).await?;
+    let world_helper = state.world_helper.clone();
+    let world_name = resolved.world_name.clone();
+
+    let (shopping_list, craft_steps, total_cost, missing_price_items) =
+        tokio::task::spawn_blocking(move || -> Result<_, String> {
+            let graph = static_planner_graph();
+            let empty_excluded = BTreeSet::new();
+            let excluded = if exclude_shards {
+                &graph.shard_ids
             } else {
-                *aggregated_buy.entry(mat.item).or_insert(0) += mat.remaining();
-            }
-        }
-    }
+                &empty_excluded
+            };
 
-    let mut total_cost: i64 = 0;
-    let mut missing_price_items: usize = 0;
-    let mut shopping_list = Vec::new();
-    for (item_id, quantity) in aggregated_buy {
-        if quantity <= 0 {
-            continue;
-        }
-        let vendor = vendors.get(&item_id).copied();
-        let market = buy_map.find_matching_listings(item_id).chosen(false);
-        let (source, unit_price, world_name) = match (vendor, market) {
-            (Some(v), Some(m)) if v <= m.price => ("vendor", v, None),
-            (Some(v), None) => ("vendor", v, None),
-            (_, Some(m)) if m.price > 0 => (
-                "market",
-                m.price,
-                Some(world_name_by_id(&state.world_helper, m.world_id)),
-            ),
-            _ => {
-                missing_price_items += 1;
-                ("unpriced", 0, None)
-            }
-        };
-        let est_total = unit_price as i64 * quantity;
-        total_cost += est_total;
-        shopping_list.push(PlannedShoppingItem {
-            item_id,
-            item_name: item_name(item_id).to_string(),
-            quantity,
-            source,
-            est_unit_price: unit_price,
-            est_total_cost: est_total,
-            cheapest_world: world_name,
-            item_url: item_url(&resolved.world_name, item_id),
-        });
-    }
-    shopping_list.sort_by_key(|a| std::cmp::Reverse(a.est_total_cost));
+            let materials = expand_unified_plan(
+                &resolved_targets,
+                &graph.recipes,
+                &graph.default_choices,
+                use_subcrafts,
+                excluded,
+            )?;
 
-    let mut craft_steps_raw: Vec<(usize, PlannedCraftStep)> = aggregated_crafts
-        .into_iter()
-        .map(|(item_id, (rid, crafts, needed, surplus, depth))| {
-            let job = data
-                .recipes
-                .get(&xiv_gen::RecipeId(rid))
-                .and_then(|r| craft_type_info(r.craft_type))
-                .map(|(c, n)| format!("{c} ({n})"))
-                .unwrap_or_else(|| "Craft".to_string());
-            (
-                depth,
-                PlannedCraftStep {
-                    item_id,
-                    item_name: item_name(item_id).to_string(),
-                    recipe_id: rid,
-                    job,
-                    crafts_needed: crafts,
-                    total_needed: needed,
-                    surplus,
-                    recipe_url: recipe_url(rid),
-                },
-            )
+            let data = xiv_gen_db::data();
+            let vendors = vendor_price_map();
+            let mut total_cost: i64 = 0;
+            let mut missing_price_items: usize = 0;
+            let mut shopping_list = Vec::new();
+            let mut craft_steps = Vec::new();
+
+            // `materials` is parent-first topological order; collect crafts in reverse (bottom-up).
+            for mat in materials.iter().rev() {
+                if let Some(rid) = mat.recipe {
+                    let job = data
+                        .recipes
+                        .get(&xiv_gen::RecipeId(rid))
+                        .and_then(|r| craft_type_info(r.craft_type))
+                        .map(|(c, n)| format!("{c} ({n})"))
+                        .unwrap_or_else(|| "Craft".to_string());
+                    craft_steps.push(PlannedCraftStep {
+                        item_id: mat.item,
+                        item_name: item_name(mat.item).to_string(),
+                        recipe_id: rid,
+                        job,
+                        crafts_needed: mat.crafts,
+                        total_needed: mat.needed,
+                        surplus: mat.surplus,
+                        recipe_url: recipe_url(rid),
+                    });
+                } else if mat.remaining() > 0 {
+                    let quantity = mat.remaining();
+                    let vendor = vendors.get(&mat.item).copied();
+                    let market = buy_map.find_matching_listings(mat.item).chosen(false);
+                    let (source, unit_price, wname) = match (vendor, market) {
+                        (Some(v), Some(m)) if v <= m.price => ("vendor", v, None),
+                        (Some(v), None) => ("vendor", v, None),
+                        (_, Some(m)) if m.price > 0 => (
+                            "market",
+                            m.price,
+                            Some(world_name_by_id(&world_helper, m.world_id)),
+                        ),
+                        _ => {
+                            missing_price_items += 1;
+                            ("unpriced", 0, None)
+                        }
+                    };
+                    let est_total = unit_price as i64 * quantity;
+                    total_cost += est_total;
+                    shopping_list.push(PlannedShoppingItem {
+                        item_id: mat.item,
+                        item_name: item_name(mat.item).to_string(),
+                        quantity,
+                        source,
+                        est_unit_price: unit_price,
+                        est_total_cost: est_total,
+                        cheapest_world: wname,
+                        item_url: item_url(&world_name, mat.item),
+                    });
+                }
+            }
+
+            shopping_list.sort_by_key(|a| std::cmp::Reverse(a.est_total_cost));
+            Ok((shopping_list, craft_steps, total_cost, missing_price_items))
         })
-        .collect();
-    // Deepest subcrafts first so the player crafts in bottom-up order.
-    craft_steps_raw.sort_by_key(|a| std::cmp::Reverse(a.0));
-    let craft_steps: Vec<PlannedCraftStep> = craft_steps_raw.into_iter().map(|(_, s)| s).collect();
+        .await
+        .map_err(|e| WebError::AnyhowError(anyhow::anyhow!("plan_craft task failed: {e}")))?
+        .map_err(|reason| {
+            tracing::debug!(reason, "plan_craft rejected");
+            WebError::BadRequest
+        })?;
 
     let view_url = first_recipe_id
         .map(recipe_url)
@@ -2353,13 +2781,13 @@ pub(crate) fn format_vendor_resale_md(env: &AgentEnvelope<Vec<PublicVendorResale
     let world = env.world.as_deref().unwrap_or("World");
     md_header(
         &mut out,
-        &format!("Vendor Resale — {world}"),
+        &format!("Vendor Resale (NQ) — {world}"),
         &env.view_url,
         &env.as_of,
     );
     let _ = writeln!(
         out,
-        "| Item | Vendor | Market | Profit | ROI % | Sales/Day |"
+        "| Item | Vendor | NQ Market | Profit | ROI % | Sales/Day |"
     );
     let _ = writeln!(out, "|---|---:|---:|---:|---:|---:|");
     for r in &env.data {
@@ -2389,13 +2817,13 @@ pub(crate) fn format_leves_md(env: &AgentEnvelope<Vec<PublicLeveRow>>) -> String
     );
     let _ = writeln!(
         out,
-        "| Leve | Job | Lv | Turn-in Item | Qty | Gil Reward | Best Cost (method) | Profit |"
+        "| Leve | Job | Lv | Turn-in Item | Qty | Gil | Item EV | Best Cost (method) | Profit |"
     );
-    let _ = writeln!(out, "|---|---|---:|---|---:|---:|---:|---:|");
+    let _ = writeln!(out, "|---|---|---:|---|---:|---:|---:|---:|---:|");
     for r in &env.data {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | [{}]({}) | {} | {} | {} ({}) | {} |",
+            "| {} | {} | {} | [{}]({}) | {} | {} | {} | {} ({}) | {} |",
             r.leve_name,
             r.job,
             r.level,
@@ -2403,6 +2831,7 @@ pub(crate) fn format_leves_md(env: &AgentEnvelope<Vec<PublicLeveRow>>) -> String
             r.item_url,
             r.quantity_required,
             r.gil_reward,
+            r.expected_item_reward_value,
             r.best_cost,
             r.best_method,
             r.profit
@@ -2416,13 +2845,13 @@ pub(crate) fn format_ventures_md(env: &AgentEnvelope<Vec<PublicVentureRow>>) -> 
     let world = env.world.as_deref().unwrap_or("World");
     md_header(
         &mut out,
-        &format!("Venture Analyzer — {world}"),
+        &format!("Venture Analyzer (NQ) — {world}"),
         &env.view_url,
         &env.as_of,
     );
     let _ = writeln!(
         out,
-        "| Item | Category | Lv | Qty | Unit Price | Est. Net Value | Sales/Day |"
+        "| Item | Category | Lv | Qty | NQ Unit Price | Est. Net Value | Sales/Day |"
     );
     let _ = writeln!(out, "|---|---|---:|---:|---:|---:|---:|");
     for r in &env.data {
@@ -2453,20 +2882,25 @@ pub(crate) fn format_scrips_md(env: &AgentEnvelope<Vec<PublicScripRow>>) -> Stri
     );
     let _ = writeln!(
         out,
-        "| Item | Scrip Type | Job | Scrips | Craft Cost | Gil/Scrip |"
+        "| Item | Scrip Type | Acquisition | Job | Scrips | Craft Cost | Gil/Scrip |"
     );
-    let _ = writeln!(out, "|---|---|---|---:|---:|---:|");
+    let _ = writeln!(out, "|---|---|---|---|---:|---:|---:|");
     for r in &env.data {
         let _ = writeln!(
             out,
-            "| [{}]({}) | {} | {} | {} | {} | {:.2} |",
+            "| [{}]({}) | {} | {} | {} | {} | {} | {} |",
             r.item_name,
             r.item_url,
             r.scrip_type,
+            r.acquisition,
             r.job.unwrap_or("Gatherer"),
             r.scrip_amount,
-            r.craft_cost,
+            r.craft_cost
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "—".into()),
             r.gil_per_scrip
+                .map(|g| format!("{g:.2}"))
+                .unwrap_or_else(|| "—".into()),
         );
     }
     out
@@ -2554,4 +2988,172 @@ pub(crate) fn format_plan_craft_md(env: &AgentEnvelope<PlanCraftResponse>) -> St
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tax_helpers_match_ultros_calc_and_preserve_large_i64_values() {
+        assert_eq!(
+            post_tax_price_i32(1000, true) + tax_amount_i32(1000, true),
+            1000
+        );
+        assert_eq!(post_tax_price_i32(1000, false), 1000);
+        assert_eq!(tax_amount_i32(1000, false), 0);
+
+        // Venture gross > i32::MAX must not clamp to i32::MAX before applying tax.
+        let big_gross: i64 = 5_000_000_000;
+        assert_eq!(post_tax_price_i64(big_gross, true), 4_750_000_000);
+        assert_eq!(post_tax_price_i64(big_gross, false), big_gross);
+    }
+
+    #[test]
+    fn leve_hq_gating_and_whole_batch_cost() {
+        // Items that cannot be HQ never get the 2x gil reward even when hq=true is requested.
+        assert_eq!(leve_effective_gil_reward(5000, true, false), (false, 5000));
+        assert_eq!(leve_effective_gil_reward(5000, true, true), (true, 10000));
+        assert_eq!(leve_effective_gil_reward(5000, false, true), (false, 5000));
+
+        // Requiring 4 units of a 3-yield recipe requires 2 full craft batches, not 4/3 prorated.
+        assert_eq!(whole_batch_craft_cost(4, 3, 1000), 2000);
+        assert_eq!(whole_batch_craft_cost(3, 3, 1000), 1000);
+    }
+
+    #[test]
+    fn scrip_sort_ranks_priced_crafted_rows_ahead_of_unpriced_gathered_rows() {
+        let mut rows = vec![
+            PublicScripRow {
+                item_id: 1,
+                item_name: "Gathered Item".into(),
+                scrip_type: "OrangeGatherers".into(),
+                scrip_amount: 200,
+                reward_tier: "max_collectability",
+                acquisition: "gathered",
+                job: None,
+                recipe_id: None,
+                craft_cost: None,
+                gil_per_scrip: None,
+                item_url: String::new(),
+                recipe_url: None,
+            },
+            PublicScripRow {
+                item_id: 2,
+                item_name: "Expensive Craft".into(),
+                scrip_type: "OrangeCrafters".into(),
+                scrip_amount: 100,
+                reward_tier: "max_collectability",
+                acquisition: "crafted",
+                job: Some("CUL"),
+                recipe_id: Some(10),
+                craft_cost: Some(5000),
+                gil_per_scrip: Some(50.0),
+                item_url: String::new(),
+                recipe_url: None,
+            },
+            PublicScripRow {
+                item_id: 3,
+                item_name: "Cheap Craft".into(),
+                scrip_type: "OrangeCrafters".into(),
+                scrip_amount: 100,
+                reward_tier: "max_collectability",
+                acquisition: "crafted",
+                job: Some("CUL"),
+                recipe_id: Some(11),
+                craft_cost: Some(1200),
+                gil_per_scrip: Some(12.0),
+                item_url: String::new(),
+                recipe_url: None,
+            },
+        ];
+        sort_scrip_rows(&mut rows);
+        let ids: Vec<i32> = rows.iter().map(|r| r.item_id).collect();
+        assert_eq!(ids, vec![3, 2, 1]);
+    }
+
+    #[test]
+    fn unified_craft_plan_batches_shared_multi_yield_subcrafts_once() {
+        // Two targets (100, 101) each need 1 unit of intermediate 200 (yield 2 per craft).
+        // Combined demand for 200 is 2 -> exactly 1 craft batch (NOT 2 separate batches!).
+        let mut recipes = BTreeMap::new();
+        recipes.insert(
+            1,
+            recipe_planner::Recipe {
+                id: 1,
+                output: 100,
+                yield_amount: 1,
+                ingredients: vec![(200, 1)],
+            },
+        );
+        recipes.insert(
+            2,
+            recipe_planner::Recipe {
+                id: 2,
+                output: 101,
+                yield_amount: 1,
+                ingredients: vec![(200, 1)],
+            },
+        );
+        recipes.insert(
+            3,
+            recipe_planner::Recipe {
+                id: 3,
+                output: 200,
+                yield_amount: 2,
+                ingredients: vec![(300, 5)],
+            },
+        );
+        let choices = BTreeMap::from([(100, 1), (101, 2), (200, 3)]);
+        let expanded = expand_unified_plan(
+            &[(100, 1, 1), (101, 1, 2)],
+            &recipes,
+            &choices,
+            true,
+            &BTreeSet::new(),
+        )
+        .expect("plan expands");
+
+        let intermediate = expanded.iter().find(|m| m.item == 200).unwrap();
+        assert_eq!(intermediate.needed, 2);
+        assert_eq!(intermediate.crafts, 1);
+        assert_eq!(intermediate.surplus, 0);
+
+        let raw = expanded.iter().find(|m| m.item == 300).unwrap();
+        assert_eq!(raw.needed, 5);
+    }
+
+    #[test]
+    fn recipe_and_trends_view_urls_match_frontend_query_contract() {
+        let q = PublicRecipesQuery {
+            use_subcrafts: Some(true),
+            require_hq: Some(false),
+            exclude_shards: Some(true),
+            min_profit: Some(5000),
+            min_sales: Some(10),
+            min_daily_sales: Some(2.5),
+            ..Default::default()
+        };
+        let cost_url = build_recipes_view_url("Gilgamesh", Some("CUL"), "datacenter", "cost", &q);
+        assert!(cost_url.contains("sort=cost"));
+        assert!(cost_url.contains("dir=asc"));
+        assert!(cost_url.contains("min-sales=2.5"));
+        assert!(!cost_url.contains("min-sales=10"));
+
+        let vel_url = build_recipes_view_url(
+            "Gilgamesh",
+            None,
+            "world",
+            "daily_sales",
+            &PublicRecipesQuery::default(),
+        );
+        assert!(vel_url.contains("sort=velocity"));
+        assert!(vel_url.contains("dir=desc"));
+
+        let trends_url = build_trends_view_url("Gilgamesh", 7, true);
+        assert_eq!(
+            trends_url,
+            "https://ultros.app/trends/Gilgamesh?window=7&show_suspicious=true"
+        );
+    }
 }

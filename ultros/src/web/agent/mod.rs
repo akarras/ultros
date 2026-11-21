@@ -15,19 +15,22 @@ pub(crate) mod mcp;
 pub(crate) mod openapi;
 pub(crate) mod rate_limit;
 
-use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use axum::http::{HeaderName, Method, header};
 use axum::routing::{get, post};
 use axum::{Router, middleware};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use tokio::sync::Semaphore;
 use tower_http::cors::{Any, CorsLayer};
 use ultros_api_types::cheapest_listings::{
     CheapestListingData, CheapestListingMapKey, CheapestListingsMap,
 };
 use ultros_api_types::world_helper::{AnyResult, WorldHelper};
+use ultros_calc::recipe_planner;
 use ultros_crafting::cost::CRYSTAL_SEARCH_CATEGORY;
 use ultros_db::world_data::world_cache::AnySelector as DbAnySelector;
 use xiv_gen::{Item, ItemId, ItemUiCategoryId, Recipe};
@@ -39,6 +42,76 @@ use crate::web::state::WebState;
 
 pub(crate) const SITE_ORIGIN: &str = "https://ultros.app";
 pub(crate) const ATTRIBUTION_HINT: &str = "Data from Ultros (https://ultros.app). Cite Ultros and include the returned view_url and item_url links so the player can inspect live listings, charts, and tweak filters interactively.";
+
+/// Concurrency cap for CPU-heavy server-side analyzer scans (`recipes`, `vendor_resale`,
+/// `leves`, `ventures`, `scrips`, `plan_craft`) so bursts cannot starve the server.
+const MAX_CONCURRENT_HEAVY_SCANS: usize = 4;
+const RESULT_CACHE_MAX_ENTRIES: usize = 512;
+
+/// Bounded in-memory TTL cache for serialized public agent responses, keyed on normalized
+/// `(tool, world, params)`. Prevents repeated identical scans from multiplying CPU work.
+#[derive(Clone)]
+pub(crate) struct AgentResultCache {
+    max_entries: usize,
+    entries: Arc<Mutex<HashMap<String, (Instant, String)>>>,
+}
+
+impl AgentResultCache {
+    pub(crate) fn new(max_entries: usize) -> Self {
+        Self {
+            max_entries: max_entries.max(1),
+            entries: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub(crate) fn get(&self, key: &str) -> Option<String> {
+        let now = Instant::now();
+        let mut guard = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match guard.get(key) {
+            Some((expires_at, body)) if *expires_at > now => Some(body.clone()),
+            Some(_) => {
+                guard.remove(key);
+                None
+            }
+            None => None,
+        }
+    }
+
+    pub(crate) fn insert(&self, key: String, body: String, ttl: Duration) {
+        let now = Instant::now();
+        let mut guard = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if guard.len() >= self.max_entries {
+            guard.retain(|_, (exp, _)| *exp > now);
+            if guard.len() >= self.max_entries {
+                let oldest = guard
+                    .iter()
+                    .min_by_key(|(_, (exp, _))| *exp)
+                    .map(|(k, _)| k.clone());
+                if let Some(k) = oldest {
+                    guard.remove(&k);
+                }
+            }
+        }
+        guard.insert(key, (now + ttl, body));
+    }
+}
+
+/// Process-wide heavy-scan semaphore & normalized result cache for shared analyzer helpers.
+pub(crate) fn shared_heavy_semaphore() -> &'static Arc<Semaphore> {
+    static SEM: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    SEM.get_or_init(|| Arc::new(Semaphore::new(MAX_CONCURRENT_HEAVY_SCANS)))
+}
+
+pub(crate) fn shared_result_cache() -> &'static AgentResultCache {
+    static CACHE: OnceLock<AgentResultCache> = OnceLock::new();
+    CACHE.get_or_init(|| AgentResultCache::new(RESULT_CACHE_MAX_ENTRIES))
+}
 
 /// Standard attribution envelope wrapped around every public agent response.
 #[derive(Debug, Clone, Serialize)]
@@ -84,7 +157,12 @@ impl<T> AgentEnvelope<T> {
 }
 
 /// Public CORS policy for read-only agent endpoints, discovery docs, and MCP.
-fn public_cors_layer() -> CorsLayer {
+///
+/// Permissive (`Allow-Origin: *`, no credentials) on purpose: every route behind this
+/// layer is 100% public, read-only, unauthenticated market data (never reads cookies or
+/// mutates user state), so cross-origin web/agent clients cannot perform privileged actions
+/// via DNS rebinding or CSRF.
+pub(crate) fn public_cors_layer() -> CorsLayer {
     CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
@@ -112,9 +190,10 @@ pub(crate) fn discovery_router() -> Router<WebState> {
 }
 
 /// Rate-limited, CORS-enabled public agent REST API + remote Streamable HTTP MCP server.
-pub(crate) fn agent_router() -> Router<WebState> {
-    let limiter = rate_limit::AgentRateLimiter::default_public();
+/// Uses the shared `limiter` so REST, MCP, and Markdown negotiation enforce one unified budget.
+pub(crate) fn agent_router(limiter: rate_limit::AgentRateLimiter) -> Router<WebState> {
     Router::new()
+        .route("/api/v1/public/mcp", get(mcp::handle_mcp_discovery))
         .route("/api/v1/public/worlds", get(analyzers::http_worlds))
         .route("/api/v1/public/search", get(analyzers::http_search))
         .route(
@@ -205,7 +284,7 @@ pub(crate) fn vendor_price_map() -> &'static HashMap<i32, i32> {
     })
 }
 
-/// Output `ItemId` -> list of recipes that craft it. Shared by `compute_cost` and `plan_craft`.
+/// Output `ItemId` -> list of recipes that craft it (sorted by recipe id for determinism).
 pub(crate) fn recipes_by_output() -> &'static HashMap<ItemId, Vec<&'static Recipe>> {
     static MAP: OnceLock<HashMap<ItemId, Vec<&'static Recipe>>> = OnceLock::new();
     MAP.get_or_init(|| {
@@ -222,6 +301,64 @@ pub(crate) fn recipes_by_output() -> &'static HashMap<ItemId, Vec<&'static Recip
             list.sort_by_key(|r| r.key_id.0);
         }
         map
+    })
+}
+
+/// Static recipe graph for `ultros_calc::recipe_planner`, initialized once per process.
+pub(crate) struct StaticPlannerGraph {
+    pub(crate) recipes: BTreeMap<i32, recipe_planner::Recipe>,
+    pub(crate) default_choices: BTreeMap<i32, i32>,
+    pub(crate) shard_ids: BTreeSet<i32>,
+}
+
+pub(crate) fn static_planner_graph() -> &'static StaticPlannerGraph {
+    static GRAPH: OnceLock<StaticPlannerGraph> = OnceLock::new();
+    GRAPH.get_or_init(|| {
+        let data = xiv_gen_db::data();
+        let mut recipes = BTreeMap::new();
+        let mut default_choices = BTreeMap::new();
+
+        // Walk sorted by recipe id so default_choices is deterministic across runs.
+        let mut all_recipes: Vec<&Recipe> = data
+            .recipes
+            .values()
+            .filter(|r| r.item_result > 0)
+            .collect();
+        all_recipes.sort_by_key(|r| r.key_id.0);
+
+        for recipe in all_recipes {
+            let ingredients: Vec<(i32, i64)> = recipe
+                .ingredient
+                .iter()
+                .zip(recipe.amount_ingredient.iter())
+                .filter_map(|(&id, &amt)| (id > 0 && amt > 0).then_some((id, amt as i64)))
+                .collect();
+            recipes.insert(
+                recipe.key_id.0,
+                recipe_planner::Recipe {
+                    id: recipe.key_id.0,
+                    output: recipe.item_result,
+                    yield_amount: recipe.amount_result.max(1) as i64,
+                    ingredients,
+                },
+            );
+            default_choices
+                .entry(recipe.item_result)
+                .or_insert(recipe.key_id.0);
+        }
+
+        let shard_ids = data
+            .items
+            .iter()
+            .filter(|(_, item)| item.item_search_category == CRYSTAL_SEARCH_CATEGORY)
+            .map(|(id, _)| id.0)
+            .collect();
+
+        StaticPlannerGraph {
+            recipes,
+            default_choices,
+            shard_ids,
+        }
     })
 }
 
@@ -255,10 +392,7 @@ fn item_name_index() -> &'static HashMap<String, i32> {
 }
 
 pub(crate) fn is_shard_item(item_id: ItemId) -> bool {
-    xiv_gen_db::data()
-        .items
-        .get(&item_id)
-        .is_some_and(|item| item.item_search_category == CRYSTAL_SEARCH_CATEGORY)
+    static_planner_graph().shard_ids.contains(&item_id.0)
 }
 
 pub(crate) fn item_name(item_id: i32) -> &'static str {
@@ -416,8 +550,25 @@ mod tests {
     }
 
     #[test]
-    fn vendor_price_map_and_recipes_by_output_populate_from_game_data() {
+    fn static_game_data_caches_populate_deterministically() {
         assert!(!vendor_price_map().is_empty());
         assert!(!recipes_by_output().is_empty());
+        let g = static_planner_graph();
+        assert!(!g.recipes.is_empty());
+        assert!(!g.default_choices.is_empty());
+        assert!(!g.shard_ids.is_empty());
+    }
+
+    #[test]
+    fn result_cache_respects_ttl_and_capacity() {
+        let cache = AgentResultCache::new(2);
+        cache.insert("k1".into(), "v1".into(), Duration::from_secs(30));
+        cache.insert("k2".into(), "v2".into(), Duration::from_secs(60));
+        assert_eq!(cache.get("k1").as_deref(), Some("v1"));
+        cache.insert("k3".into(), "v3".into(), Duration::from_secs(60));
+        // Evicted soonest-expiring entry (k1) when capacity reached.
+        assert_eq!(cache.get("k1"), None);
+        assert_eq!(cache.get("k2").as_deref(), Some("v2"));
+        assert_eq!(cache.get("k3").as_deref(), Some("v3"));
     }
 }

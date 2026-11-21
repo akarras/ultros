@@ -423,9 +423,8 @@ pub(crate) fn social_card_content_with_npc(
                         td_string!(locale, social_card_saved_tools_subtitle).to_string(),
                     ),
                     "ai-agents" => (
-                        "AI assistants & MCP".to_string(),
-                        "Connect Claude, ChatGPT, and MCP clients directly to live Ultros market tools."
-                            .to_string(),
+                        td_string!(locale, social_card_ai_agents).to_string(),
+                        td_string!(locale, social_card_ai_agents_subtitle).to_string(),
                     ),
                     "fc-crafting" => tool_copy(locale, "fc-crafting-analyzer")?,
                     "market-trends" => tool_copy(locale, "trends")?,

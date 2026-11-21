@@ -1,12 +1,6 @@
 User-agent: *
 Allow: /
-Allow: /llms.txt
-Allow: /llms-full.txt
-Allow: /openapi.json
-Allow: /mcp
 Allow: /api/v1/public/
-Allow: /api/v1/search
-Allow: /api/v1/world_data
 # Login-gated or per-user pages: noindex via <meta> as well, but blocking
 # at the crawler level saves crawl budget on routes that have no organic
 # value and never link out to indexable content.
@@ -21,6 +15,7 @@ Disallow: /logout
 Disallow: /api/
 Disallow: /invitebot
 Disallow: /redirect
+Disallow: /*?*sort=
 Disallow: /*?*per_page=
 
 Sitemap: https://ultros.app/sitemap.xml
