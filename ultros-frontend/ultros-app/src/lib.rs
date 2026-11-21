@@ -1002,6 +1002,9 @@ mod error_filter_wiring {
         // (#8165-#8169).
         assert!(FILTER_JS.contains("isStubbedBundleModule"));
         assert!(FILTER_JS.contains("mod.default is not a function"));
+        // Category 12: a frameless AbortError rejection nobody observed
+        // (third-party teardown on client-side navigation, #8170/#8171).
+        assert!(FILTER_JS.contains("isUnobservedAbortRejection"));
     }
 
     /// Same contract for the wasm symbolicator: beforeSend calls
