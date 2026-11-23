@@ -1774,7 +1774,8 @@ async fn refresh_world_item_listings(
 
 pub(crate) use self::state::WebState;
 use self::static_files::{
-    fallback_item_icon, favicon, get_item_icon, get_map, robots, service_worker_js, static_path,
+    ads_txt, fallback_item_icon, favicon, get_item_icon, get_map, robots, service_worker_js,
+    static_path,
 };
 
 pub(crate) async fn invite() -> Redirect {
@@ -4206,6 +4207,7 @@ pub(crate) async fn start_web(
         .route("/invitebot", get(invite))
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
+        .route("/ads.txt", get(ads_txt))
         .route("/service-worker.js", get(service_worker_js))
         .route("/itemcard/{world}/{id}", get(item_card))
         .route(
