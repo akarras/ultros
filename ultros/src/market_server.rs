@@ -1998,13 +1998,14 @@ mod tests {
         let db = ultros_db::UltrosDb::from_connection(
             sea_orm::SqlxPostgresConnector::from_sqlx_postgres_pool(pool),
         );
-        let bot_admin: Arc<dyn BotAdminClient> = Arc::new(InProcessBotAdminClient::new(db));
+        let shutdown = CancellationToken::new();
+        let bot_admin: Arc<dyn BotAdminClient> =
+            Arc::new(InProcessBotAdminClient::new(db, shutdown.clone()));
         let market_stub = Arc::new(StubMarketClient::default());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let roles = Roles::parse(Some("ingest,market,bot")).unwrap();
         let (_senders, receivers) = create_event_busses();
-        let shutdown = CancellationToken::new();
         let app = router(
             market_stub,
             bot_admin,

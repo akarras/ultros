@@ -27,7 +27,6 @@ use crate::web::oauth::AuthUserCache;
 /// returns an actionable reauthorization prompt instead of timing out the RPC
 /// and falsely reporting a healthy bot as offline.
 pub(crate) const LEGACY_GUILD_SCAN_BUDGET: Duration = Duration::from_secs(15);
-const LEGACY_DISCORD_CALL_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const LEGACY_OAUTH_REAUTH_MESSAGE: &str = "Your Discord login predates server-list permissions and could not finish scanning in time; please sign out and sign in again to refresh Discord permissions.";
 
 /// Validate a Discord snowflake ID before passing it to Serenity's `NonZeroU64`
@@ -306,9 +305,12 @@ fn member_search_message(status: Option<u16>, error: impl std::fmt::Display) -> 
 
 /// Compatibility for sessions issued before we requested the `guilds` scope.
 /// Keep this bot-wide scan only for Discord's explicit missing-access response,
-/// and bound it by `deadline` so large guild counts or slow Discord responses
-/// return an actionable reauthorization prompt instead of tripping the RPC
-/// timeout and falsely reporting a healthy bot as offline.
+/// and bound every call directly by `deadline` so:
+/// - a slow-but-within-budget Discord call still completes and is never silently
+///   omitted from the returned list, and
+/// - once the overall scan budget is exhausted, the caller gets an actionable
+///   reauthorization prompt instead of tripping the 30s RPC timeout or seeing a
+///   misleading empty `200` list.
 async fn legacy_guilds_user_manages_via(
     http: &Http,
     bot_guilds: &[GuildId],
@@ -321,47 +323,30 @@ async fn legacy_guilds_user_manages_via(
         if remaining.is_zero() {
             return Err(ApiError::BadRequest(LEGACY_OAUTH_REAUTH_MESSAGE));
         }
-        let call_timeout = remaining.min(LEGACY_DISCORD_CALL_TIMEOUT);
-        let partial =
-            match tokio::time::timeout(call_timeout, guild_id.to_partial_guild(http)).await {
-                Ok(Ok(guild)) => guild,
-                Ok(Err(e)) => {
-                    tracing::warn!(
-                        guild_id = guild_id.get(),
-                        "failed to load Discord guild: {e}"
-                    );
-                    continue;
-                }
-                Err(_) => {
-                    if tokio::time::Instant::now() >= deadline {
-                        return Err(ApiError::BadRequest(LEGACY_OAUTH_REAUTH_MESSAGE));
-                    }
-                    tracing::warn!(
-                        guild_id = guild_id.get(),
-                        "timed out loading Discord guild during legacy discovery"
-                    );
-                    continue;
-                }
-            };
+        let partial = match tokio::time::timeout(remaining, guild_id.to_partial_guild(http)).await {
+            Ok(Ok(guild)) => guild,
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    guild_id = guild_id.get(),
+                    "failed to load Discord guild: {e}"
+                );
+                continue;
+            }
+            Err(_) => return Err(ApiError::BadRequest(LEGACY_OAUTH_REAUTH_MESSAGE)),
+        };
 
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
             return Err(ApiError::BadRequest(LEGACY_OAUTH_REAUTH_MESSAGE));
         }
-        let call_timeout = remaining.min(LEGACY_DISCORD_CALL_TIMEOUT);
         // A miss here is the overwhelmingly common case (the user is not in
         // most of the bot's guilds), so it is not worth logging.
-        let user_member =
-            match tokio::time::timeout(call_timeout, partial.member(http, user_id)).await {
-                Ok(Ok(member)) => member,
-                Ok(Err(_)) => continue,
-                Err(_) => {
-                    if tokio::time::Instant::now() >= deadline {
-                        return Err(ApiError::BadRequest(LEGACY_OAUTH_REAUTH_MESSAGE));
-                    }
-                    continue;
-                }
-            };
+        let user_member = match tokio::time::timeout(remaining, partial.member(http, user_id)).await
+        {
+            Ok(Ok(member)) => member,
+            Ok(Err(_)) => continue,
+            Err(_) => return Err(ApiError::BadRequest(LEGACY_OAUTH_REAUTH_MESSAGE)),
+        };
         let user_permissions = partial.member_permissions(&user_member);
         if !user_permissions.contains(Permissions::ADMINISTRATOR)
             && !user_permissions.contains(Permissions::MANAGE_GUILD)
@@ -553,23 +538,27 @@ pub(crate) async fn writable_guilds_from_candidates(
     let legacy_deadline = candidate_guild_ids
         .is_none()
         .then(|| tokio::time::Instant::now() + LEGACY_GUILD_SCAN_BUDGET);
+    let partials =
+        guilds_from_candidates(ctx, user_id, candidate_guild_ids, legacy_deadline).await?;
+    writable_guilds_from_partials_via(&ctx.http, partials, bot_user_id, legacy_deadline).await
+}
+
+async fn writable_guilds_from_partials_via(
+    http: &Http,
+    partials: Vec<serenity::PartialGuild>,
+    bot_user_id: UserId,
+    legacy_deadline: Option<tokio::time::Instant>,
+) -> Result<Vec<DiscordWritableGuild>, ApiError> {
     let mut guilds = Vec::new();
 
-    for partial in
-        guilds_from_candidates(ctx, user_id, candidate_guild_ids, legacy_deadline).await?
-    {
+    for partial in partials {
         let guild_id = partial.id;
         let bot_member = if let Some(deadline) = legacy_deadline {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
                 return Err(ApiError::BadRequest(LEGACY_OAUTH_REAUTH_MESSAGE));
             }
-            match tokio::time::timeout(
-                remaining.min(LEGACY_DISCORD_CALL_TIMEOUT),
-                partial.member(&ctx.http, bot_user_id),
-            )
-            .await
-            {
+            match tokio::time::timeout(remaining, partial.member(http, bot_user_id)).await {
                 Ok(Ok(member)) => member,
                 Ok(Err(e)) => {
                     tracing::warn!(
@@ -578,15 +567,10 @@ pub(crate) async fn writable_guilds_from_candidates(
                     );
                     continue;
                 }
-                Err(_) => {
-                    if tokio::time::Instant::now() >= deadline {
-                        return Err(ApiError::BadRequest(LEGACY_OAUTH_REAUTH_MESSAGE));
-                    }
-                    continue;
-                }
+                Err(_) => return Err(ApiError::BadRequest(LEGACY_OAUTH_REAUTH_MESSAGE)),
             }
         } else {
-            match partial.member(&ctx.http, bot_user_id).await {
+            match partial.member(http, bot_user_id).await {
                 Ok(member) => member,
                 Err(e) => {
                     tracing::warn!(
@@ -603,14 +587,11 @@ pub(crate) async fn writable_guilds_from_candidates(
             if remaining.is_zero() {
                 return Err(ApiError::BadRequest(LEGACY_OAUTH_REAUTH_MESSAGE));
             }
-            tokio::time::timeout(
-                remaining.min(LEGACY_DISCORD_CALL_TIMEOUT),
-                partial.channels(&ctx.http),
-            )
-            .await
-            .map_err(|_| ApiError::BadRequest(LEGACY_OAUTH_REAUTH_MESSAGE))?
+            tokio::time::timeout(remaining, partial.channels(http))
+                .await
+                .map_err(|_| ApiError::BadRequest(LEGACY_OAUTH_REAUTH_MESSAGE))?
         } else {
-            partial.channels(&ctx.http).await
+            partial.channels(http).await
         };
 
         let mut channels = raw_channels
@@ -1019,6 +1000,169 @@ mod tests {
         assert!(
             body_text.contains("sign out and sign in again"),
             "expected actionable reauth message, got: {body_text}"
+        );
+    }
+
+    fn mock_partial_guild_json(id: u64, admin_role_id: u64) -> serde_json::Value {
+        serde_json::json!({
+            "id": id.to_string(),
+            "name": format!("Guild {id}"),
+            "icon": null,
+            "splash": null,
+            "discovery_splash": null,
+            "owner_id": "999",
+            "afk_timeout": 300,
+            "verification_level": 0,
+            "default_message_notifications": 0,
+            "explicit_content_filter": 0,
+            "roles": [{
+                "id": admin_role_id.to_string(),
+                "guild_id": id.to_string(),
+                "color": 0,
+                "colors": {"primary_color": 0},
+                "hoist": false,
+                "managed": false,
+                "mentionable": false,
+                "name": "Admin",
+                "permissions": Permissions::ADMINISTRATOR.bits().to_string(),
+                "position": 1,
+                "tags": {}
+            }],
+            "emojis": [],
+            "features": [],
+            "mfa_level": 0,
+            "system_channel_flags": 0,
+            "premium_tier": 0,
+            "preferred_locale": "en-US",
+            "nsfw_level": 0,
+            "stickers": [],
+            "premium_progress_bar_enabled": false
+        })
+    }
+
+    fn mock_member_json(user_id: u64, role_id: u64) -> serde_json::Value {
+        serde_json::json!({
+            "user": {
+                "id": user_id.to_string(),
+                "username": "admin",
+                "discriminator": "0",
+                "avatar": null,
+                "bot": false
+            },
+            "roles": [role_id.to_string()],
+            "joined_at": "2024-01-01T00:00:00Z",
+            "deaf": false,
+            "mute": false,
+            "flags": 0
+        })
+    }
+
+    fn mock_text_channel_json(channel_id: u64, guild_id: u64) -> serde_json::Value {
+        serde_json::json!({
+            "id": channel_id.to_string(),
+            "type": 0,
+            "guild_id": guild_id.to_string(),
+            "position": 0,
+            "permission_overwrites": [],
+            "name": "alerts",
+            "nsfw": false
+        })
+    }
+
+    #[tokio::test]
+    async fn legacy_member_fetch_timeout_returns_reauth_instead_of_empty_list() {
+        let app = axum::Router::new()
+            .route(
+                "/api/v10/guilds/1",
+                axum::routing::get(|| async { axum::Json(mock_partial_guild_json(1, 10)) }),
+            )
+            .route(
+                "/api/v10/guilds/1/members/42",
+                axum::routing::get(|| async {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    axum::Json(mock_member_json(42, 10))
+                }),
+            );
+        let (http, server) = mock_discord(app).await;
+
+        let err = legacy_guilds_user_manages_via(
+            &http,
+            &[GuildId::new(1)],
+            UserId::new(42),
+            tokio::time::Instant::now() + Duration::from_millis(60),
+        )
+        .await
+        .unwrap_err();
+        server.abort();
+        assert_eq!(
+            err.into_response().status(),
+            axum::http::StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_writable_discovery_completes_within_budget_and_fails_when_channel_fetch_exceeds_budget()
+     {
+        let app = axum::Router::new()
+            .route(
+                "/api/v10/guilds/1",
+                axum::routing::get(|| async {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                    axum::Json(mock_partial_guild_json(1, 10))
+                }),
+            )
+            .route(
+                "/api/v10/guilds/1/members/42",
+                axum::routing::get(|| async {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                    axum::Json(mock_member_json(42, 10))
+                }),
+            )
+            .route(
+                "/api/v10/guilds/1/members/1000",
+                axum::routing::get(|| async {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                    axum::Json(mock_member_json(1000, 10))
+                }),
+            )
+            .route(
+                "/api/v10/guilds/1/channels",
+                axum::routing::get(|| async {
+                    tokio::time::sleep(Duration::from_millis(80)).await;
+                    axum::Json(vec![mock_text_channel_json(500, 1)])
+                }),
+            );
+        let (http, server) = mock_discord(app).await;
+
+        // With enough budget, slow calls complete and return the writable guild + channel.
+        let generous = tokio::time::Instant::now() + Duration::from_secs(2);
+        let partials =
+            legacy_guilds_user_manages_via(&http, &[GuildId::new(1)], UserId::new(42), generous)
+                .await
+                .unwrap();
+        assert_eq!(partials.len(), 1);
+        let writable = writable_guilds_from_partials_via(
+            &http,
+            partials.clone(),
+            UserId::new(1000),
+            Some(generous),
+        )
+        .await
+        .unwrap();
+        assert_eq!(writable.len(), 1);
+        assert_eq!(writable[0].channels.len(), 1);
+        assert_eq!(writable[0].channels[0].name, "alerts");
+
+        // When the channel fetch exceeds the remaining budget, return the reauth BadRequest.
+        let tight = tokio::time::Instant::now() + Duration::from_millis(55);
+        let err =
+            writable_guilds_from_partials_via(&http, partials, UserId::new(1000), Some(tight))
+                .await
+                .unwrap_err();
+        server.abort();
+        assert_eq!(
+            err.into_response().status(),
+            axum::http::StatusCode::BAD_REQUEST
         );
     }
 }

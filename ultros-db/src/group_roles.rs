@@ -1136,6 +1136,170 @@ pub(crate) async fn insert_role_member(
     Ok(())
 }
 
+/// Result of an atomic Postgres per-guild post-import reconciliation claim.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PostImportSyncClaim {
+    /// The caller won the cooldown window and should reconcile immediately.
+    ClaimedNow,
+    /// Another post-import reconcile ran within the cooldown window. Postgres
+    /// durably recorded `follow_up_due_at`, so the worker must schedule a single
+    /// coalesced follow-up reconcile after `retry_after`.
+    Deferred { retry_after: std::time::Duration },
+}
+
+/// Result of attempting to claim a previously scheduled durable follow-up row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FollowUpClaim {
+    /// This worker atomically claimed the due follow-up and should run it now.
+    Claimed,
+    /// A follow-up is still pending in Postgres, but `follow_up_due_at` has not
+    /// elapsed according to Postgres `NOW()` yet (for example due to timer skew).
+    NotYetDue(std::time::Duration),
+    /// No pending follow-up exists for this guild (already claimed or cleared).
+    NonePending,
+}
+
+impl UltrosDb {
+    /// Atomically claim the post-import reconciliation window for `guild_id` in
+    /// Postgres, or durably record `follow_up_due_at` if the guild is still
+    /// within `cooldown`.
+    ///
+    /// Using Postgres `NOW()` and row locking on `guild_id PRIMARY KEY` ensures
+    /// concurrent calls serialize atomically and the cooldown + pending
+    /// follow-up survive worker restarts and standby handoffs.
+    pub async fn claim_post_import_sync(
+        &self,
+        guild_id: i64,
+        cooldown: std::time::Duration,
+    ) -> Result<PostImportSyncClaim> {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+        let cooldown_secs = cooldown.as_secs_f64().max(0.001);
+        let row = self
+            .db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO guild_post_import_sync_claim (guild_id, claimed_at, follow_up_due_at)
+                 VALUES ($1, NOW(), NULL)
+                 ON CONFLICT (guild_id) DO UPDATE
+                 SET
+                     claimed_at = CASE
+                         WHEN guild_post_import_sync_claim.claimed_at
+                             + ($2::double precision * INTERVAL '1 second') <= NOW()
+                         THEN NOW()
+                         ELSE guild_post_import_sync_claim.claimed_at
+                     END,
+                     follow_up_due_at = CASE
+                         WHEN guild_post_import_sync_claim.claimed_at
+                             + ($2::double precision * INTERVAL '1 second') <= NOW()
+                         THEN NULL
+                         ELSE guild_post_import_sync_claim.claimed_at
+                             + ($2::double precision * INTERVAL '1 second')
+                     END
+                 RETURNING
+                     (follow_up_due_at IS NULL) AS claimed_now,
+                     GREATEST(
+                         0.0,
+                         EXTRACT(EPOCH FROM (COALESCE(follow_up_due_at, NOW()) - NOW()))
+                     )::DOUBLE PRECISION AS retry_after_secs",
+                [guild_id.into(), cooldown_secs.into()],
+            ))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("claim_post_import_sync returned no row"))?;
+
+        let claimed_now: bool = row.try_get("", "claimed_now")?;
+        if claimed_now {
+            Ok(PostImportSyncClaim::ClaimedNow)
+        } else {
+            let retry_after_secs: f64 = row.try_get("", "retry_after_secs")?;
+            Ok(PostImportSyncClaim::Deferred {
+                retry_after: std::time::Duration::from_secs_f64(retry_after_secs.max(0.0)),
+            })
+        }
+    }
+
+    /// Atomically claim a due durable post-import follow-up for `guild_id`.
+    pub async fn claim_due_post_import_follow_up(&self, guild_id: i64) -> Result<FollowUpClaim> {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+        let claimed = self
+            .db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "UPDATE guild_post_import_sync_claim
+                 SET claimed_at = NOW(), follow_up_due_at = NULL
+                 WHERE guild_id = $1
+                   AND follow_up_due_at IS NOT NULL
+                   AND follow_up_due_at <= NOW()
+                 RETURNING guild_id",
+                [guild_id.into()],
+            ))
+            .await?;
+        if claimed.is_some() {
+            return Ok(FollowUpClaim::Claimed);
+        }
+
+        let pending = self
+            .db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT GREATEST(
+                     0.0,
+                     EXTRACT(EPOCH FROM (follow_up_due_at - NOW()))
+                 )::DOUBLE PRECISION AS remaining_secs
+                 FROM guild_post_import_sync_claim
+                 WHERE guild_id = $1
+                   AND follow_up_due_at IS NOT NULL",
+                [guild_id.into()],
+            ))
+            .await?;
+        match pending {
+            Some(row) => {
+                let remaining_secs: f64 = row.try_get("", "remaining_secs")?;
+                Ok(FollowUpClaim::NotYetDue(
+                    std::time::Duration::from_secs_f64(remaining_secs.max(0.0)),
+                ))
+            }
+            None => Ok(FollowUpClaim::NonePending),
+        }
+    }
+
+    /// List all guilds that have a pending durable post-import follow-up, used
+    /// at bot startup to recover follow-ups queued before a restart or standby
+    /// handoff.
+    pub async fn list_pending_post_import_follow_ups(
+        &self,
+    ) -> Result<Vec<(i64, std::time::Duration)>> {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+        let rows = self
+            .db
+            .query_all_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT
+                     guild_id,
+                     GREATEST(
+                         0.0,
+                         EXTRACT(EPOCH FROM (follow_up_due_at - NOW()))
+                     )::DOUBLE PRECISION AS retry_after_secs
+                 FROM guild_post_import_sync_claim
+                 WHERE follow_up_due_at IS NOT NULL",
+                [],
+            ))
+            .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let guild_id: i64 = row.try_get("", "guild_id")?;
+            let retry_after_secs: f64 = row.try_get("", "retry_after_secs")?;
+            out.push((
+                guild_id,
+                std::time::Duration::from_secs_f64(retry_after_secs.max(0.0)),
+            ));
+        }
+        Ok(out)
+    }
+}
+
 /// Live-DB tests. Run with a disposable database:
 ///
 /// ```bash
@@ -1738,6 +1902,54 @@ pub(crate) mod tests {
     async fn refreshing_nothing_is_a_no_op() {
         let db = test_db().await;
         db.refresh_member_display_names(&[]).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn post_import_sync_claim_is_atomic_durable_and_queues_follow_up() {
+        let db = test_db().await;
+        let guild_id = next_id();
+        let cooldown = std::time::Duration::from_millis(250);
+
+        // 1. First claim wins immediately.
+        assert_eq!(
+            db.claim_post_import_sync(guild_id, cooldown).await.unwrap(),
+            PostImportSyncClaim::ClaimedNow
+        );
+
+        // 2. Second claim inside cooldown is deferred and persists follow_up_due_at
+        //    (visible to a fresh handle / restarted worker via list_pending).
+        let deferred = db.claim_post_import_sync(guild_id, cooldown).await.unwrap();
+        assert!(matches!(deferred, PostImportSyncClaim::Deferred { .. }));
+        let pending = db.list_pending_post_import_follow_ups().await.unwrap();
+        assert!(
+            pending.iter().any(|(id, _)| *id == guild_id),
+            "pending follow-up must survive in Postgres for restart recovery"
+        );
+
+        // 3. Before cooldown expires, claiming due follow-up reports NotYetDue.
+        assert!(matches!(
+            db.claim_due_post_import_follow_up(guild_id).await.unwrap(),
+            FollowUpClaim::NotYetDue(_)
+        ));
+
+        // 4. After cooldown elapses, the follow-up is claimed exactly once.
+        tokio::time::sleep(std::time::Duration::from_millis(320)).await;
+        assert_eq!(
+            db.claim_due_post_import_follow_up(guild_id).await.unwrap(),
+            FollowUpClaim::Claimed
+        );
+        assert_eq!(
+            db.claim_due_post_import_follow_up(guild_id).await.unwrap(),
+            FollowUpClaim::NonePending
+        );
+
+        // 5. Claiming the follow-up refreshed claimed_at, so an immediate
+        //    subsequent post-import call is again deferred inside cooldown.
+        assert!(matches!(
+            db.claim_post_import_sync(guild_id, cooldown).await.unwrap(),
+            PostImportSyncClaim::Deferred { .. }
+        ));
     }
 
     #[tokio::test]

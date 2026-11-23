@@ -24,8 +24,6 @@
 //!   never arbitrary channel or user IDs; `ultros-market` independently loads
 //!   and verifies endpoint ownership and Discord delivery method in Postgres.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::{
@@ -35,12 +33,13 @@ use axum::{
 };
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 use ultros_api_types::{alert::DiscordWritableGuild, user::GroupSyncStatus};
 use ultros_db::{
     UltrosDb,
     entity::{notification_endpoint, user_group},
-    group_roles::GroupError,
+    group_roles::{GroupError, PostImportSyncClaim},
 };
 use url::Url;
 
@@ -414,25 +413,6 @@ fn validate_delivery_endpoint(
     Ok(())
 }
 
-/// Server-controlled per-guild burst guard for [`GroupSyncTrigger::PostRoleImport`].
-#[derive(Clone, Default)]
-struct PostImportBurstLimiter {
-    last_triggered: Arc<Mutex<HashMap<i64, Instant>>>,
-}
-
-impl PostImportBurstLimiter {
-    fn try_acquire(&self, guild_id: i64, now: Instant, cooldown: Duration) -> bool {
-        let mut map = self.last_triggered.lock().unwrap();
-        if let Some(&prev) = map.get(&guild_id)
-            && now.saturating_duration_since(prev) < cooldown
-        {
-            return false;
-        }
-        map.insert(guild_id, now);
-        true
-    }
-}
-
 /// Direct in-process [`BotAdminClient`] used whenever the `bot` role is active
 /// in this binary (including `ULTROS_ROLES=all` and on `ultros-market` behind
 /// `/internal/bot/*`), or as a graceful offline fallback when no remote bot URL
@@ -440,15 +420,12 @@ impl PostImportBurstLimiter {
 #[derive(Clone)]
 pub(crate) struct InProcessBotAdminClient {
     db: UltrosDb,
-    post_import_limiter: PostImportBurstLimiter,
+    shutdown: CancellationToken,
 }
 
 impl InProcessBotAdminClient {
-    pub(crate) fn new(db: UltrosDb) -> Self {
-        Self {
-            db,
-            post_import_limiter: PostImportBurstLimiter::default(),
-        }
+    pub(crate) fn new(db: UltrosDb, shutdown: CancellationToken) -> Self {
+        Self { db, shutdown }
     }
 }
 
@@ -645,16 +622,26 @@ impl BotAdminClient for InProcessBotAdminClient {
                         crate::group_sync::spawn_reconcile(self.db.clone(), guild_id);
                         return Ok(GroupSyncStatus::Ran);
                     }
-                    if !self.post_import_limiter.try_acquire(
-                        guild_id,
-                        now,
-                        POST_IMPORT_BURST_COOLDOWN,
-                    ) {
-                        return Ok(GroupSyncStatus::RecentlySynced);
+                    match self
+                        .db
+                        .claim_post_import_sync(guild_id, POST_IMPORT_BURST_COOLDOWN)
+                        .await?
+                    {
+                        PostImportSyncClaim::ClaimedNow => {
+                            crate::group_sync::sync_rate_limiter().record(guild_id, now);
+                            crate::group_sync::spawn_reconcile(self.db.clone(), guild_id);
+                            Ok(GroupSyncStatus::Ran)
+                        }
+                        PostImportSyncClaim::Deferred { retry_after } => {
+                            crate::group_sync::schedule_post_import_follow_up(
+                                self.db.clone(),
+                                guild_id,
+                                retry_after,
+                                self.shutdown.clone(),
+                            );
+                            Ok(GroupSyncStatus::RecentlySynced)
+                        }
                     }
-                    crate::group_sync::sync_rate_limiter().record(guild_id, now);
-                    crate::group_sync::spawn_reconcile(self.db.clone(), guild_id);
-                    Ok(GroupSyncStatus::Ran)
                 }
             }
         })
@@ -1168,18 +1155,6 @@ mod tests {
                 "expected rejection for method {method}"
             );
         }
-    }
-
-    #[test]
-    fn post_import_burst_limiter_enforces_cooldown_per_guild() {
-        let limiter = PostImportBurstLimiter::default();
-        let start = Instant::now();
-        let cooldown = Duration::from_secs(15);
-
-        assert!(limiter.try_acquire(100, start, cooldown));
-        assert!(!limiter.try_acquire(100, start + Duration::from_secs(5), cooldown));
-        assert!(limiter.try_acquire(200, start + Duration::from_secs(5), cooldown));
-        assert!(limiter.try_acquire(100, start + Duration::from_secs(16), cooldown));
     }
 
     #[test]

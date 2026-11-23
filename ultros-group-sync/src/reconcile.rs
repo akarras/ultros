@@ -20,7 +20,7 @@ use poise::serenity_prelude::{self as serenity, GuildId};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use ultros_db::UltrosDb;
-use ultros_db::group_roles::{RoleSyncPlan, SyncSummary};
+use ultros_db::group_roles::{FollowUpClaim, RoleSyncPlan, SyncSummary};
 
 use super::diff::{self, GuildMember};
 
@@ -480,6 +480,179 @@ pub fn spawn_reconcile(db: UltrosDb, guild_id: i64) {
     });
 }
 
+/// Process-local coalescing set so multiple role imports within the same
+/// post-import cooldown window spawn only one follow-up timer per guild.
+/// Durable state lives in Postgres (`guild_post_import_sync_claim.follow_up_due_at`),
+/// which [`spawn_reconcile_scheduler`] recovers on startup after restarts.
+struct FollowUpQueue {
+    scheduled: Mutex<HashSet<i64>>,
+}
+
+impl FollowUpQueue {
+    fn new() -> Self {
+        Self {
+            scheduled: Mutex::new(HashSet::new()),
+        }
+    }
+
+    fn try_reserve(&self, guild_id: i64) -> bool {
+        self.scheduled
+            .lock()
+            .expect("post-import follow-up set poisoned")
+            .insert(guild_id)
+    }
+
+    fn release(&self, guild_id: i64) {
+        self.scheduled
+            .lock()
+            .expect("post-import follow-up set poisoned")
+            .remove(&guild_id);
+    }
+}
+
+static PENDING_FOLLOW_UPS: LazyLock<FollowUpQueue> = LazyLock::new(FollowUpQueue::new);
+
+struct FollowUpReservation<'a> {
+    queue: &'a FollowUpQueue,
+    guild_id: i64,
+}
+
+impl Drop for FollowUpReservation<'_> {
+    fn drop(&mut self) {
+        self.queue.release(self.guild_id);
+    }
+}
+
+/// Core follow-up loop extracted for deterministic testing: waits for `delay`,
+/// claims the durable Postgres follow-up row (handling `NotYetDue` timer skew),
+/// and invokes `run_sync` once claimed.
+async fn run_follow_up_with<ClaimFn, ClaimFut, SyncFn, SyncFut>(
+    queue: &FollowUpQueue,
+    guild_id: i64,
+    initial_delay: Duration,
+    token: CancellationToken,
+    mut claim_due: ClaimFn,
+    mut run_sync: SyncFn,
+) -> bool
+where
+    ClaimFn: FnMut() -> ClaimFut,
+    ClaimFut: std::future::Future<Output = Result<FollowUpClaim>>,
+    SyncFn: FnMut() -> SyncFut,
+    SyncFut: std::future::Future<Output = ()>,
+{
+    let _reservation = FollowUpReservation { queue, guild_id };
+    let mut wait = initial_delay;
+    for _ in 0..8 {
+        if !wait.is_zero() {
+            tokio::select! {
+                _ = token.cancelled() => return false,
+                _ = tokio::time::sleep(wait) => {}
+            }
+        }
+        if token.is_cancelled() {
+            return false;
+        }
+        match claim_due().await {
+            Ok(FollowUpClaim::Claimed) => {
+                run_sync().await;
+                return true;
+            }
+            Ok(FollowUpClaim::NotYetDue(remaining)) => {
+                wait = remaining + Duration::from_millis(25);
+            }
+            Ok(FollowUpClaim::NonePending) => return false,
+            Err(error) => {
+                warn!(
+                    guild_id,
+                    ?error,
+                    "failed to claim due post-import follow-up reconcile"
+                );
+                return false;
+            }
+        }
+    }
+    warn!(
+        guild_id,
+        "post-import follow-up claim did not become due after retries"
+    );
+    false
+}
+
+/// Schedule a single coalesced background follow-up reconcile for a guild whose
+/// post-import trigger was deferred inside the Postgres cooldown window.
+pub fn schedule_post_import_follow_up(
+    db: UltrosDb,
+    guild_id: i64,
+    delay: Duration,
+    token: CancellationToken,
+) {
+    if !PENDING_FOLLOW_UPS.try_reserve(guild_id) {
+        return;
+    }
+    tokio::spawn(async move {
+        let claim_db = db.clone();
+        let sync_db = db.clone();
+        let sync_token = token.clone();
+        let _ = run_follow_up_with(
+            &PENDING_FOLLOW_UPS,
+            guild_id,
+            delay,
+            token,
+            move || {
+                let db = claim_db.clone();
+                async move { db.claim_due_post_import_follow_up(guild_id).await }
+            },
+            move || {
+                let db = sync_db.clone();
+                let token = sync_token.clone();
+                async move {
+                    let Some(ctx) = wait_for_serenity_ctx(&token).await else {
+                        return;
+                    };
+                    // Wait briefly if a previous reconcile for this guild is
+                    // still finishing so the newly imported role is not skipped.
+                    for _ in 0..30 {
+                        let busy = IN_FLIGHT
+                            .lock()
+                            .expect("reconcile guard set poisoned")
+                            .contains(&guild_id);
+                        if !busy {
+                            break;
+                        }
+                        tokio::select! {
+                            _ = token.cancelled() => return,
+                            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                        }
+                    }
+                    sync_rate_limiter().record(guild_id, Instant::now());
+                    if !reconcile_and_log(&db, &ctx, guild_id).await {
+                        sync_rate_limiter().release(guild_id);
+                    }
+                }
+            },
+        )
+        .await;
+    });
+}
+
+/// Recover any durable post-import follow-up claims persisted before a worker
+/// restart or standby handoff.
+async fn recover_pending_post_import_follow_ups(db: &UltrosDb, token: &CancellationToken) {
+    match db.list_pending_post_import_follow_ups().await {
+        Ok(pending) => {
+            for (guild_id, retry_after) in pending {
+                schedule_post_import_follow_up(db.clone(), guild_id, retry_after, token.clone());
+            }
+        }
+        Err(error) => {
+            warn!(
+                ?error,
+                "failed to recover pending post-import group sync follow-ups"
+            );
+        }
+    }
+}
+
 /// The gateway context, waiting a while for it rather than writing the whole
 /// cycle off. See [`CTX_RETRY_DELAY`].
 async fn wait_for_serenity_ctx(
@@ -534,9 +707,11 @@ async fn reconcile_all(db: &UltrosDb, token: &CancellationToken) {
     }
 }
 
-/// The six-hourly reconciliation cycle.
+/// The six-hourly reconciliation cycle (plus startup recovery for any durable
+/// post-import follow-up reconciles queued before a worker restart).
 pub fn spawn_reconcile_scheduler(db: UltrosDb, token: CancellationToken) {
     tokio::spawn(async move {
+        recover_pending_post_import_follow_ups(&db, &token).await;
         let mut interval = tokio::time::interval_at(
             tokio::time::Instant::now() + RECONCILE_STARTUP_DELAY,
             RECONCILE_INTERVAL,
@@ -777,5 +952,70 @@ mod tests {
             1,
             "only the guild that just ran should still be tracked"
         );
+    }
+
+    /// When a first role import's reconcile finishes quickly and a second (and
+    /// third) role is imported inside the post-import cooldown window while
+    /// the five-minute manual cooldown is still active, a single coalesced
+    /// follow-up must run once the cooldown expires instead of leaving the new
+    /// role empty until the six-hour periodic sweep.
+    #[tokio::test]
+    async fn suppressed_second_import_after_first_reconcile_runs_coalesced_follow_up() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let queue = Arc::new(FollowUpQueue::new());
+        let manual_limiter = SyncRateLimiter::new();
+        let start = Instant::now();
+        let guild_id = 42;
+
+        // First import ran and completed quickly, opening the 5-minute manual window.
+        manual_limiter.record(guild_id, start);
+        assert!(
+            !manual_limiter.try_acquire(guild_id, start + Duration::from_secs(2)),
+            "5-minute manual cooldown blocks immediate manual retry"
+        );
+
+        // Second import within cooldown reserves one follow-up; third import coalesces.
+        assert!(queue.try_reserve(guild_id));
+        assert!(
+            !queue.try_reserve(guild_id),
+            "third import inside cooldown must coalesce into the existing follow-up"
+        );
+
+        let claim_calls = Arc::new(AtomicUsize::new(0));
+        let sync_calls = Arc::new(AtomicUsize::new(0));
+        let claim_calls_clone = claim_calls.clone();
+        let sync_calls_clone = sync_calls.clone();
+
+        let ran = run_follow_up_with(
+            &queue,
+            guild_id,
+            Duration::from_millis(20),
+            CancellationToken::new(),
+            move || {
+                let n = claim_calls_clone.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if n == 0 {
+                        // Exercise timer-skew retry before the durable due time arrives.
+                        Ok(FollowUpClaim::NotYetDue(Duration::from_millis(15)))
+                    } else {
+                        Ok(FollowUpClaim::Claimed)
+                    }
+                }
+            },
+            move || {
+                sync_calls_clone.fetch_add(1, Ordering::SeqCst);
+                async {}
+            },
+        )
+        .await;
+
+        assert!(ran, "coalesced follow-up must run after cooldown");
+        assert_eq!(claim_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(sync_calls.load(Ordering::SeqCst), 1);
+        // Reservation is released once done so future import bursts can queue again.
+        assert!(queue.try_reserve(guild_id));
+        queue.release(guild_id);
     }
 }

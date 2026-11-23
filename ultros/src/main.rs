@@ -1092,7 +1092,10 @@ async fn main() -> Result<()> {
     };
 
     let bot_admin_client: Arc<dyn bot_admin_client::BotAdminClient> = if roles.bot {
-        Arc::new(bot_admin_client::InProcessBotAdminClient::new(db.clone()))
+        Arc::new(bot_admin_client::InProcessBotAdminClient::new(
+            db.clone(),
+            token.clone(),
+        ))
     } else if let Some(market_url) = remote_market_url.clone() {
         info!(%market_url, "configuring HTTP/2 BotAdminClient");
         Arc::new(bot_admin_client::HttpBotAdminClient::new(
@@ -1100,7 +1103,10 @@ async fn main() -> Result<()> {
             market_token.as_deref(),
         )?)
     } else {
-        Arc::new(bot_admin_client::InProcessBotAdminClient::new(db.clone()))
+        Arc::new(bot_admin_client::InProcessBotAdminClient::new(
+            db.clone(),
+            token.clone(),
+        ))
     };
 
     let price_series_cache = crate::web::price_series_cache::PriceSeriesCache::default();
