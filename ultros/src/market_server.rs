@@ -10,7 +10,10 @@
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use std::time::Duration;
 
 use axum::{
@@ -50,6 +53,7 @@ struct MarketServerState {
     event_receivers: EventReceivers,
     roles: Roles,
     shutdown: CancellationToken,
+    active_streams: Arc<AtomicUsize>,
 }
 
 impl axum::extract::FromRef<MarketServerState> for Arc<dyn MarketClient> {
@@ -112,6 +116,37 @@ fn encode_stream_frame(event: &MarketStreamEvent) -> Option<Bytes> {
     Some(Bytes::from(buf))
 }
 
+struct StreamSubscriberGuard(Arc<AtomicUsize>);
+
+impl StreamSubscriberGuard {
+    fn enter(counter: Arc<AtomicUsize>) -> Self {
+        let active = counter.fetch_add(1, Ordering::AcqRel) + 1;
+        metrics::gauge!("ultros_market_event_stream_subscribers").set(active as f64);
+        Self(counter)
+    }
+}
+
+impl Drop for StreamSubscriberGuard {
+    fn drop(&mut self) {
+        let active = self.0.fetch_sub(1, Ordering::AcqRel).saturating_sub(1);
+        metrics::gauge!("ultros_market_event_stream_subscribers").set(active as f64);
+    }
+}
+
+async fn send_stream_frame(
+    tx: &tokio::sync::mpsc::Sender<Result<Bytes, Infallible>>,
+    shutdown: &CancellationToken,
+    event: &MarketStreamEvent,
+) -> bool {
+    let Some(frame) = encode_stream_frame(event) else {
+        return true;
+    };
+    tokio::select! {
+        _ = shutdown.cancelled() => false,
+        res = tx.send(Ok(frame)) => res.is_ok(),
+    }
+}
+
 /// Streams live listing and sale events as NDJSON frames to connected
 /// `ultros-web` replicas so browser WebSockets (`/api/v1/realtime/events` and
 /// `/alerts/websocket`) receive real-time market traffic in split mode.
@@ -120,12 +155,12 @@ async fn internal_market_events(State(state): State<MarketServerState>) -> Respo
     let mut listings = state.event_receivers.listings.resubscribe();
     let mut history = state.event_receivers.history.resubscribe();
     let shutdown = state.shutdown.clone();
+    let active_streams = state.active_streams.clone();
 
     tokio::spawn(async move {
+        let _guard = StreamSubscriberGuard::enter(active_streams);
         // Send an immediate keepalive so response headers flush right away.
-        if let Some(frame) = encode_stream_frame(&MarketStreamEvent::Keepalive)
-            && tx.send(Ok(frame)).await.is_err()
-        {
+        if !send_stream_frame(&tx, &shutdown, &MarketStreamEvent::Keepalive).await {
             return;
         }
         let mut keepalive = tokio::time::interval(STREAM_KEEPALIVE_INTERVAL);
@@ -182,8 +217,7 @@ async fn internal_market_events(State(state): State<MarketServerState>) -> Respo
             };
 
             if let Some(event) = maybe_event
-                && let Some(frame) = encode_stream_frame(&event)
-                && tx.send(Ok(frame)).await.is_err()
+                && !send_stream_frame(&tx, &shutdown, &event).await
             {
                 return;
             }
@@ -243,11 +277,30 @@ pub(crate) fn router(
     internal_token: Option<String>,
     shutdown: CancellationToken,
 ) -> Router {
+    router_with_stream_counter(
+        market,
+        event_receivers,
+        roles,
+        internal_token,
+        shutdown,
+        Arc::new(AtomicUsize::new(0)),
+    )
+}
+
+fn router_with_stream_counter(
+    market: Arc<dyn MarketClient>,
+    event_receivers: EventReceivers,
+    roles: Roles,
+    internal_token: Option<String>,
+    shutdown: CancellationToken,
+    active_streams: Arc<AtomicUsize>,
+) -> Router {
     let state = MarketServerState {
         market,
         event_receivers,
         roles,
         shutdown,
+        active_streams,
     };
     let expected_token: Option<Arc<str>> = internal_token
         .map(|s| s.trim().to_string())
@@ -379,6 +432,17 @@ mod tests {
         }
     }
 
+    fn test_cheapest_payload() -> Bytes {
+        // Larger than EncodedBody's 256-byte compression threshold so real
+        // brotli/gzip negotiation and passthrough are exercised end-to-end.
+        Bytes::from(
+            serde_json::to_vec(&serde_json::json!({
+                "item_id": (1..=120).collect::<Vec<i32>>()
+            }))
+            .unwrap(),
+        )
+    }
+
     impl MarketClient for StubMarketClient {
         fn cheapest<'a>(
             &'a self,
@@ -398,7 +462,7 @@ mod tests {
                 }
                 // Exercise real `EncodedBody` content negotiation (including
                 // repeated headers, `q=0` exclusions, and `406 Not Acceptable`).
-                let slab = EncodedBody::new(Bytes::from_static(br#"{"item_id":[1]}"#));
+                let slab = EncodedBody::new(test_cheapest_payload());
                 Ok(slab
                     .into_json_response(
                         headers,
@@ -573,21 +637,34 @@ mod tests {
         }
     }
 
-    async fn spawn_test_market_server(
+    struct TestMarketServer {
+        addr: SocketAddr,
+        url: url::Url,
+        senders: EventSenders,
+        active_streams: Arc<AtomicUsize>,
+        shutdown: CancellationToken,
+        handle: tokio::task::JoinHandle<()>,
+    }
+
+    async fn spawn_test_market_server_on(
+        bind_addr: SocketAddr,
         stub: Arc<StubMarketClient>,
         token: Option<String>,
-    ) -> (
-        url::Url,
-        EventSenders,
-        CancellationToken,
-        tokio::task::JoinHandle<()>,
-    ) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    ) -> TestMarketServer {
+        let listener = TcpListener::bind(bind_addr).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let roles = Roles::parse(Some("ingest,market,bot")).unwrap();
-        let (market_senders, market_receivers) = create_event_busses();
+        let (senders, receivers) = create_event_busses();
+        let active_streams = Arc::new(AtomicUsize::new(0));
         let shutdown = CancellationToken::new();
-        let app = router(stub, market_receivers, roles, token, shutdown.clone());
+        let app = router_with_stream_counter(
+            stub,
+            receivers,
+            roles,
+            token,
+            shutdown.clone(),
+            active_streams.clone(),
+        );
         let server_shutdown = shutdown.clone();
         let handle = tokio::spawn(async move {
             axum::serve(listener, app)
@@ -598,14 +675,28 @@ mod tests {
                 .unwrap();
         });
         let url = parse_market_url(&format!("http://{addr}")).unwrap();
-        (url, market_senders, shutdown, handle)
+        TestMarketServer {
+            addr,
+            url,
+            senders,
+            active_streams,
+            shutdown,
+            handle,
+        }
+    }
+
+    async fn spawn_test_market_server(
+        stub: Arc<StubMarketClient>,
+        token: Option<String>,
+    ) -> TestMarketServer {
+        spawn_test_market_server_on(SocketAddr::from(([127, 0, 0, 1], 0)), stub, token).await
     }
 
     #[tokio::test]
     async fn http2_market_client_round_trips_all_endpoints_and_preserves_headers() {
         let stub = Arc::new(StubMarketClient::default());
-        let (url, _market_senders, shutdown, server) =
-            spawn_test_market_server(stub.clone(), Some("secret-token".into())).await;
+        let srv = spawn_test_market_server(stub.clone(), Some("secret-token".into())).await;
+        let url = srv.url.clone();
         let client = HttpMarketClient::new(url.clone(), Some("secret-token")).unwrap();
 
         // 1. Pre-compressed cheapest passthrough + Accept-Encoding forwarding.
@@ -632,7 +723,7 @@ mod tests {
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         let mut decoded = Vec::new();
         brotli::BrotliDecompress(&mut &body[..], &mut decoded).unwrap();
-        assert_eq!(&decoded[..], br#"{"item_id":[1]}"#);
+        assert_eq!(&decoded[..], &test_cheapest_payload()[..]);
 
         // 1b. Repeated Accept-Encoding headers combine and honor explicit `q=0`
         //     exclusions (header 1 allows `br, gzip`; header 2 forbids `br`).
@@ -671,6 +762,35 @@ mod tests {
             resp_406.headers().get(header::CACHE_CONTROL).unwrap(),
             "no-store"
         );
+
+        // 1d. Malformed and oversized Accept-Encoding headers fail fast with
+        //     400 Bad Request rather than silently ignoring invalid qvalues or
+        //     dropping exclusions.
+        let mut malformed_ae = axum::http::HeaderMap::new();
+        malformed_ae.insert(
+            header::ACCEPT_ENCODING,
+            HeaderValue::from_static("gzip, gzip;q=bogus"),
+        );
+        assert!(matches!(
+            client
+                .cheapest("North-America", Some("columnar"), &malformed_ae)
+                .await,
+            Err(e) if matches!(e.0.as_ref(), WebError::BadRequest)
+        ));
+        let mut oversized_ae = axum::http::HeaderMap::new();
+        let long_header = std::iter::repeat_n("gzip", 300)
+            .collect::<Vec<_>>()
+            .join(", ");
+        oversized_ae.insert(
+            header::ACCEPT_ENCODING,
+            HeaderValue::from_str(&long_header).unwrap(),
+        );
+        assert!(matches!(
+            client
+                .cheapest("North-America", Some("columnar"), &oversized_ae)
+                .await,
+            Err(e) if matches!(e.0.as_ref(), WebError::BadRequest)
+        ));
 
         // 2. Degraded 200 preserves Cache-Control: no-store verbatim.
         let deals = client
@@ -841,36 +961,38 @@ mod tests {
             serde_json::json!(["market", "ingest", "bot"])
         );
 
-        shutdown.cancel();
-        let _ = server.await;
+        srv.shutdown.cancel();
+        let _ = srv.handle.await;
     }
 
     #[tokio::test]
     async fn split_market_event_relay_delivers_live_listings_and_sales_between_separate_buses() {
         let stub = Arc::new(StubMarketClient::default());
-        let (url, market_senders, server_shutdown, server) =
-            spawn_test_market_server(stub, Some("relay-secret".into())).await;
+        let srv1 = spawn_test_market_server(stub.clone(), Some("relay-secret".into())).await;
+        let bind_addr = srv1.addr;
 
-        // Separate web-replica bus (no shared channels with `market_senders`).
+        // Separate web-replica bus (no shared channels with `srv1.senders`).
         let (web_senders, web_receivers) = create_event_busses();
         let mut web_listings = web_receivers.listings.resubscribe();
         let mut web_sales = web_receivers.history.resubscribe();
+        let mut web_resync = web_receivers.market_resync.resubscribe();
 
         let web_token = CancellationToken::new();
-        let client = HttpMarketClient::new(url, Some("relay-secret")).unwrap();
+        let client = HttpMarketClient::new(srv1.url.clone(), Some("relay-secret")).unwrap();
         let relay = client.spawn_event_relay(web_senders, web_token.clone());
 
-        // Wait until the market server sees the relay subscribed to its bus.
+        // Wait deterministically for the actual `/internal/market/events` stream
+        // handler to subscribe (never relying on Axum state clone counts).
         tokio::time::timeout(Duration::from_secs(5), async {
-            while market_senders.listings.receiver_count() < 2 {
+            while srv1.active_streams.load(Ordering::Acquire) < 1 {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
-        .expect("relay must subscribe to ultros-market event bus");
+        .expect("relay must connect to /internal/market/events");
 
         // Publish listing add + listing remove + sale add on the market bus.
-        market_senders
+        srv1.senders
             .listings
             .send(EventType::added(ListingEventData {
                 item_id: 5333,
@@ -878,7 +1000,7 @@ mod tests {
                 listings: vec![],
             }))
             .unwrap();
-        market_senders
+        srv1.senders
             .listings
             .send(EventType::removed(ListingEventData {
                 item_id: 5334,
@@ -886,7 +1008,7 @@ mod tests {
                 listings: vec![],
             }))
             .unwrap();
-        market_senders
+        srv1.senders
             .history
             .send(EventType::added(SaleEventData { sales: vec![] }))
             .unwrap();
@@ -911,15 +1033,54 @@ mod tests {
             .unwrap();
         assert!(matches!(got_sale, EventType::Add(_)));
 
+        // Restart the market server on the same address: the relay must
+        // reconnect, emit `market_resync` so open sockets signal `Stale`, and
+        // continue delivering new live events.
+        srv1.shutdown.cancel();
+        tokio::time::timeout(Duration::from_secs(5), srv1.handle)
+            .await
+            .expect("first market server should shut down cleanly")
+            .unwrap();
+
+        let srv2 = spawn_test_market_server_on(bind_addr, stub, Some("relay-secret".into())).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while srv2.active_streams.load(Ordering::Acquire) < 1 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("relay must reconnect to restarted market server");
+
+        tokio::time::timeout(Duration::from_secs(5), web_resync.recv())
+            .await
+            .expect("market_resync must fire on reconnect")
+            .unwrap();
+
+        srv2.senders
+            .listings
+            .send(EventType::added(ListingEventData {
+                item_id: 5335,
+                world_id: 54,
+                listings: vec![],
+            }))
+            .unwrap();
+        let post_reconnect = tokio::time::timeout(Duration::from_secs(5), web_listings.recv())
+            .await
+            .expect("post-reconnect listing add timeout")
+            .unwrap();
+        assert!(
+            matches!(post_reconnect, EventType::Add(ref d) if d.item_id == 5335 && d.world_id == 54)
+        );
+
         web_token.cancel();
-        server_shutdown.cancel();
+        srv2.shutdown.cancel();
         tokio::time::timeout(Duration::from_secs(5), relay)
             .await
             .expect("relay should shut down cleanly")
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(5), server)
+        tokio::time::timeout(Duration::from_secs(5), srv2.handle)
             .await
-            .expect("market server should shut down cleanly")
+            .expect("second market server should shut down cleanly")
             .unwrap();
     }
 }

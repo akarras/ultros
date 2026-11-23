@@ -468,19 +468,22 @@ impl HttpMarketClient {
         let client = self.clone();
         tokio::spawn(async move {
             let mut backoff = Duration::from_millis(250);
-            let mut had_connected = false;
+            let mut needs_resync = false;
             loop {
                 if token.is_cancelled() {
                     return;
                 }
                 match client
-                    .run_event_stream_once(&senders, &token, had_connected)
+                    .run_event_stream_once(&senders, &token, &mut needs_resync)
                     .await
                 {
                     Ok(()) => return,
                     Err(connected) => {
+                        // Either an initial connect attempt failed while browser
+                        // subscriptions may already exist, or a live stream
+                        // dropped — emit `market_resync` once reconnected.
+                        needs_resync = true;
                         if connected {
-                            had_connected = true;
                             backoff = Duration::from_millis(250);
                         }
                         if token.is_cancelled() {
@@ -503,7 +506,7 @@ impl HttpMarketClient {
         &self,
         senders: &EventSenders,
         token: &CancellationToken,
-        notify_resync_on_connect: bool,
+        needs_resync: &mut bool,
     ) -> Result<(), bool> {
         let segments = ["internal", "market", "events"];
         let url = match self.endpoint_url(&segments, &[]) {
@@ -517,12 +520,18 @@ impl HttpMarketClient {
         if let Some(auth) = &self.bearer_auth {
             req = req.header(header::AUTHORIZATION, auth.clone());
         }
+        // Bound the wait for response headers too so a peer that accepts TCP
+        // and stalls before sending headers triggers backoff and retry.
         let resp = tokio::select! {
             _ = token.cancelled() => return Ok(()),
-            res = req.send() => match res {
-                Ok(resp) => resp,
-                Err(error) => {
+            res = tokio::time::timeout(READ_TIMEOUT, req.send()) => match res {
+                Ok(Ok(resp)) => resp,
+                Ok(Err(error)) => {
                     warn!(?error, "failed connecting to ultros-market event stream");
+                    return Err(false);
+                }
+                Err(_) => {
+                    warn!("timed out waiting for ultros-market event stream headers");
                     return Err(false);
                 }
             }
@@ -535,8 +544,9 @@ impl HttpMarketClient {
             return Err(false);
         }
         info!("connected to ultros-market live event relay");
-        if notify_resync_on_connect {
+        if *needs_resync {
             let _ = senders.market_resync.send(());
+            *needs_resync = false;
         }
 
         let mut resp = resp;
@@ -609,8 +619,10 @@ impl HttpMarketClient {
         Ok(url)
     }
 
-    /// Combine all incoming `Accept-Encoding` header fields per RFC 9110 §5.3
-    /// so repeated headers and explicit `q=0` exclusions are preserved verbatim.
+    /// Combine and strictly validate all incoming `Accept-Encoding` header
+    /// fields per RFC 9110 §12.5.3 so repeated headers and explicit `q=0`
+    /// exclusions are preserved verbatim, while malformed syntax (e.g.
+    /// `gzip;q=bogus`) or oversized values fail with `400 Bad Request`.
     fn forward_accept_encoding(
         headers: Option<&HeaderMap>,
     ) -> Result<Option<HeaderValue>, WebError> {
@@ -631,6 +643,7 @@ impl HttpMarketClient {
         if combined.is_empty() {
             return Ok(None);
         }
+        validate_accept_encoding(&combined)?;
         HeaderValue::from_str(&combined)
             .map(Some)
             .map_err(|_| WebError::BadRequest)
@@ -722,6 +735,65 @@ impl HttpMarketClient {
             .body(Body::from(body))
             .map_err(|e| WebError::from(anyhow::Error::from(e)))
     }
+}
+
+fn is_http_tchar(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+        || matches!(
+            b,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
+}
+
+/// Validate RFC 9110 §12.4.2 qvalue syntax: `0` / `0.` / `0.d{1,3}` or
+/// `1` / `1.` / `1.0{1,3}`.
+fn is_valid_qvalue(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    match bytes {
+        [b'0'] | [b'1'] => true,
+        [b'0', b'.', frac @ ..] if frac.len() <= 3 => frac.iter().all(u8::is_ascii_digit),
+        [b'1', b'.', frac @ ..] if frac.len() <= 3 => frac.iter().all(|&b| b == b'0'),
+        _ => false,
+    }
+}
+
+fn validate_accept_encoding(combined: &str) -> Result<(), WebError> {
+    for raw_item in combined.split(',') {
+        let item = raw_item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let mut parts = item.split(';');
+        let coding = parts.next().unwrap_or("").trim();
+        if coding.is_empty() || !coding.bytes().all(is_http_tchar) {
+            return Err(WebError::BadRequest);
+        }
+        let mut saw_weight = false;
+        for raw_param in parts {
+            let param = raw_param.trim();
+            let Some((k, v)) = param.split_once('=') else {
+                return Err(WebError::BadRequest);
+            };
+            if saw_weight || !k.trim().eq_ignore_ascii_case("q") || !is_valid_qvalue(v.trim()) {
+                return Err(WebError::BadRequest);
+            }
+            saw_weight = true;
+        }
+    }
+    Ok(())
 }
 
 fn dispatch_market_stream_frame(line: &[u8], senders: &EventSenders) {

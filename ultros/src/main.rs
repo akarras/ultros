@@ -103,7 +103,7 @@ fn spawn_rollup_scheduler(
     db: UltrosDb,
     token: CancellationToken,
     sale_outbox: ultros_clickhouse::sale_outbox::SaleOutboxDrainer,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         // The sale outbox drainer owns migration retries. Rollups must wait
         // for schema readiness too, without running a competing migration on
@@ -222,7 +222,7 @@ fn spawn_rollup_scheduler(
                 _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
             }
         }
-    });
+    })
 }
 
 async fn run_socket_listener(
@@ -719,8 +719,6 @@ async fn main() -> Result<()> {
     // snapshot-age / snapshot-rejection samples during startup, well before
     // `start_web` (which only *serves* the handle on /metrics) ever runs.
     let prometheus_handle = web_metrics::setup_metrics_recorder();
-    #[cfg(feature = "profiling")]
-    tokio::spawn(async move { start_profiling_server().await });
     let roles = roles::Roles::from_env()?;
     let remote_market_url = roles.validate(std::env::var(roles::MARKET_URL_ENV).ok().as_deref())?;
     let market_token = roles::market_token_from_env();
@@ -739,12 +737,23 @@ async fn main() -> Result<()> {
 
     info!(roles = ?roles.active_names(), "Ultros starting!");
     let token = CancellationToken::new();
+    // Keep one persistent OS signal listener active from before standby lease
+    // acquisition through startup and serving so a SIGTERM arriving during
+    // initialization is never swallowed between listener swaps.
+    let shutdown_requested = CancellationToken::new();
+    {
+        let signal_token = shutdown_requested.clone();
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            signal_token.cancel();
+        });
+    }
 
     // Fence stateful split workers (`ingest` / `bot` without `web`, or explicit
     // `ULTROS_EXCLUSIVE_WORKER_LEASE=true`) behind a single-owner Postgres
-    // session advisory lease BEFORE connecting pools or opening Universalis /
-    // Discord sockets so overlapping replacements stay cleanly in standby until
-    // the outgoing worker finishes draining.
+    // session advisory lease BEFORE binding listeners, connecting pools, or
+    // opening Universalis / Discord sockets so overlapping replacements stay
+    // cleanly in standby until the outgoing worker finishes draining.
     let require_worker_lease = ((roles.ingest || roles.bot) && !roles.web)
         || env_flag_enabled(
             worker_lease::EXCLUSIVE_WORKER_LEASE_ENV,
@@ -759,26 +768,23 @@ async fn main() -> Result<()> {
                 roles.active_names()
             )
         })?;
-        let cancel_standby = CancellationToken::new();
-        let acquired = tokio::select! {
-            _ = shutdown_signal() => {
-                info!("shutdown signal received while waiting for exclusive worker lease");
-                cancel_standby.cancel();
-                return Ok(());
-            }
-            res = worker_lease::WorkerLease::acquire(
-                &database_url,
-                cancel_standby.clone(),
-                token.clone(),
-            ) => res?,
-        };
+        let acquired = worker_lease::WorkerLease::acquire(
+            &database_url,
+            shutdown_requested.clone(),
+            token.clone(),
+        )
+        .await?;
         let Some(lease) = acquired else {
+            info!("shutdown signal received while waiting for exclusive worker lease");
             return Ok(());
         };
         Some(lease)
     } else {
         None
     };
+
+    #[cfg(feature = "profiling")]
+    tokio::spawn(async move { start_profiling_server().await });
 
     info!("Connecting DB");
     let db = UltrosDb::connect().await?;
@@ -900,9 +906,9 @@ async fn main() -> Result<()> {
         None
     };
 
-    if roles.ingest {
+    let rollup_scheduler_handle = if roles.ingest {
         // A Postgres advisory lock elects one worker to refresh rollups.
-        spawn_rollup_scheduler(
+        Some(spawn_rollup_scheduler(
             ch_client.clone(),
             db.clone(),
             token.clone(),
@@ -910,8 +916,10 @@ async fn main() -> Result<()> {
                 .as_ref()
                 .expect("sale_outbox initialized for ingest")
                 .clone(),
-        );
-    }
+        ))
+    } else {
+        None
+    };
 
     let (analyzer_service, analyzer_shutdown) = if roles.market {
         let (service, shutdown) = AnalyzerService::start_analyzer(
@@ -1013,13 +1021,13 @@ async fn main() -> Result<()> {
         None
     };
 
-    if roles.bot {
+    let (alert_manager_handle, discord_handle) = if roles.bot {
         // Discord group membership. Gateway events keep it fresh minute to minute;
         // this is the periodic pass that repairs whatever the gateway missed while
         // the process was down or a shard was reconnecting.
         group_sync::spawn_reconcile_scheduler(db.clone(), token.clone());
         crate::alerts::outbox::start(db.clone(), senders.notifications.clone(), token.clone());
-        tokio::spawn(crate::alerts::alert_manager::AlertManager::start_manager(
+        let alert_handle = tokio::spawn(crate::alerts::alert_manager::AlertManager::start_manager(
             db.clone(),
             (
                 receivers.retainers.resubscribe(),
@@ -1043,7 +1051,7 @@ async fn main() -> Result<()> {
             },
         ));
         let BotConfig { discord_token } = bot_config.expect("bot config validated");
-        tokio::spawn(start_discord(
+        let discord = tokio::spawn(start_discord(
             DiscordServices {
                 db: db.clone(),
                 list_sync: list_sync.clone(),
@@ -1070,7 +1078,10 @@ async fn main() -> Result<()> {
             discord_token,
             token.clone(),
         ));
-    }
+        (Some(alert_handle), Some(discord))
+    } else {
+        (None, None)
+    };
 
     let price_series_cache = crate::web::price_series_cache::PriceSeriesCache::default();
     let (market_client, market_event_relay): (
@@ -1174,7 +1185,7 @@ async fn main() -> Result<()> {
     };
 
     let http_finished = tokio::select! {
-        _ = shutdown_signal() => {
+        _ = shutdown_requested.cancelled() => {
             info!("shutdown signal received");
             false
         }
@@ -1229,6 +1240,30 @@ async fn main() -> Result<()> {
                 error!("HTTP server shutdown failed: {e:?}");
             }
         };
+        let drain_bot_and_schedulers = async {
+            let drain_discord = async {
+                if let Some(handle) = discord_handle
+                    && let Err(error) = stages.run("discord", handle).await
+                {
+                    error!(?error, "Discord shutdown failed");
+                }
+            };
+            let drain_alerts = async {
+                if let Some(handle) = alert_manager_handle
+                    && let Err(error) = stages.run("alert_manager", handle).await
+                {
+                    error!(?error, "Alert manager shutdown failed");
+                }
+            };
+            let drain_rollups = async {
+                if let Some(handle) = rollup_scheduler_handle
+                    && let Err(error) = stages.run("rollup_scheduler", handle).await
+                {
+                    error!(?error, "Rollup scheduler shutdown failed");
+                }
+            };
+            tokio::join!(drain_discord, drain_alerts, drain_rollups);
+        };
         let drain_snapshots = async {
             if let Some(worker) = listing_snapshot_worker
                 && let Err(error) = stages.run("listing_snapshots", worker).await
@@ -1246,7 +1281,12 @@ async fn main() -> Result<()> {
                 error!(?error, "Market event relay shutdown failed");
             }
         };
-        tokio::join!(drain_analytics, drain_http, drain_snapshots);
+        tokio::join!(
+            drain_analytics,
+            drain_http,
+            drain_bot_and_schedulers,
+            drain_snapshots
+        );
         // Every listing_events and sale producer (socket task, update service,
         // web) has been cancelled or drained by now. Run the durable
         // sale_outbox shutdown concurrently with listing_events (and under its
@@ -1268,10 +1308,10 @@ async fn main() -> Result<()> {
         };
         tokio::join!(drain_listing_events, drain_sale_outbox);
     };
-    if tokio::time::timeout(std::time::Duration::from_secs(30), shutdown)
+    let shutdown_clean = tokio::time::timeout(std::time::Duration::from_secs(30), shutdown)
         .await
-        .is_err()
-    {
+        .is_ok();
+    if !shutdown_clean {
         token.cancel();
         // `pending` names the stalled stages so the report says where to look;
         // the message stays fixed so GlitchTip keeps grouping it under #7310.
@@ -1281,10 +1321,17 @@ async fn main() -> Result<()> {
             "Graceful shutdown exceeded 30 seconds; unfinished work may require recovery"
         );
     }
-    // Release the exclusive worker lease LAST so a standby worker cannot take
-    // over ingest, analyzer snapshots, or Discord until this worker has drained.
+    // Release the exclusive worker lease only when every stateful task has
+    // exited cleanly. If graceful shutdown timed out with tasks still active,
+    // keep the advisory-lock session open until the OS terminates this process
+    // on exit so a standby worker cannot overlap stalled tasks.
     if let Some(lease) = worker_lease {
-        lease.release().await;
+        if shutdown_clean {
+            lease.release().await;
+        } else {
+            warn!("keeping exclusive worker lease held until process exit after shutdown timeout");
+            std::mem::forget(lease);
+        }
     }
     info!("Exiting");
     Ok(())
