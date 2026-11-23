@@ -88,6 +88,7 @@ pub async fn record_fire(
             return false;
         }
     };
+    let event_id = model.id;
     let event = alert_event_to_api(model);
     let notification = NotificationEvent { owner, event };
     tracing::debug!(
@@ -96,6 +97,12 @@ pub async fn record_fire(
         "queued alert fire for the notification-inbox bus"
     );
     let _ = notifications.send(EventType::added(notification));
+    db.notify_notification_event(
+        owner,
+        event_id,
+        ultros_db::wakeup::NotificationWakeupKind::Add,
+    )
+    .await;
     true
 }
 

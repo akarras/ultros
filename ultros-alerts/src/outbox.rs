@@ -103,9 +103,16 @@ async fn run(db: &UltrosDb, notifications: &EventProducer<NotificationEvent>, jo
     }
     // Transport errors may contain webhook URLs. Persist and log classifications only.
     if let Ok(Some(event)) = db.finish_notification_job(&job, delivered, permanent).await {
+        let event_id = event.id;
         let _ = notifications.send(EventType::updated(NotificationEvent {
             owner: job.owner,
             event: alert_event_to_api(event),
         }));
+        db.notify_notification_event(
+            job.owner,
+            event_id,
+            ultros_db::wakeup::NotificationWakeupKind::Update,
+        )
+        .await;
     }
 }

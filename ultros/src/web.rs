@@ -156,8 +156,11 @@ async fn record_list_activity(
     payload: serde_json::Value,
     message: String,
 ) -> Result<ListActivity, ApiError> {
-    db.get_or_create_discord_user(user.id, user.name.clone())
-        .await?;
+    // Require an existing `discord_user` row rather than upserting so a cached
+    // session racing with account deletion can never recreate a deleted user.
+    if db.get_discord_user(user.id).await?.is_none() {
+        return Err(ApiError::NoAuthCookie);
+    }
     let activity = db
         .record_list_activity(
             list_id,
@@ -170,11 +173,13 @@ async fn record_list_activity(
             message,
         )
         .await?;
+    let activity_id = activity.id;
     let activity = ListActivity::from(activity);
     send_list_event(
         senders,
         EventType::added(ListEventData::Activity(activity.clone())),
     );
+    db.notify_list_doc_changed(list_id, &[activity_id]).await;
     Ok(activity)
 }
 
@@ -268,24 +273,47 @@ async fn redirect_legacy_book_host(
     }
 }
 
+async fn publish_retainer_change(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    owner: i64,
+    retainer_id: i32,
+) {
+    let _ = senders
+        .retainers
+        .send(EventType::updated(ultros_api_types::user::OwnedRetainer {
+            id: 0,
+            retainer_id,
+            discord_id: owner,
+            character_id: None,
+            weight: None,
+        }));
+    db.notify_retainer_changed(owner).await;
+}
+
 async fn add_retainer(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     current_user: AuthDiscordUser,
     Path(retainer_id): Path<i32>,
 ) -> Result<Redirect, ApiError> {
     let _register_retainer = db
-        .register_retainer(retainer_id, current_user.id, current_user.name)
-        .await?;
+        .register_retainer_for_existing_user(retainer_id, current_user.id)
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
+    publish_retainer_change(&db, &senders, current_user.id as i64, retainer_id).await;
     Ok(Redirect::to("/retainers/edit"))
 }
 
 async fn remove_owned_retainer(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     current_user: AuthDiscordUser,
     Path(retainer_id): Path<i32>,
 ) -> Result<Redirect, WebError> {
     db.remove_owned_retainer(current_user.id, retainer_id)
         .await?;
+    publish_retainer_change(&db, &senders, current_user.id as i64, retainer_id).await;
     Ok(Redirect::to("/retainers/edit"))
 }
 
@@ -1875,19 +1903,25 @@ pub(crate) async fn retainer_search(
 
 pub(crate) async fn claim_retainer(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<(), ApiError> {
-    db.register_retainer(id, user.id, user.name).await?;
+    db.register_retainer_for_existing_user(id, user.id)
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
+    publish_retainer_change(&db, &senders, user.id as i64, id).await;
     Ok(())
 }
 
 pub(crate) async fn unclaim_retainer(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<(), ApiError> {
     db.remove_owned_retainer(user.id, id).await?;
+    publish_retainer_change(&db, &senders, user.id as i64, id).await;
     Ok(())
 }
 
@@ -2018,6 +2052,10 @@ pub(crate) async fn delete_list(
         &senders,
         EventType::removed(ListEventData::List(List::try_from(list)?)),
     );
+    let _ = senders.list_docs.send(EventType::Update(Arc::new(
+        crate::event::ListDocEvent::remote_wake(perm.list_id),
+    )));
+    db.notify_list_deleted(perm.list_id).await;
     Ok(Json(()))
 }
 
@@ -2027,12 +2065,10 @@ pub(crate) async fn create_list(
     user: AuthDiscordUser,
     Json(list): Json<CreateList>,
 ) -> Result<Json<()>, ApiError> {
-    let discord_user = db
-        .get_or_create_discord_user(user.id, user.name.clone())
-        .await?;
     let list = db
-        .create_list(discord_user, list.name, Some(list.wdr_filter.into()))
-        .await?;
+        .create_list_for_existing_user(user.id, list.name, Some(list.wdr_filter.into()))
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
     send_list_event(
         &senders,
         EventType::added(ListEventData::List(List::try_from(list.clone())?)),
@@ -2066,8 +2102,9 @@ pub(crate) async fn adopt_guest_list(
         return Err(ApiError::BadRequest("guest list contains an unknown item"));
     }
     let owner = db
-        .get_or_create_discord_user(user.id, user.name.clone())
-        .await?;
+        .get_discord_user(user.id)
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
     let outcome = db.adopt_guest_list_with_outcome(owner.id, request).await?;
     if let Some((list, items, activity)) = outcome.created {
         // A new list has no document subscribers yet. Publish the same creation,
@@ -2110,8 +2147,9 @@ pub(crate) async fn make_list_online(
         return Err(ApiError::BadRequest("list contains an unknown item"));
     }
     let owner = db
-        .get_or_create_discord_user(user.id, user.name.clone())
-        .await?;
+        .get_discord_user(user.id)
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
     let outcome = db.make_list_online(owner.id, &request).await?;
     if let Some((list, items, activity)) = outcome.created {
         send_list_event(
@@ -3720,13 +3758,39 @@ async fn assign_retainer_character(
 async fn delete_user(
     user: AuthDiscordUser,
     State(cache): State<AuthUserCache>,
+    State(config): State<oauth::DiscordAuthConfig>,
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     cookie_jar: PrivateCookieJar,
 ) -> Result<(PrivateCookieJar, Json<()>), ApiError> {
     let id = user.id;
-    db.delete_discord_user(id as i64).await?;
+    let current_token = cookie_jar
+        .get(oauth::DISCORD_AUTH_COOKIE)
+        .map(|cookie| cookie.value().to_string());
+    let token_hash = current_token
+        .as_deref()
+        .map(ultros_db::auth_revocation::hash_auth_token);
+    db.delete_discord_user_and_revoke(id as i64, token_hash.as_ref())
+        .await?;
     cache.remove_user(id).await;
-    let cookie_jar = cookie_jar.remove(oauth::discord_auth_removal_cookie());
+    let _ = senders
+        .auth_revocations
+        .send(crate::event::AuthRevocationSignal::User(id));
+    if let Some(hash) = token_hash.as_ref() {
+        cache.remove_token_hash(hash).await;
+        let _ = senders
+            .auth_revocations
+            .send(crate::event::AuthRevocationSignal::TokenHash(*hash));
+    }
+    if let Some(token_value) = current_token {
+        oauth::revoke_discord_token_best_effort(&config, token_value).await;
+        if let Some(hash) = token_hash.as_ref() {
+            cache.remove_token_hash(hash).await;
+        }
+    }
+    let cookie_jar = cookie_jar
+        .remove(oauth::discord_auth_removal_cookie())
+        .remove(oauth::discord_auth_iat_removal_cookie());
     Ok((cookie_jar, Json(())))
 }
 

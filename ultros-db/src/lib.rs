@@ -1,5 +1,6 @@
 mod account;
 mod alerts;
+pub mod auth_revocation;
 pub mod clickhouse_outbox;
 pub mod common;
 pub mod common_type_conversions;
@@ -20,6 +21,7 @@ pub mod recent_sales;
 pub mod recently_updated;
 pub mod retainers;
 pub mod sales;
+pub mod wakeup;
 pub mod world_data;
 
 pub use alerts::{NewAlertEvent, NewMarketTriggerAlert};
@@ -36,11 +38,223 @@ use sea_orm::{
     QueryFilter, QueryOrder, QuerySelect, Set,
 };
 
-use tracing::{error, info, instrument};
+use std::sync::Arc;
+
+use tracing::{error, info, instrument, warn};
 use ultros_api_types::Retainer;
 use universalis::{ItemId, ListingView, WorldId};
 
 use crate::entity::*;
+
+/// Env var that skips running `Migrator::up` during `UltrosDb::connect`.
+///
+/// Useful for read/web replicas when migrations are owned by a single-owner
+/// worker or a pre-deploy migration step, and required when rolling N-1
+/// replicas alongside a newer N schema (SeaORM 2.0.4 refuses to run
+/// `Migrator::up` against a database containing migrations unknown to the
+/// booting binary).
+pub const SKIP_MIGRATIONS_ENV: &str = "ULTROS_SKIP_MIGRATIONS";
+
+/// Stable Postgres session advisory-lock key serializing `Migrator::up` across
+/// replicas that boot concurrently against the same database (`"ULTROSMI"`).
+pub const MIGRATION_LOCK_KEY: i64 = 0x55_4c_54_52_4f_53_4d_49;
+
+/// Parse an opt-in boolean env flag using the same fail-closed conventions as
+/// `ultros_server_core::env_flag`.
+fn env_flag_enabled(name: &str, value: Option<&str>) -> bool {
+    match value.map(str::trim) {
+        None | Some("") => false,
+        Some(v)
+            if v.eq_ignore_ascii_case("0")
+                || v.eq_ignore_ascii_case("false")
+                || v.eq_ignore_ascii_case("no")
+                || v.eq_ignore_ascii_case("off") =>
+        {
+            false
+        }
+        Some(v)
+            if v.eq_ignore_ascii_case("1")
+                || v.eq_ignore_ascii_case("true")
+                || v.eq_ignore_ascii_case("yes")
+                || v.eq_ignore_ascii_case("on") =>
+        {
+            true
+        }
+        Some(other) => {
+            warn!(
+                variable = name,
+                value = other,
+                "unrecognised boolean env value; treating as enabled"
+            );
+            true
+        }
+    }
+}
+
+/// Polling cadence while waiting for another replica to finish running
+/// migrations under [`MIGRATION_LOCK_KEY`].
+///
+/// Using non-blocking `pg_try_advisory_lock` instead of blocking
+/// `pg_advisory_lock` is essential in Postgres: a session blocked inside
+/// `SELECT pg_advisory_lock($1)` holds an active `virtualxid`, which deadlocks
+/// any `CREATE INDEX CONCURRENTLY` migration running on the lock holder
+/// (because `CREATE INDEX CONCURRENTLY` waits for every older `virtualxid` to
+/// finish). Polling leaves waiting sessions idle between short attempts so
+/// concurrent index builds always complete immediately.
+const MIGRATION_LOCK_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Connect a dedicated single-session Postgres `DatabaseConnection` that
+/// refuses to open replacement connections once the initial session connects.
+///
+/// Paired with [`run_migrations_locked`], this guarantees that if the
+/// lock-owning Postgres backend ever disconnects (mid-migration or between
+/// SeaORM's nontransactional migration statements), SQLx cannot silently open a
+/// fresh connection without [`MIGRATION_LOCK_KEY`] and keep executing
+/// migrations unlocked alongside another replica.
+pub async fn connect_single_session_for_migrations(
+    url: &str,
+    search_path: Option<&str>,
+) -> Result<DatabaseConnection> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let established = Arc::new(AtomicBool::new(false));
+    let search_path = search_path.map(str::to_owned);
+    let pool = sea_orm::sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .min_connections(1)
+        // Disable pool-driven expiry so SQLx never retires a healthy
+        // lock-owning migration session during a long migration run.
+        .max_lifetime(None)
+        .idle_timeout(None)
+        .after_connect(move |conn, _meta| {
+            let established = established.clone();
+            let search_path = search_path.clone();
+            Box::pin(async move {
+                if established.swap(true, Ordering::SeqCst) {
+                    return Err(sea_orm::sqlx::Error::Protocol(
+                        "Postgres migration lock session disconnected; refusing replacement connection"
+                            .into(),
+                    ));
+                }
+                if let Some(schema) = search_path {
+                    sea_orm::sqlx::query("SELECT set_config('search_path', $1, false)")
+                        .bind(schema)
+                        .execute(conn)
+                        .await?;
+                }
+                Ok(())
+            })
+        })
+        .connect(url)
+        .await?;
+    Ok(sea_orm::SqlxPostgresConnector::from_sqlx_postgres_pool(
+        pool,
+    ))
+}
+
+/// Run `Migrator::up` serialized under a Postgres session advisory lock held on
+/// `migration_db`, which MUST be constructed with
+/// [`connect_single_session_for_migrations`] so the advisory lock and every
+/// migration statement share the exact same non-replaceable Postgres backend
+/// session.
+///
+/// Before each pending migration step, this also verifies `pg_backend_pid()`
+/// still matches the PID that acquired [`MIGRATION_LOCK_KEY`].
+pub async fn run_migrations_locked(migration_db: &DatabaseConnection) -> Result<()> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    info!(
+        lock_key = MIGRATION_LOCK_KEY,
+        "acquiring Postgres migration advisory lock"
+    );
+    let mut logged_wait = false;
+    let lock_pid: i32 = loop {
+        let row = migration_db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT pg_try_advisory_lock($1) AS acquired, pg_backend_pid() AS pid",
+                [MIGRATION_LOCK_KEY.into()],
+            ))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("pg_try_advisory_lock returned no row"))?;
+        let acquired: bool = row.try_get("", "acquired")?;
+        if acquired {
+            break row.try_get("", "pid")?;
+        }
+        if !logged_wait {
+            info!(
+                lock_key = MIGRATION_LOCK_KEY,
+                "waiting for another replica to finish database migrations"
+            );
+            logged_wait = true;
+        }
+        tokio::time::sleep(MIGRATION_LOCK_POLL_INTERVAL).await;
+    };
+
+    let migration_result: Result<()> = async {
+        loop {
+            verify_migration_lock_session(migration_db, lock_pid).await?;
+            let pending = Migrator::get_pending_migrations(migration_db).await?;
+            if pending.is_empty() {
+                // Still run `up(..., None)` with zero pending migrations so
+                // SeaORM performs its applied-migration integrity check while
+                // we hold the lock.
+                verify_migration_lock_session(migration_db, lock_pid).await?;
+                Migrator::up(migration_db, None).await?;
+                break;
+            }
+            verify_migration_lock_session(migration_db, lock_pid).await?;
+            Migrator::up(migration_db, Some(1)).await?;
+        }
+        Ok(())
+    }
+    .await;
+
+    let unlock_result = async {
+        verify_migration_lock_session(migration_db, lock_pid).await?;
+        migration_db
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT pg_advisory_unlock($1)",
+                [MIGRATION_LOCK_KEY.into()],
+            ))
+            .await?;
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+    if let Err(error) = unlock_result {
+        warn!(
+            ?error,
+            lock_pid,
+            "failed to explicitly unlock Postgres migration advisory lock; closing session"
+        );
+    }
+
+    migration_result
+}
+
+async fn verify_migration_lock_session(
+    migration_db: &DatabaseConnection,
+    expected_pid: i32,
+) -> Result<()> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    let row = migration_db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT pg_backend_pid() AS pid",
+            [],
+        ))
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("pg_backend_pid returned no row"))?;
+    let current_pid: i32 = row.try_get("", "pid")?;
+    if current_pid != expected_pid {
+        anyhow::bail!(
+            "Postgres migration lock session dropped (expected backend pid {expected_pid}, got {current_pid}); aborting migrations"
+        );
+    }
+    Ok(())
+}
 
 /// Pool ceiling when `POSTGRES_MAX_CONNECTIONS` is unset.
 ///
@@ -95,6 +309,9 @@ pub struct UltrosDb {
     // Connections here
     db: DatabaseConnection,
     ingest_budget: ingest_budget::IngestBudget,
+    /// Per-process identifier embedded in `pg_notify` payloads so a replica
+    /// ignores its own echoes.
+    notify_origin: Arc<str>,
 }
 
 impl UltrosDb {
@@ -106,11 +323,16 @@ impl UltrosDb {
         &self.db
     }
 
+    /// Process-scoped identifier attached to `pg_notify` wake-up payloads.
+    pub fn notify_origin(&self) -> &str {
+        &self.notify_origin
+    }
+
     #[instrument]
     pub async fn connect() -> Result<Self> {
         let _ = dotenv();
         let url = std::env::var("DATABASE_URL").expect("Missing DATABASE_URL environment variable");
-        let mut opt = ConnectOptions::new(url);
+        let mut opt = ConnectOptions::new(url.clone());
         let max_connections =
             env_u32("POSTGRES_MAX_CONNECTIONS").unwrap_or(DEFAULT_MAX_CONNECTIONS);
         let min_connections =
@@ -119,7 +341,25 @@ impl UltrosDb {
         opt.max_connections(max_connections)
             .min_connections(min_connections);
         let db: DatabaseConnection = Database::connect(opt).await?;
-        Migrator::up(&db, None).await?;
+        let skip_migrations = env_flag_enabled(
+            SKIP_MIGRATIONS_ENV,
+            std::env::var(SKIP_MIGRATIONS_ENV).ok().as_deref(),
+        );
+        if skip_migrations {
+            info!(
+                variable = SKIP_MIGRATIONS_ENV,
+                "skipping database migrations on startup"
+            );
+        } else if db.get_database_backend() == sea_orm::DbBackend::Postgres {
+            // Dedicated non-reconnecting single-session pool ties Migrator::up
+            // strictly to the Postgres backend holding MIGRATION_LOCK_KEY.
+            let migration_db = connect_single_session_for_migrations(&url, None).await?;
+            let result = run_migrations_locked(&migration_db).await;
+            let _ = migration_db.close().await;
+            result?;
+        } else {
+            Migrator::up(&db, None).await?;
+        }
 
         Ok(Self::from_connection(db))
     }
@@ -143,6 +383,7 @@ impl UltrosDb {
         Self {
             db,
             ingest_budget: ingest_budget::IngestBudget::new(pool_max),
+            notify_origin: Arc::from(wakeup::generate_notify_origin()),
         }
     }
 
@@ -556,7 +797,99 @@ pub struct UniqueItemId {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_MIN_CONNECTIONS, min_connections_for};
+    use super::{
+        DEFAULT_MIN_CONNECTIONS, SKIP_MIGRATIONS_ENV, connect_single_session_for_migrations,
+        env_flag_enabled, min_connections_for, run_migrations_locked,
+    };
+
+    #[test]
+    fn skip_migrations_flag_matches_boolean_env_contract() {
+        for off in [
+            None,
+            Some(""),
+            Some("  "),
+            Some("0"),
+            Some("false"),
+            Some("FALSE"),
+            Some("no"),
+            Some("off"),
+        ] {
+            assert!(!env_flag_enabled(SKIP_MIGRATIONS_ENV, off), "{off:?}");
+        }
+        for on in ["1", "true", "TRUE", "yes", "on", " true ", "anything-else"] {
+            assert!(env_flag_enabled(SKIP_MIGRATIONS_ENV, Some(on)), "{on:?}");
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL via MIGRATION_TEST_DATABASE_URL"]
+    async fn concurrent_locked_migrations_serialize_without_deadlock_on_single_conn_pool() {
+        use sea_orm::{ConnectOptions, ConnectionTrait, Database};
+
+        let url = std::env::var("MIGRATION_TEST_DATABASE_URL").unwrap();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let schema = format!("locked_migrations_{}_{nonce}", std::process::id());
+
+        let mut setup_opt = ConnectOptions::new(url.clone());
+        setup_opt
+            .max_connections(1)
+            .min_connections(1)
+            .sqlx_logging(false);
+        let setup_db = Database::connect(setup_opt).await.unwrap();
+        setup_db
+            .execute_unprepared(&format!("CREATE SCHEMA {schema}"))
+            .await
+            .unwrap();
+
+        let db1 = connect_single_session_for_migrations(&url, Some(&schema))
+            .await
+            .unwrap();
+        let db2 = connect_single_session_for_migrations(&url, Some(&schema))
+            .await
+            .unwrap();
+
+        let (res1, res2) = tokio::join!(run_migrations_locked(&db1), run_migrations_locked(&db2));
+        res1.unwrap();
+        res2.unwrap();
+
+        // Verify that if the pinned migration session is terminated, the pool
+        // refuses to silently open an unlocked replacement connection.
+        use sea_orm::{DbBackend, Statement};
+        let pid_row = db1
+            .query_one_raw(Statement::from_string(
+                DbBackend::Postgres,
+                "SELECT pg_backend_pid() AS pid",
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        let pid: i32 = pid_row.try_get("", "pid").unwrap();
+        setup_db
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT pg_terminate_backend($1)",
+                [pid.into()],
+            ))
+            .await
+            .unwrap();
+        let after_terminate = db1
+            .query_one_raw(Statement::from_string(DbBackend::Postgres, "SELECT 1"))
+            .await;
+        assert!(
+            after_terminate.is_err(),
+            "single-session migration pool must reject replacement connections after disconnect"
+        );
+
+        let _ = db1.close().await;
+        let _ = db2.close().await;
+        setup_db
+            .execute_unprepared(&format!("DROP SCHEMA {schema} CASCADE"))
+            .await
+            .unwrap();
+    }
 
     #[test]
     fn a_roomy_ceiling_keeps_the_usual_floor() {

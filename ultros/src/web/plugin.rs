@@ -6,8 +6,15 @@ mod key_file;
 mod list_stream;
 mod notifications;
 mod releases;
-pub(crate) fn wake_notifications(owner: i64) {
+pub(crate) fn wake_notifications_local(owner: i64) {
     notifications::wake(owner);
+}
+pub(crate) fn wake_all_notifications_local() {
+    notifications::wake_all();
+}
+pub(crate) async fn wake_notifications(db: &UltrosDb, owner: i64) {
+    notifications::wake(owner);
+    db.notify_plugin_notification_wake(owner).await;
 }
 use super::{oauth::AuthDiscordUser, state::WebState};
 use axum::{

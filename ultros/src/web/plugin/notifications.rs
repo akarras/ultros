@@ -11,12 +11,15 @@ use futures::StreamExt;
 use std::{convert::Infallible, sync::OnceLock, time::Duration};
 use ultros_db::plugin::{PluginError, PluginPrincipal};
 
-fn wake_bus() -> &'static tokio::sync::broadcast::Sender<i64> {
-    static BUS: OnceLock<tokio::sync::broadcast::Sender<i64>> = OnceLock::new();
+fn wake_bus() -> &'static tokio::sync::broadcast::Sender<Option<i64>> {
+    static BUS: OnceLock<tokio::sync::broadcast::Sender<Option<i64>>> = OnceLock::new();
     BUS.get_or_init(|| tokio::sync::broadcast::channel(256).0)
 }
 pub(super) fn wake(owner: i64) {
-    let _ = wake_bus().send(owner);
+    let _ = wake_bus().send(Some(owner));
+}
+pub(super) fn wake_all() {
+    let _ = wake_bus().send(None);
 }
 
 struct Feed {
@@ -24,7 +27,7 @@ struct Feed {
     user: PluginPrincipal,
     owner: i64,
     events: crate::event::EventBus<crate::event::NotificationEvent>,
-    wakes: tokio::sync::broadcast::Receiver<i64>,
+    wakes: tokio::sync::broadcast::Receiver<Option<i64>>,
     check: tokio::time::Interval,
     deadline: tokio::time::Instant,
     shutdown: tokio_util::sync::CancellationToken,
@@ -66,7 +69,8 @@ pub(super) async fn stream(
                 _=tokio::time::sleep_until(feed.deadline)=>return None,
                 _=feed.check.tick()=>true,
                 owner=feed.wakes.recv()=>match owner {
-                    Ok(owner)=>owner==feed.owner,
+                    Ok(Some(owner))=>owner==feed.owner,
+                    Ok(None)=>true,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>true,
                     Err(tokio::sync::broadcast::error::RecvError::Closed)=>return None,
                 },
