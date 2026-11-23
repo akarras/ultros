@@ -13,6 +13,7 @@ pub(crate) mod utils;
 mod wakeup_bridge;
 mod web;
 mod web_metrics;
+mod worker_lease;
 
 // The server's services live in their own crates so each one builds and tests
 // without the Leptos SSR app. Aliased here so the web and Discord layers keep
@@ -575,6 +576,7 @@ fn attach_panic_location_to_sentry() {
 /// `/healthz` directly from Docker Compose `healthcheck:`.
 async fn run_healthcheck(url: &str) -> Result<()> {
     let client = reqwest::Client::builder()
+        .no_proxy()
         .connect_timeout(std::time::Duration::from_secs(2))
         .timeout(std::time::Duration::from_secs(3))
         .redirect(reqwest::redirect::Policy::none())
@@ -736,11 +738,52 @@ async fn main() -> Result<()> {
     };
 
     info!(roles = ?roles.active_names(), "Ultros starting!");
+    let token = CancellationToken::new();
+
+    // Fence stateful split workers (`ingest` / `bot` without `web`, or explicit
+    // `ULTROS_EXCLUSIVE_WORKER_LEASE=true`) behind a single-owner Postgres
+    // session advisory lease BEFORE connecting pools or opening Universalis /
+    // Discord sockets so overlapping replacements stay cleanly in standby until
+    // the outgoing worker finishes draining.
+    let require_worker_lease = ((roles.ingest || roles.bot) && !roles.web)
+        || env_flag_enabled(
+            worker_lease::EXCLUSIVE_WORKER_LEASE_ENV,
+            std::env::var(worker_lease::EXCLUSIVE_WORKER_LEASE_ENV)
+                .ok()
+                .as_deref(),
+        );
+    let worker_lease = if require_worker_lease {
+        let database_url = std::env::var("DATABASE_URL").map_err(|_| {
+            anyhow::anyhow!(
+                "DATABASE_URL must be set to acquire exclusive worker lease for roles {:?}",
+                roles.active_names()
+            )
+        })?;
+        let cancel_standby = CancellationToken::new();
+        let acquired = tokio::select! {
+            _ = shutdown_signal() => {
+                info!("shutdown signal received while waiting for exclusive worker lease");
+                cancel_standby.cancel();
+                return Ok(());
+            }
+            res = worker_lease::WorkerLease::acquire(
+                &database_url,
+                cancel_standby.clone(),
+                token.clone(),
+            ) => res?,
+        };
+        let Some(lease) = acquired else {
+            return Ok(());
+        };
+        Some(lease)
+    } else {
+        None
+    };
+
     info!("Connecting DB");
     let db = UltrosDb::connect().await?;
     let (senders, receivers) = create_event_busses();
     let list_sync = lists::ListSync::new(db.clone(), senders.clone());
-    let token = CancellationToken::new();
     let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
 
     let universalis_client =
@@ -1030,36 +1073,43 @@ async fn main() -> Result<()> {
     }
 
     let price_series_cache = crate::web::price_series_cache::PriceSeriesCache::default();
-    let market_client: Option<Arc<dyn market_client::MarketClient>> = if roles.market {
-        Some(Arc::new(market_client::InProcessMarketClient::new(
-            market_client::MarketServices {
-                db: db.clone(),
-                analyzer_service: analyzer_service.expect("analyzer initialized for market"),
-                world_cache: world_cache.clone(),
-                world_helper: world_helper.clone(),
-                ch_client: ch_client.clone(),
-                universalis: universalis_client.expect("universalis client initialized for market"),
-                listing_events: listing_events_writer
-                    .as_ref()
-                    .expect("listing_events writer initialized for market")
-                    .clone(),
-                event_senders: senders.clone(),
-                price_series_cache: price_series_cache.clone(),
-                home_feed_cache: crate::web::home_feed_cache::new_home_feed_cache(),
-                sale_stats_cache: Default::default(),
-                listing_stats_cache: Default::default(),
-                cheapest_cache: crate::web::api::new_cheapest_cache(),
-                refresh_jobs: Default::default(),
-            },
-        )))
+    let (market_client, market_event_relay): (
+        Option<Arc<dyn market_client::MarketClient>>,
+        Option<tokio::task::JoinHandle<()>>,
+    ) = if roles.market {
+        (
+            Some(Arc::new(market_client::InProcessMarketClient::new(
+                market_client::MarketServices {
+                    db: db.clone(),
+                    analyzer_service: analyzer_service.expect("analyzer initialized for market"),
+                    world_cache: world_cache.clone(),
+                    world_helper: world_helper.clone(),
+                    ch_client: ch_client.clone(),
+                    universalis: universalis_client
+                        .expect("universalis client initialized for market"),
+                    listing_events: listing_events_writer
+                        .as_ref()
+                        .expect("listing_events writer initialized for market")
+                        .clone(),
+                    event_senders: senders.clone(),
+                    price_series_cache: price_series_cache.clone(),
+                    home_feed_cache: crate::web::home_feed_cache::new_home_feed_cache(),
+                    sale_stats_cache: Default::default(),
+                    listing_stats_cache: Default::default(),
+                    cheapest_cache: crate::web::api::new_cheapest_cache(),
+                    refresh_jobs: Default::default(),
+                },
+            ))),
+            None,
+        )
     } else if let Some(market_url) = remote_market_url {
-        info!(%market_url, "configuring HTTP/2 MarketClient");
-        Some(Arc::new(market_client::HttpMarketClient::new(
-            market_url,
-            market_token.as_deref(),
-        )?))
+        info!(%market_url, "configuring HTTP/2 MarketClient and live market event relay");
+        let http_client =
+            market_client::HttpMarketClient::new(market_url, market_token.as_deref())?;
+        let relay = http_client.spawn_event_relay(senders.clone(), token.clone());
+        (Some(Arc::new(http_client)), Some(relay))
     } else {
-        None
+        (None, None)
     };
 
     let mut http_task = if roles.web {
@@ -1110,6 +1160,7 @@ async fn main() -> Result<()> {
     } else if roles.runs_market_only_http() {
         tokio::spawn(market_server::start_market_server(
             market_client.expect("market_client initialized for market"),
+            receivers,
             roles,
             market_token,
             prometheus_handle,
@@ -1125,6 +1176,10 @@ async fn main() -> Result<()> {
     let http_finished = tokio::select! {
         _ = shutdown_signal() => {
             info!("shutdown signal received");
+            false
+        }
+        _ = token.cancelled() => {
+            info!("internal shutdown triggered (e.g. worker lease lost)");
             false
         }
         result = &mut http_task => {
@@ -1185,6 +1240,11 @@ async fn main() -> Result<()> {
             {
                 error!(?error, "Postgres wakeup bridge shutdown failed");
             }
+            if let Some(relay) = market_event_relay
+                && let Err(error) = stages.run("market_event_relay", relay).await
+            {
+                error!(?error, "Market event relay shutdown failed");
+            }
         };
         tokio::join!(drain_analytics, drain_http, drain_snapshots);
         // Every listing_events and sale producer (socket task, update service,
@@ -1220,6 +1280,11 @@ async fn main() -> Result<()> {
             ?pending,
             "Graceful shutdown exceeded 30 seconds; unfinished work may require recovery"
         );
+    }
+    // Release the exclusive worker lease LAST so a standby worker cannot take
+    // over ingest, analyzer snapshots, or Discord until this worker has drained.
+    if let Some(lease) = worker_lease {
+        lease.release().await;
     }
     info!("Exiting");
     Ok(())

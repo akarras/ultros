@@ -17,7 +17,10 @@ use axum::{
 };
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
-use tracing::warn;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn};
+use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_clickhouse::ClickHouseClient;
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
@@ -26,7 +29,7 @@ use url::Url;
 
 use crate::{
     analyzer_service::AnalyzerService,
-    event::EventSenders,
+    event::{EventSenders, EventType},
     web::{
         PriceSeriesQuery,
         api::{
@@ -62,6 +65,21 @@ pub(crate) enum RefreshOutcome {
     /// Returned when `test-auth` market isolation blocks upstream Universalis
     /// refreshes (`409 Conflict`).
     MarketIsolationBlocked,
+}
+
+/// NDJSON frame streamed over `GET /internal/market/events` from
+/// `ultros-market` to `ultros-web` replicas so live market WebSockets
+/// (`/api/v1/realtime/events` and `/alerts/websocket`) receive real-time
+/// listings and sales across the two-role split.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum MarketStreamEvent {
+    ListingsAdd { data: ListingEventData },
+    ListingsRemove { data: ListingEventData },
+    SalesAdd { data: SaleEventData },
+    SalesRemove { data: SaleEventData },
+    Lagged,
+    Keepalive,
 }
 
 /// Typed boundary for market reads, sitemap sale summaries, and manual
@@ -386,30 +404,43 @@ impl MarketClient for InProcessMarketClient {
 pub(crate) struct HttpMarketClient {
     base_url: Url,
     client: reqwest::Client,
+    stream_client: reqwest::Client,
     bearer_auth: Option<HeaderValue>,
 }
 
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(35);
-const MAX_ACCEPT_ENCODING_LEN: usize = 128;
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(45);
+const MAX_ACCEPT_ENCODING_LEN: usize = 1024;
+const MAX_STREAM_LINE_BYTES: usize = 4 * 1024 * 1024;
 
 impl HttpMarketClient {
     pub(crate) fn new(base_url: Url, bearer_token: Option<&str>) -> anyhow::Result<Self> {
-        let mut builder = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(3))
-            .timeout(READ_TIMEOUT)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .http2_keep_alive_interval(Some(Duration::from_secs(20)))
-            .http2_keep_alive_timeout(Duration::from_secs(10))
-            .http2_keep_alive_while_idle(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .user_agent(crate::UNIVERSALIS_USER_AGENT);
-        if base_url.scheme() == "http" {
-            // Plaintext internal Docker/LAN links speak h2c prior-knowledge
-            // directly against `ultros-market`'s HTTP/2-capable Axum server.
-            builder = builder.http2_prior_knowledge();
-        }
-        let client = builder.build()?;
+        let build_client = |total_timeout: Option<Duration>| -> anyhow::Result<reqwest::Client> {
+            let mut builder = reqwest::Client::builder()
+                // Private internal RPC must never route through ambient
+                // HTTP_PROXY/HTTPS_PROXY settings (which break h2c and could
+                // leak ULTROS_MARKET_TOKEN to an external proxy).
+                .no_proxy()
+                .connect_timeout(Duration::from_secs(3))
+                .pool_idle_timeout(Duration::from_secs(90))
+                .http2_keep_alive_interval(Some(Duration::from_secs(20)))
+                .http2_keep_alive_timeout(Duration::from_secs(10))
+                .http2_keep_alive_while_idle(true)
+                .redirect(reqwest::redirect::Policy::none())
+                .user_agent(crate::UNIVERSALIS_USER_AGENT);
+            if let Some(timeout) = total_timeout {
+                builder = builder.timeout(timeout);
+            }
+            if base_url.scheme() == "http" {
+                // Plaintext internal Docker/LAN links speak h2c prior-knowledge
+                // directly against `ultros-market`'s HTTP/2-capable Axum server.
+                builder = builder.http2_prior_knowledge();
+            }
+            Ok(builder.build()?)
+        };
+        let client = build_client(Some(READ_TIMEOUT))?;
+        let stream_client = build_client(None)?;
         let bearer_auth =
             match bearer_token.map(str::trim).filter(|s| !s.is_empty()) {
                 Some(token) => Some(HeaderValue::from_str(&format!("Bearer {token}")).map_err(
@@ -420,8 +451,142 @@ impl HttpMarketClient {
         Ok(Self {
             base_url,
             client,
+            stream_client,
             bearer_auth,
         })
+    }
+
+    /// Spawn a background HTTP/2 NDJSON relay from `GET /internal/market/events`
+    /// onto this web replica's local `EventSenders.listings` and `.history`
+    /// buses so live market WebSockets keep receiving real-time events in split
+    /// mode (`ULTROS_ROLES=web`).
+    pub(crate) fn spawn_event_relay(
+        &self,
+        senders: EventSenders,
+        token: CancellationToken,
+    ) -> JoinHandle<()> {
+        let client = self.clone();
+        tokio::spawn(async move {
+            let mut backoff = Duration::from_millis(250);
+            let mut had_connected = false;
+            loop {
+                if token.is_cancelled() {
+                    return;
+                }
+                match client
+                    .run_event_stream_once(&senders, &token, had_connected)
+                    .await
+                {
+                    Ok(()) => return,
+                    Err(connected) => {
+                        if connected {
+                            had_connected = true;
+                            backoff = Duration::from_millis(250);
+                        }
+                        if token.is_cancelled() {
+                            return;
+                        }
+                        tokio::select! {
+                            _ = token.cancelled() => return,
+                            _ = tokio::time::sleep(backoff) => {}
+                        }
+                        backoff = (backoff * 2).min(Duration::from_secs(5));
+                    }
+                }
+            }
+        })
+    }
+
+    /// Connects once to `/internal/market/events` and relays frames until
+    /// shutdown (`Ok(())`) or stream error (`Err(did_connect)`).
+    async fn run_event_stream_once(
+        &self,
+        senders: &EventSenders,
+        token: &CancellationToken,
+        notify_resync_on_connect: bool,
+    ) -> Result<(), bool> {
+        let segments = ["internal", "market", "events"];
+        let url = match self.endpoint_url(&segments, &[]) {
+            Ok(url) => url,
+            Err(error) => {
+                warn!(?error, "invalid market event stream URL");
+                return Err(false);
+            }
+        };
+        let mut req = self.stream_client.get(url);
+        if let Some(auth) = &self.bearer_auth {
+            req = req.header(header::AUTHORIZATION, auth.clone());
+        }
+        let resp = tokio::select! {
+            _ = token.cancelled() => return Ok(()),
+            res = req.send() => match res {
+                Ok(resp) => resp,
+                Err(error) => {
+                    warn!(?error, "failed connecting to ultros-market event stream");
+                    return Err(false);
+                }
+            }
+        };
+        if resp.status() != StatusCode::OK {
+            warn!(
+                status = %resp.status(),
+                "ultros-market event stream rejected connection"
+            );
+            return Err(false);
+        }
+        info!("connected to ultros-market live event relay");
+        if notify_resync_on_connect {
+            let _ = senders.market_resync.send(());
+        }
+
+        let mut resp = resp;
+        let mut line_buf: Vec<u8> = Vec::new();
+        loop {
+            let next_chunk = tokio::select! {
+                _ = token.cancelled() => return Ok(()),
+                res = tokio::time::timeout(STREAM_IDLE_TIMEOUT, resp.chunk()) => res,
+            };
+            let chunk = match next_chunk {
+                Ok(Ok(Some(bytes))) => bytes,
+                Ok(Ok(None)) => {
+                    warn!("ultros-market event stream ended; reconnecting");
+                    return Err(true);
+                }
+                Ok(Err(error)) => {
+                    warn!(
+                        ?error,
+                        "ultros-market event stream read failed; reconnecting"
+                    );
+                    return Err(true);
+                }
+                Err(_) => {
+                    warn!("ultros-market event stream idle timeout; reconnecting");
+                    return Err(true);
+                }
+            };
+
+            let mut slice = chunk.as_ref();
+            while let Some(pos) = slice.iter().position(|&b| b == b'\n') {
+                let segment = &slice[..pos];
+                if line_buf.len() + segment.len() > MAX_STREAM_LINE_BYTES {
+                    warn!("ultros-market event stream frame exceeded max line size; reconnecting");
+                    return Err(true);
+                }
+                line_buf.extend_from_slice(segment);
+                if !line_buf.is_empty() {
+                    dispatch_market_stream_frame(&line_buf, senders);
+                    line_buf.clear();
+                }
+                slice = &slice[pos + 1..];
+            }
+            if !slice.is_empty() {
+                if line_buf.len() + slice.len() > MAX_STREAM_LINE_BYTES {
+                    warn!("ultros-market event stream frame exceeded max line size; reconnecting");
+                    return Err(true);
+                }
+                line_buf.extend_from_slice(slice);
+            }
+        }
     }
 
     fn endpoint_url(&self, segments: &[&str], query: &[(&str, String)]) -> Result<Url, WebError> {
@@ -444,13 +609,31 @@ impl HttpMarketClient {
         Ok(url)
     }
 
-    fn forward_accept_encoding(headers: Option<&HeaderMap>) -> Option<HeaderValue> {
-        let raw = headers?.get(header::ACCEPT_ENCODING)?;
-        let text = raw.to_str().ok()?;
-        if text.len() > MAX_ACCEPT_ENCODING_LEN {
-            return None;
+    /// Combine all incoming `Accept-Encoding` header fields per RFC 9110 §5.3
+    /// so repeated headers and explicit `q=0` exclusions are preserved verbatim.
+    fn forward_accept_encoding(
+        headers: Option<&HeaderMap>,
+    ) -> Result<Option<HeaderValue>, WebError> {
+        let Some(headers) = headers else {
+            return Ok(None);
+        };
+        let mut combined = String::new();
+        for raw in headers.get_all(header::ACCEPT_ENCODING) {
+            let text = raw.to_str().map_err(|_| WebError::BadRequest)?;
+            if !combined.is_empty() {
+                combined.push_str(", ");
+            }
+            combined.push_str(text);
+            if combined.len() > MAX_ACCEPT_ENCODING_LEN {
+                return Err(WebError::BadRequest);
+            }
         }
-        HeaderValue::from_str(text).ok()
+        if combined.is_empty() {
+            return Ok(None);
+        }
+        HeaderValue::from_str(&combined)
+            .map(Some)
+            .map_err(|_| WebError::BadRequest)
     }
 
     async fn proxy_json_get(
@@ -461,7 +644,7 @@ impl HttpMarketClient {
     ) -> Result<Response, WebError> {
         let url = self.endpoint_url(segments, query)?;
         let mut req = self.client.get(url);
-        if let Some(ae) = Self::forward_accept_encoding(incoming_headers) {
+        if let Some(ae) = Self::forward_accept_encoding(incoming_headers)? {
             req = req.header(header::ACCEPT_ENCODING, ae);
         }
         let resp = req.send().await.map_err(|error| {
@@ -469,6 +652,26 @@ impl HttpMarketClient {
             WebError::TemporarilyUnavailable
         })?;
         let status = resp.status();
+        if status == StatusCode::NOT_ACCEPTABLE {
+            // Preserve content-negotiation 406 responses (e.g. `identity;q=0`
+            // with all codings forbidden) instead of turning them into 503.
+            let cache_control = resp
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .cloned()
+                .unwrap_or_else(|| HeaderValue::from_static("no-store"));
+            let vary = resp
+                .headers()
+                .get(header::VARY)
+                .cloned()
+                .unwrap_or_else(|| HeaderValue::from_static("accept-encoding"));
+            return Response::builder()
+                .status(StatusCode::NOT_ACCEPTABLE)
+                .header(header::CACHE_CONTROL, cache_control)
+                .header(header::VARY, vary)
+                .body(Body::empty())
+                .map_err(|e| WebError::from(anyhow::Error::from(e)));
+        }
         if status != StatusCode::OK {
             return Err(map_upstream_status(status, segments));
         }
@@ -518,6 +721,33 @@ impl HttpMarketClient {
         builder
             .body(Body::from(body))
             .map_err(|e| WebError::from(anyhow::Error::from(e)))
+    }
+}
+
+fn dispatch_market_stream_frame(line: &[u8], senders: &EventSenders) {
+    match serde_json::from_slice::<MarketStreamEvent>(line) {
+        Ok(MarketStreamEvent::ListingsAdd { data }) => {
+            let _ = senders.listings.send(EventType::added(data));
+        }
+        Ok(MarketStreamEvent::ListingsRemove { data }) => {
+            let _ = senders.listings.send(EventType::removed(data));
+        }
+        Ok(MarketStreamEvent::SalesAdd { data }) => {
+            let _ = senders.history.send(EventType::added(data));
+        }
+        Ok(MarketStreamEvent::SalesRemove { data }) => {
+            let _ = senders.history.send(EventType::removed(data));
+        }
+        Ok(MarketStreamEvent::Lagged) => {
+            warn!("ultros-market event stream reported lag; signaling web market_resync");
+            let _ = senders.market_resync.send(());
+        }
+        Ok(MarketStreamEvent::Keepalive) => {
+            debug!("ultros-market event stream keepalive");
+        }
+        Err(error) => {
+            warn!(?error, "failed decoding ultros-market event stream frame");
+        }
     }
 }
 

@@ -331,6 +331,7 @@ async fn handle_socket(
         list_docs,
         notifications,
         wakeup_resync,
+        market_resync,
         mut auth_revocations,
     } = events;
     let user = session.as_ref().map(|s| s.user.clone());
@@ -437,7 +438,7 @@ async fn handle_socket(
                                     match msg_type {
                                         SocketMessageType::Listings => {
                                             let l_worlds = world_cache.clone();
-                                            let stream =
+                                            let events =
                                                 BroadcastStream::new(listings.resubscribe())
                                                     .map(move |map| match map {
                                                         Ok(map) => {
@@ -457,6 +458,12 @@ async fn handle_socket(
                                                         }),
                                                     })
                                                     .filter_map(move |f| async move { f });
+                                            let resync =
+                                                BroadcastStream::new(market_resync.resubscribe())
+                                                    .map(move |_| ServerClient::Stale {
+                                                        subscription_id,
+                                                    });
+                                            let stream = futures::stream::select(events, resync);
 
                                             subscriptions.insert(subscription_id, Box::pin(stream));
                                         }
@@ -465,7 +472,7 @@ async fn handle_socket(
                                             info!(
                                                 "Adding sales subscription with filter {filter:?}"
                                             );
-                                            let stream =
+                                            let events =
                                                 BroadcastStream::new(history.resubscribe())
                                                     .map(move |map| match map {
                                                         Ok(map) => {
@@ -485,6 +492,12 @@ async fn handle_socket(
                                                         }),
                                                     })
                                                     .filter_map(move |l| async move { l });
+                                            let resync =
+                                                BroadcastStream::new(market_resync.resubscribe())
+                                                    .map(move |_| ServerClient::Stale {
+                                                        subscription_id,
+                                                    });
+                                            let stream = futures::stream::select(events, resync);
 
                                             subscriptions.insert(subscription_id, Box::pin(stream));
                                         }

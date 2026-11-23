@@ -3,14 +3,19 @@
 //!
 //! Serves the coarse market read endpoints (`cheapest`, `recentSales`,
 //! `best_deals`, `trends`, `sale_stats`, `listing_stats`, `price_series`,
-//! `market_pulse`, `movers`) plus the internal sitemap-sales summary and manual
-//! refresh endpoints consumed by [`crate::market_client::HttpMarketClient`].
+//! `market_pulse`, `movers`), the internal sitemap-sales summary and manual
+//! refresh endpoints, and the live market event NDJSON stream
+//! (`/internal/market/events`) consumed by
+//! [`crate::market_client::HttpMarketClient`].
 
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
     Json, Router,
+    body::{Body, Bytes},
     extract::{Path, Request, State},
     http::{HeaderValue, StatusCode, header},
     middleware::{self, Next},
@@ -20,10 +25,13 @@ use axum::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
+use tokio::sync::broadcast::error::RecvError;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    market_client::{MarketClient, RefreshOutcome, SitemapItemSaleSummary},
+    event::{EventReceivers, EventType},
+    market_client::{MarketClient, MarketStreamEvent, RefreshOutcome, SitemapItemSaleSummary},
     roles::Roles,
     web::{
         api::{
@@ -39,7 +47,9 @@ use crate::{
 #[derive(Clone)]
 struct MarketServerState {
     market: Arc<dyn MarketClient>,
+    event_receivers: EventReceivers,
     roles: Roles,
+    shutdown: CancellationToken,
 }
 
 impl axum::extract::FromRef<MarketServerState> for Arc<dyn MarketClient> {
@@ -93,6 +103,101 @@ async fn internal_refresh_listings(
     Ok(response)
 }
 
+const STREAM_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+const STREAM_CHANNEL_CAPACITY: usize = 512;
+
+fn encode_stream_frame(event: &MarketStreamEvent) -> Option<Bytes> {
+    let mut buf = serde_json::to_vec(event).ok()?;
+    buf.push(b'\n');
+    Some(Bytes::from(buf))
+}
+
+/// Streams live listing and sale events as NDJSON frames to connected
+/// `ultros-web` replicas so browser WebSockets (`/api/v1/realtime/events` and
+/// `/alerts/websocket`) receive real-time market traffic in split mode.
+async fn internal_market_events(State(state): State<MarketServerState>) -> Response {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, Infallible>>(STREAM_CHANNEL_CAPACITY);
+    let mut listings = state.event_receivers.listings.resubscribe();
+    let mut history = state.event_receivers.history.resubscribe();
+    let shutdown = state.shutdown.clone();
+
+    tokio::spawn(async move {
+        // Send an immediate keepalive so response headers flush right away.
+        if let Some(frame) = encode_stream_frame(&MarketStreamEvent::Keepalive)
+            && tx.send(Ok(frame)).await.is_err()
+        {
+            return;
+        }
+        let mut keepalive = tokio::time::interval(STREAM_KEEPALIVE_INTERVAL);
+        keepalive.tick().await;
+        let mut listings_open = true;
+        let mut history_open = true;
+
+        loop {
+            if !listings_open && !history_open {
+                return;
+            }
+            let maybe_event = tokio::select! {
+                _ = shutdown.cancelled() => return,
+                _ = tx.closed() => return,
+                _ = keepalive.tick() => Some(MarketStreamEvent::Keepalive),
+                res = listings.recv(), if listings_open => match res {
+                    Ok(EventType::Add(data)) => Some(MarketStreamEvent::ListingsAdd {
+                        data: data.as_ref().clone(),
+                    }),
+                    Ok(EventType::Remove(data)) => Some(MarketStreamEvent::ListingsRemove {
+                        data: data.as_ref().clone(),
+                    }),
+                    Ok(EventType::Update(data)) => Some(MarketStreamEvent::ListingsAdd {
+                        data: data.as_ref().clone(),
+                    }),
+                    Err(RecvError::Lagged(skipped)) => {
+                        tracing::warn!(skipped, "internal market event stream lagged on listings");
+                        Some(MarketStreamEvent::Lagged)
+                    }
+                    Err(RecvError::Closed) => {
+                        listings_open = false;
+                        None
+                    }
+                },
+                res = history.recv(), if history_open => match res {
+                    Ok(EventType::Add(data)) => Some(MarketStreamEvent::SalesAdd {
+                        data: data.as_ref().clone(),
+                    }),
+                    Ok(EventType::Remove(data)) => Some(MarketStreamEvent::SalesRemove {
+                        data: data.as_ref().clone(),
+                    }),
+                    Ok(EventType::Update(data)) => Some(MarketStreamEvent::SalesAdd {
+                        data: data.as_ref().clone(),
+                    }),
+                    Err(RecvError::Lagged(skipped)) => {
+                        tracing::warn!(skipped, "internal market event stream lagged on sales");
+                        Some(MarketStreamEvent::Lagged)
+                    }
+                    Err(RecvError::Closed) => {
+                        history_open = false;
+                        None
+                    }
+                },
+            };
+
+            if let Some(event) = maybe_event
+                && let Some(frame) = encode_stream_frame(&event)
+                && tx.send(Ok(frame)).await.is_err()
+            {
+                return;
+            }
+        }
+    });
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/x-ndjson")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from_stream(ReceiverStream::new(rx)))
+        .expect("valid NDJSON stream response")
+}
+
 /// Constant-time comparison of two byte slices via fixed-length SHA-256 digests
 /// so neither token length nor prefix leaks through response timing.
 fn bearer_token_matches(provided: &str, expected: &str) -> bool {
@@ -130,13 +235,20 @@ async fn require_internal_bearer(
 }
 
 /// Build the market-only HTTP/2 router (public market reads + authenticated
-/// internal RPC endpoints + `/healthz`).
+/// internal RPC/stream endpoints + `/healthz`).
 pub(crate) fn router(
     market: Arc<dyn MarketClient>,
+    event_receivers: EventReceivers,
     roles: Roles,
     internal_token: Option<String>,
+    shutdown: CancellationToken,
 ) -> Router {
-    let state = MarketServerState { market, roles };
+    let state = MarketServerState {
+        market,
+        event_receivers,
+        roles,
+        shutdown,
+    };
     let expected_token: Option<Arc<str>> = internal_token
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -147,6 +259,7 @@ pub(crate) fn router(
             "/internal/market/sitemap_sales",
             get(internal_sitemap_sales),
         )
+        .route("/internal/market/events", get(internal_market_events))
         .route(
             "/internal/market/refresh/{world}/{itemid}",
             post(internal_refresh_listings),
@@ -177,6 +290,7 @@ pub(crate) const DEFAULT_MARKET_PORT: u16 = 8081;
 
 pub(crate) async fn start_market_server(
     market: Arc<dyn MarketClient>,
+    event_receivers: EventReceivers,
     roles: Roles,
     internal_token: Option<String>,
     prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
@@ -187,7 +301,13 @@ pub(crate) async fn start_market_server(
             "ULTROS_MARKET_TOKEN unset; /internal/market/* endpoints rely on private network isolation"
         );
     }
-    let app = router(market, roles, internal_token);
+    let app = router(
+        market,
+        event_receivers,
+        roles,
+        internal_token,
+        token.clone(),
+    );
     let port = std::env::var("PORT")
         .ok()
         .and_then(|p| p.parse::<u16>().ok())
@@ -216,17 +336,20 @@ pub(crate) async fn start_market_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::{EventSenders, create_event_busses};
     use crate::market_client::HttpMarketClient;
     use crate::roles::parse_market_url;
     use crate::web::{
         PriceSeriesQuery,
         api::{BestDealsQuery, TrendsQuery},
+        encoded_body::EncodedBody,
         error::SharedWebError,
     };
     use axum::body::Body;
     use futures::future::BoxFuture;
     use http_body_util::BodyExt;
     use std::sync::Mutex;
+    use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 
     #[derive(Default)]
     struct StubMarketClient {
@@ -264,20 +387,27 @@ mod tests {
             headers: &'a axum::http::HeaderMap,
         ) -> BoxFuture<'a, Result<Response, SharedWebError>> {
             Box::pin(async move {
-                let ae = headers
-                    .get(header::ACCEPT_ENCODING)
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("");
-                self.record(format!("cheapest:{world}:{format:?}:{ae}"));
+                let all_ae: Vec<&str> = headers
+                    .get_all(header::ACCEPT_ENCODING)
+                    .iter()
+                    .filter_map(|v| v.to_str().ok())
+                    .collect();
+                self.record(format!("cheapest:{world}:{format:?}:{}", all_ae.join("|")));
                 if world == "MissingWorld" {
                     return Err(WebError::NotFound.into());
                 }
-                let enc = ae.contains("br").then_some("br");
-                Ok(Self::json_response(
-                    r#"{"item_id":[1]}"#,
-                    "public, max-age=5, stale-while-revalidate=10, stale-if-error=600",
-                    enc,
-                ))
+                // Exercise real `EncodedBody` content negotiation (including
+                // repeated headers, `q=0` exclusions, and `406 Not Acceptable`).
+                let slab = EncodedBody::new(Bytes::from_static(br#"{"item_id":[1]}"#));
+                Ok(slab
+                    .into_json_response(
+                        headers,
+                        HeaderValue::from_static(
+                            "public, max-age=5, stale-while-revalidate=10, stale-if-error=600",
+                        ),
+                        &[],
+                    )
+                    .await)
             })
         }
 
@@ -446,22 +576,35 @@ mod tests {
     async fn spawn_test_market_server(
         stub: Arc<StubMarketClient>,
         token: Option<String>,
-    ) -> (url::Url, tokio::task::JoinHandle<()>) {
+    ) -> (
+        url::Url,
+        EventSenders,
+        CancellationToken,
+        tokio::task::JoinHandle<()>,
+    ) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let roles = Roles::parse(Some("ingest,market,bot")).unwrap();
-        let app = router(stub, roles, token);
+        let (market_senders, market_receivers) = create_event_busses();
+        let shutdown = CancellationToken::new();
+        let app = router(stub, market_receivers, roles, token, shutdown.clone());
+        let server_shutdown = shutdown.clone();
         let handle = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    server_shutdown.cancelled().await;
+                })
+                .await
+                .unwrap();
         });
         let url = parse_market_url(&format!("http://{addr}")).unwrap();
-        (url, handle)
+        (url, market_senders, shutdown, handle)
     }
 
     #[tokio::test]
     async fn http2_market_client_round_trips_all_endpoints_and_preserves_headers() {
         let stub = Arc::new(StubMarketClient::default());
-        let (url, server) =
+        let (url, _market_senders, shutdown, server) =
             spawn_test_market_server(stub.clone(), Some("secret-token".into())).await;
         let client = HttpMarketClient::new(url.clone(), Some("secret-token")).unwrap();
 
@@ -487,7 +630,47 @@ mod tests {
             "public, max-age=5, stale-while-revalidate=10, stale-if-error=600"
         );
         let body = resp.into_body().collect().await.unwrap().to_bytes();
-        assert_eq!(&body[..], br#"{"item_id":[1]}"#);
+        let mut decoded = Vec::new();
+        brotli::BrotliDecompress(&mut &body[..], &mut decoded).unwrap();
+        assert_eq!(&decoded[..], br#"{"item_id":[1]}"#);
+
+        // 1b. Repeated Accept-Encoding headers combine and honor explicit `q=0`
+        //     exclusions (header 1 allows `br, gzip`; header 2 forbids `br`).
+        let mut repeated_ae = axum::http::HeaderMap::new();
+        repeated_ae.append(
+            header::ACCEPT_ENCODING,
+            HeaderValue::from_static("br, gzip"),
+        );
+        repeated_ae.append(header::ACCEPT_ENCODING, HeaderValue::from_static("br;q=0"));
+        let resp_q0 = client
+            .cheapest("North-America", Some("columnar"), &repeated_ae)
+            .await
+            .unwrap();
+        assert_eq!(resp_q0.status(), StatusCode::OK);
+        assert_eq!(
+            resp_q0.headers().get(header::CONTENT_ENCODING).unwrap(),
+            "gzip",
+            "combined Accept-Encoding headers must honor br;q=0 from second header"
+        );
+
+        // 1c. Deliberate `406 Not Acceptable` (all codings + identity forbidden)
+        //     is preserved with Vary + Cache-Control: no-store rather than
+        //     turning into a 503 outage.
+        let mut forbid_all = axum::http::HeaderMap::new();
+        forbid_all.insert(header::ACCEPT_ENCODING, HeaderValue::from_static("*;q=0"));
+        let resp_406 = client
+            .cheapest("North-America", Some("columnar"), &forbid_all)
+            .await
+            .unwrap();
+        assert_eq!(resp_406.status(), StatusCode::NOT_ACCEPTABLE);
+        assert_eq!(
+            resp_406.headers().get(header::VARY).unwrap(),
+            "accept-encoding"
+        );
+        assert_eq!(
+            resp_406.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
 
         // 2. Degraded 200 preserves Cache-Control: no-store verbatim.
         let deals = client
@@ -611,6 +794,15 @@ mod tests {
             wrong_token.refresh_listings("Sargatanas", 5333).await,
             Err(WebError::TemporarilyUnavailable)
         ));
+        let unauthed_events = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get(format!("{url}internal/market/events"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unauthed_events.status(), StatusCode::UNAUTHORIZED);
 
         // 7. Path-traversal world input is percent-encoded as a single segment
         //    and cannot escape to /internal/market/*.
@@ -628,7 +820,10 @@ mod tests {
         );
 
         // 8. /healthz works over HTTP/1.1 too (for Docker healthchecks).
-        let health = reqwest::Client::new()
+        let health = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
             .get(format!("{url}healthz"))
             .send()
             .await
@@ -646,6 +841,85 @@ mod tests {
             serde_json::json!(["market", "ingest", "bot"])
         );
 
-        server.abort();
+        shutdown.cancel();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn split_market_event_relay_delivers_live_listings_and_sales_between_separate_buses() {
+        let stub = Arc::new(StubMarketClient::default());
+        let (url, market_senders, server_shutdown, server) =
+            spawn_test_market_server(stub, Some("relay-secret".into())).await;
+
+        // Separate web-replica bus (no shared channels with `market_senders`).
+        let (web_senders, web_receivers) = create_event_busses();
+        let mut web_listings = web_receivers.listings.resubscribe();
+        let mut web_sales = web_receivers.history.resubscribe();
+
+        let web_token = CancellationToken::new();
+        let client = HttpMarketClient::new(url, Some("relay-secret")).unwrap();
+        let relay = client.spawn_event_relay(web_senders, web_token.clone());
+
+        // Wait until the market server sees the relay subscribed to its bus.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while market_senders.listings.receiver_count() < 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("relay must subscribe to ultros-market event bus");
+
+        // Publish listing add + listing remove + sale add on the market bus.
+        market_senders
+            .listings
+            .send(EventType::added(ListingEventData {
+                item_id: 5333,
+                world_id: 54,
+                listings: vec![],
+            }))
+            .unwrap();
+        market_senders
+            .listings
+            .send(EventType::removed(ListingEventData {
+                item_id: 5334,
+                world_id: 54,
+                listings: vec![],
+            }))
+            .unwrap();
+        market_senders
+            .history
+            .send(EventType::added(SaleEventData { sales: vec![] }))
+            .unwrap();
+
+        let got_add = tokio::time::timeout(Duration::from_secs(5), web_listings.recv())
+            .await
+            .expect("listing add timeout")
+            .unwrap();
+        assert!(matches!(got_add, EventType::Add(ref d) if d.item_id == 5333 && d.world_id == 54));
+
+        let got_remove = tokio::time::timeout(Duration::from_secs(5), web_listings.recv())
+            .await
+            .expect("listing remove timeout")
+            .unwrap();
+        assert!(
+            matches!(got_remove, EventType::Remove(ref d) if d.item_id == 5334 && d.world_id == 54)
+        );
+
+        let got_sale = tokio::time::timeout(Duration::from_secs(5), web_sales.recv())
+            .await
+            .expect("sale add timeout")
+            .unwrap();
+        assert!(matches!(got_sale, EventType::Add(_)));
+
+        web_token.cancel();
+        server_shutdown.cancel();
+        tokio::time::timeout(Duration::from_secs(5), relay)
+            .await
+            .expect("relay should shut down cleanly")
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .expect("market server should shut down cleanly")
+            .unwrap();
     }
 }

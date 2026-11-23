@@ -4,23 +4,39 @@
 # stateless web/SSR replicas (`ultros-web-a`, `ultros-web-b`) from the same
 # container image, gated by `ULTROS_ROLES`.
 #
-# Prerequisites before switching a single-container deployment to this file:
-#   1. Upgrade the existing single container once to a Phase 1B-1+ image with
-#      `ULTROS_PKG_ARCHIVE_DIR=/srv/ultros-pkg-archive` so the N-1 `/pkg/` hash
-#      and `m20261121_000001_auth_revocations` migration are already in place.
+# Cutover & upgrade prerequisites:
+#   1. Seed the shared `/pkg/` archive directory on the host BEFORE cutover:
+#      upgrade the existing single container once to a Phase 1B-1+ image with
+#      `${ULTROS_PKG_ARCHIVE_HOST_DIR:-/srv/ultros-pkg-archive}` bind-mounted at
+#      `/srv/ultros-pkg-archive` (`ULTROS_PKG_ARCHIVE_DIR=/srv/ultros-pkg-archive`)
+#      so `m20261121_000001_auth_revocations` and the N-1 `<git-hash>` bundle
+#      exist in that exact host directory before starting the split stack.
 #   2. Migrate `./data/plugin-keys.json` to `ULTROS_PLUGIN_PAIRING_KEY` and
 #      `ULTROS_PLUGIN_IDENTITY_KEY` env vars so `ultros-web` has no local state.
 #   3. Set `ULTROS_MARKET_TOKEN` in `.env` to authenticate `/internal/market/*`.
-#   4. Configure your reverse proxy to load-balance across `ultros-web-a:8080`
-#      and `ultros-web-b:8080` with `/healthz` healthchecks.
+#   4. Initial cutover from `ULTROS_ROLES=all` MUST be stop-before-start:
+#      stop the legacy all-in-one container before starting `ultros-market`
+#      (the legacy `all` container does not hold the split worker lease).
+#      Once split, `ultros-market` holds a dedicated whole-worker Postgres
+#      advisory lease (`WORKER_LEASE_LOCK_KEY`) from startup until final drain,
+#      so any overlapping replacement `ultros-market` stays cleanly in standby
+#      (0 ingest sockets, 0 Discord gateway, unhealthy `/healthz`) until the
+#      outgoing worker finishes draining and releases the lease.
+#   5. Before switching reverse-proxy traffic to `ultros-web-a:8080` and
+#      `ultros-web-b:8080`, verify BOTH the previous (`<N-1>`) and current
+#      (`<N>`) `/pkg/<hash>/ultros.wasm` bundles are present in
+#      `${ULTROS_PKG_ARCHIVE_HOST_DIR:-/srv/ultros-pkg-archive}` and both web
+#      replicas pass `/healthz`.
 #
 # Postgres connection-pool budget (`max_connections=150`):
-#   - ultros-market: max=30, min=4  (+30 during rolling replacement)
-#   - ultros-web-a:  max=25, min=2
-#   - ultros-web-b:  max=25, min=2  (+25 during rolling replacement)
-#   - Steady state:  80 pooled + ~5 LISTEN/advisory = 85 / 150
-#   - Peak overlap:  135 pooled + ~5 LISTEN/advisory = 140 / 150
-#                    (leaves 10 connections headroom for migrations & ops)
+#   - ultros-market (active): max=30, min=4  (+1 lease connection for standby,
+#                             which does not open the SeaORM pool until active)
+#   - ultros-web-a:           max=25, min=2
+#   - ultros-web-b:           max=25, min=2  (+25 during rolling web replacement)
+#   - Steady state:           80 pooled + ~6 LISTEN/advisory = 86 / 150
+#   - Peak rolling overlap:   105 pooled + ~7 LISTEN/advisory = 112 / 150
+#                             (leaves 38 connections headroom for migrations,
+#                             standby handoff, and ops queries)
 
 x-ultros-common: &ultros-common
   image: ${ULTROS_IMAGE:-ghcr.io/akarras/ultros:latest}
@@ -64,7 +80,7 @@ services:
       POSTGRES_MAX_CONNECTIONS: "25"
       POSTGRES_MIN_CONNECTIONS: "2"
     volumes:
-      - pkg_archive:/srv/ultros-pkg-archive
+      - ${ULTROS_PKG_ARCHIVE_HOST_DIR:-/srv/ultros-pkg-archive}:/srv/ultros-pkg-archive
     healthcheck:
       test: ["CMD", "/app/ultros", "--healthcheck", "http://127.0.0.1:8080/healthz"]
       interval: 10s
@@ -87,7 +103,7 @@ services:
       POSTGRES_MAX_CONNECTIONS: "25"
       POSTGRES_MIN_CONNECTIONS: "2"
     volumes:
-      - pkg_archive:/srv/ultros-pkg-archive
+      - ${ULTROS_PKG_ARCHIVE_HOST_DIR:-/srv/ultros-pkg-archive}:/srv/ultros-pkg-archive
     healthcheck:
       test: ["CMD", "/app/ultros", "--healthcheck", "http://127.0.0.1:8080/healthz"]
       interval: 10s
@@ -97,7 +113,6 @@ services:
 
 volumes:
   analyzer_data:
-  pkg_archive:
 
 networks:
   ultros_internal:
