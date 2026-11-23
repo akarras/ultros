@@ -13,7 +13,8 @@
 #      exist in that exact host directory before starting the split stack.
 #   2. Migrate `./data/plugin-keys.json` to `ULTROS_PLUGIN_PAIRING_KEY` and
 #      `ULTROS_PLUGIN_IDENTITY_KEY` env vars so `ultros-web` has no local state.
-#   3. Set `ULTROS_MARKET_TOKEN` in `.env` to authenticate `/internal/market/*`.
+#   3. Set `ULTROS_MARKET_TOKEN` in `.env` to authenticate `/internal/market/*`
+#      and `/internal/bot/*`.
 #   4. Initial cutover from `ULTROS_ROLES=all` MUST be stop-before-start:
 #      stop the legacy all-in-one container before starting `ultros-market`
 #      (the legacy `all` container does not hold the split worker lease).

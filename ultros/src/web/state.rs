@@ -11,6 +11,7 @@ use ultros_api_types::world_helper::WorldHelper;
 use ultros_clickhouse::ClickHouseClient;
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 
+use crate::bot_admin_client::BotAdminClient;
 use crate::character_claim::CharacterClaimService;
 use crate::event::{EventReceivers, EventSenders};
 use crate::market_client::MarketClient;
@@ -32,6 +33,10 @@ pub(crate) struct WebState {
     /// Typed market boundary: in-process when `ULTROS_ROLES` includes `market`,
     /// or coarse HTTP/2 against `ULTROS_MARKET_URL` on stateless `web` replicas.
     pub(crate) market_client: Arc<dyn MarketClient>,
+    /// Typed Discord-bot admin boundary: in-process when `ULTROS_ROLES`
+    /// includes `bot`, or HTTP/2 `/internal/bot/*` against `ULTROS_MARKET_URL`
+    /// on stateless `web` replicas.
+    pub(crate) bot_admin: Arc<dyn BotAdminClient>,
     pub(crate) roles: Roles,
     pub(crate) character_claim: CharacterClaimService,
     pub(crate) leptos_options: LeptosOptions,
@@ -92,6 +97,12 @@ impl FromRef<WebState> for Arc<WorldHelper> {
 impl FromRef<WebState> for Arc<dyn MarketClient> {
     fn from_ref(input: &WebState) -> Self {
         input.market_client.clone()
+    }
+}
+
+impl FromRef<WebState> for Arc<dyn BotAdminClient> {
+    fn from_ref(input: &WebState) -> Self {
+        input.bot_admin.clone()
     }
 }
 

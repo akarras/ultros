@@ -59,8 +59,8 @@ use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{
     AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, CreateGroupRole,
     DiscordGuildRole, DiscordManageableGuild, GroupInvite, GroupMemberSearchResult, GroupRole,
-    GroupSyncResponse, GroupSyncStatus, ImportDiscordRole, RenameGroupRole, UserGroup,
-    UserGroupDetail, UserGroupMember, UserGroupSummary,
+    GroupSyncResponse, ImportDiscordRole, RenameGroupRole, UserGroup, UserGroupDetail,
+    UserGroupMember, UserGroupSummary,
 };
 use ultros_api_types::user::{AssignRetainerCharacter, OwnedRetainer, UserData};
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
@@ -2568,33 +2568,41 @@ pub(crate) async fn create_group(
 pub(crate) async fn get_group_discord_guilds(
     State(db): State<UltrosDb>,
     State(cache): State<AuthUserCache>,
+    State(bot_admin): State<Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     cookies: PrivateCookieJar,
 ) -> Result<Json<Vec<DiscordManageableGuild>>, ApiError> {
-    let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
-        ApiError::from(anyhow::anyhow!(
-            "Discord bot is not connected; cannot load your servers right now"
-        ))
-    })?;
-    let guilds = crate::web::api::discord_lookup::manageable_guilds_for_user(
-        &ctx,
-        user.id as i64,
+    if cookies
+        .get(crate::web::oauth::DISCORD_AUTH_COOKIE)
+        .is_none()
+    {
+        return Err(ApiError::NoAuthCookie);
+    }
+    let bot_guild_ids = bot_admin.bot_guild_ids().await?;
+    let candidates = crate::web::api::discord_lookup::discover_oauth_candidate_guild_ids(
+        &bot_guild_ids,
         &cookies,
         &cache,
     )
     .await?;
+    if matches!(candidates.as_deref(), Some([])) {
+        return Ok(Json(Vec::new()));
+    }
+    let guilds = bot_admin
+        .manageable_guilds(user.id as i64, candidates)
+        .await?;
 
-    let guild_ids: Vec<i64> = guilds.iter().map(|(id, _, _)| *id).collect();
+    let guild_ids: Vec<i64> = guilds.iter().map(|g| g.id).collect();
     let existing = db.group_ids_for_guilds(&guild_ids).await?;
 
     Ok(Json(
         guilds
             .into_iter()
-            .map(|(id, name, icon_url)| DiscordManageableGuild {
-                id,
-                name,
-                icon_url,
-                existing_group_id: existing.get(&id).copied(),
+            .map(|guild| DiscordManageableGuild {
+                id: guild.id,
+                name: guild.name,
+                icon_url: guild.icon_url,
+                existing_group_id: existing.get(&guild.id).copied(),
             })
             .collect(),
     ))
@@ -2602,30 +2610,20 @@ pub(crate) async fn get_group_discord_guilds(
 
 pub(crate) async fn create_group_from_guild(
     State(db): State<UltrosDb>,
+    State(bot_admin): State<Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     Json(CreateGroupFromGuild { guild_id }): Json<CreateGroupFromGuild>,
 ) -> Result<Json<UserGroup>, ApiError> {
-    let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
-        ApiError::from(anyhow::anyhow!(
-            "Discord bot is not connected; cannot create a group from a server right now"
-        ))
-    })?;
-
     // Re-check against Discord rather than trusting the picker: the guild id
     // arrives from the client, and the user's roles may have changed since the
     // list was rendered. This also proves the bot is in the guild, and hands
     // back the name and icon so a group can't claim to be a server it isn't.
-    let guild =
-        crate::web::api::discord_lookup::require_manageable_guild(&ctx, guild_id, user.id as i64)
-            .await?;
+    let guild = bot_admin
+        .require_manageable_guild(guild_id, user.id as i64)
+        .await?;
 
     let group = db
-        .create_group_from_guild(
-            guild.name.clone(),
-            user.id as i64,
-            guild_id,
-            guild.icon_url(),
-        )
+        .create_group_from_guild(guild.name, user.id as i64, guild_id, guild.icon_url)
         .await?;
     Ok(Json(UserGroup::from(group)))
 }
@@ -2784,34 +2782,17 @@ pub(crate) async fn remove_group_member(
 
 // --- Group roles ---
 
-/// What every group endpoint that talks to Discord says when the gateway is
-/// down, so an offline bot reads the same way everywhere instead of surfacing
-/// as an opaque 500.
-///
-/// A shared constant rather than a `fn` returning `Result<_, ApiError>`:
-/// `ApiError` is a large error type, and a *non-async* function handing one
-/// back beside a pointer-sized `Ok` trips `clippy::result_large_err`.
-const DISCORD_BOT_OFFLINE: &str =
-    "The Ultros Discord bot is not connected right now; try again in a moment";
-
-/// Owner-only access to a group's *live* Discord guild: proves the caller owns
-/// the group, that it is still linked (a frozen group has no guild to ask),
-/// and that the bot is connected.
-async fn owned_guild(
-    db: &UltrosDb,
-    group_id: i32,
-    user_id: i64,
-) -> Result<(i64, Arc<poise::serenity_prelude::Context>), ApiError> {
+/// Owner-only access to a group's *live* Discord guild id: proves the caller
+/// owns the group and that it is still linked (a frozen group has no guild to
+/// ask).
+async fn owned_guild_id(db: &UltrosDb, group_id: i32, user_id: i64) -> Result<i64, ApiError> {
     let group = db.get_owned_group(group_id, user_id).await?;
-    let guild_id = group
+    group
         .guild_id
         .filter(|_| group.frozen_reason.is_none())
         .ok_or(ApiError::BadRequest(
             "That group is not linked to a Discord server",
-        ))?;
-    let ctx = crate::alerts::delivery::get_serenity_ctx()
-        .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
-    Ok((guild_id, ctx))
+        ))
 }
 
 /// Re-read one role together with its member count.
@@ -2852,10 +2833,11 @@ pub(crate) async fn get_group_detail(
 /// letting the owner walk into a 400.
 pub(crate) async fn get_group_discord_roles(
     State(db): State<UltrosDb>,
+    State(bot_admin): State<Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
 ) -> Result<Json<Vec<DiscordGuildRole>>, ApiError> {
-    let (guild_id, ctx) = owned_guild(&db, id, user.id as i64).await?;
+    let guild_id = owned_guild_id(&db, id, user.id as i64).await?;
     let imported: HashMap<i64, i32> = db
         .get_group_roles(id, user.id as i64)
         .await?
@@ -2863,19 +2845,17 @@ pub(crate) async fn get_group_discord_roles(
         .map(GroupRole::from)
         .filter_map(|role| role.discord_role_id.map(|discord| (discord, role.id)))
         .collect();
-    let roles = crate::web::api::discord_lookup::importable_guild_roles(&ctx, guild_id).await?;
+    let roles = bot_admin.importable_guild_roles(guild_id).await?;
     Ok(Json(
         roles
             .into_iter()
-            .map(
-                |(discord_role_id, name, position, color)| DiscordGuildRole {
-                    id: discord_role_id,
-                    name,
-                    position,
-                    color,
-                    existing_role_id: imported.get(&discord_role_id).copied(),
-                },
-            )
+            .map(|role| DiscordGuildRole {
+                id: role.id,
+                name: role.name,
+                position: role.position,
+                color: role.color,
+                existing_role_id: imported.get(&role.id).copied(),
+            })
             .collect(),
     ))
 }
@@ -2900,72 +2880,73 @@ pub(crate) async fn create_group_role(
 /// large server is not a request anybody would sit through.
 pub(crate) async fn import_group_discord_role(
     State(db): State<UltrosDb>,
+    State(bot_admin): State<Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
     Json(ImportDiscordRole { discord_role_id }): Json<ImportDiscordRole>,
 ) -> Result<Json<GroupRole>, ApiError> {
-    let (guild_id, ctx) = owned_guild(&db, id, user.id as i64).await?;
+    let guild_id = owned_guild_id(&db, id, user.id as i64).await?;
     // Re-read from Discord rather than trusting the picker's payload: the name
     // and position are Discord's to supply, and going through the same
     // importable filter is what refuses a managed or bot role here too.
-    let (_, name, position, _) =
-        crate::web::api::discord_lookup::importable_guild_roles(&ctx, guild_id)
-            .await?
-            .into_iter()
-            .find(|(role_id, ..)| *role_id == discord_role_id)
-            .ok_or(ApiError::BadRequest(
-                "That role no longer exists in the Discord server, or cannot be imported",
-            ))?;
+    let imported_role = bot_admin
+        .importable_guild_roles(guild_id)
+        .await?
+        .into_iter()
+        .find(|role| role.id == discord_role_id)
+        .ok_or(ApiError::BadRequest(
+            "That role no longer exists in the Discord server, or cannot be imported",
+        ))?;
     let role = db
-        .import_discord_role(id, user.id as i64, discord_role_id, name, position)
+        .import_discord_role(
+            id,
+            user.id as i64,
+            discord_role_id,
+            imported_role.name,
+            imported_role.position,
+        )
         .await?;
     // The role exists but has nobody in it until a reconcile runs, which
     // without this would be up to six hours of the feature looking broken.
-    // Recorded against the rate limiter too, so pressing "Sync now" on the
-    // page that just imported does not walk the same guild a second time.
-    // `spawn_reconcile` gives the window back if that reconcile does not
-    // actually run, so a bot that is offline does not leave the owner told
-    // "recently synced" over a `last_synced_at` that never moved.
-    crate::group_sync::sync_rate_limiter().record(guild_id, std::time::Instant::now());
-    crate::group_sync::spawn_reconcile(db, guild_id);
+    // Recorded against the bot's global rate limiter too, so pressing "Sync
+    // now" on the page that just imported does not walk the same guild a
+    // second time. If this follow-up trigger hits a transient RPC error after
+    // the DB write already committed, log and return the imported role — the
+    // periodic scheduler (or a manual sync) will reconcile it.
+    if let Err(err) = bot_admin.trigger_group_sync(guild_id, false).await {
+        tracing::warn!(
+            group_id = id,
+            guild_id,
+            ?err,
+            "discord role imported, but triggering immediate group reconcile failed"
+        );
+    }
     Ok(Json(GroupRole::from(GroupRoleReturn(role, 0))))
 }
 
 /// Reconcile this group's Discord membership now.
 ///
 /// `Ran` means "started": the walk happens off the request path, and the page
-/// polls `last_synced_at` to see it finish. Rate limited per guild, because
-/// the work is a full member listing and the trigger is a button.
-///
-/// The window has to be claimed here, before the walk is spawned, so this
-/// request can answer. `spawn_reconcile` releases it again whenever the walk
-/// did not actually sync anything — the bot is offline, Discord refused, a
-/// reconcile of the guild was already running — because otherwise a failed
-/// press would answer `RecentlySynced` for five minutes over a
-/// `last_synced_at` that is null or days old.
+/// polls `last_synced_at` to see it finish. Rate limited per guild on the bot
+/// process, because the work is a full member listing and the trigger is a
+/// button.
 pub(crate) async fn sync_group(
     State(db): State<UltrosDb>,
+    State(bot_admin): State<Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
 ) -> Result<Json<GroupSyncResponse>, ApiError> {
-    // Also proves ownership, that the group is still linked to a guild, and
-    // that the bot is connected to answer for it.
-    let (guild_id, _ctx) = owned_guild(&db, id, user.id as i64).await?;
+    // Proves ownership and that the group is still linked to a live guild.
+    let guild_id = owned_guild_id(&db, id, user.id as i64).await?;
     let last_synced_at = db
         .get_group_roles(id, user.id as i64)
         .await?
         .into_iter()
         .filter_map(|GroupRoleReturn(role, _)| role.last_synced_at)
         .max();
-    if !crate::group_sync::sync_rate_limiter().try_acquire(guild_id, std::time::Instant::now()) {
-        return Ok(Json(GroupSyncResponse {
-            status: GroupSyncStatus::RecentlySynced,
-            last_synced_at,
-        }));
-    }
-    crate::group_sync::spawn_reconcile(db, guild_id);
+    let status = bot_admin.trigger_group_sync(guild_id, true).await?;
     Ok(Json(GroupSyncResponse {
-        status: GroupSyncStatus::Ran,
+        status,
         last_synced_at,
     }))
 }
@@ -3046,6 +3027,7 @@ pub(crate) struct MemberSearchQuery {
 /// the people who have logged into Ultros.
 pub(crate) async fn search_group_member_candidates(
     State(db): State<UltrosDb>,
+    State(bot_admin): State<Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
     Query(MemberSearchQuery { q }): Query<MemberSearchQuery>,
@@ -3071,32 +3053,20 @@ pub(crate) async fn search_group_member_candidates(
                 .collect(),
         ));
     };
-    let ctx = crate::alerts::delivery::get_serenity_ctx()
-        .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
-    let members = crate::web::api::discord_lookup::search_guild_members(
-        &ctx,
-        guild_id,
-        query,
-        ultros_db::group_roles::MEMBER_SEARCH_LIMIT,
-    )
-    .await?;
-    let ids: Vec<i64> = members.iter().map(|m| m.user.id.get() as i64).collect();
+    let members = bot_admin
+        .search_guild_members(guild_id, query, ultros_db::group_roles::MEMBER_SEARCH_LIMIT)
+        .await?;
+    let ids: Vec<i64> = members.iter().map(|m| m.user_id).collect();
     let on_ultros = db.discord_users_present(&ids).await?;
     Ok(Json(
         members
-            .iter()
+            .into_iter()
             .map(|member| {
-                let user_id = member.user.id.get() as i64;
+                let user_id = member.user_id;
                 GroupMemberSearchResult {
                     user_id,
-                    // Discord matched on nickname *and* username, but the name
-                    // shown here is the one the picker posts back to
-                    // `add_group_member`, which upserts it into the global
-                    // `discord_user` row. A nickname must never get that far:
-                    // it would rename the person everywhere on Ultros. See
-                    // `group_sync::global_display_name`.
-                    display_name: crate::group_sync::global_display_name(&member.user),
-                    avatar_url: Some(member.face()),
+                    display_name: member.display_name,
+                    avatar_url: Some(member.avatar_url),
                     on_ultros: on_ultros.contains(&user_id),
                 }
             })
@@ -3117,6 +3087,7 @@ mod group_role_route_tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode, header};
     use tower::ServiceExt;
+    use ultros_api_types::user::GroupSyncStatus;
 
     use super::*;
 

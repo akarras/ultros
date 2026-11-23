@@ -327,25 +327,63 @@ fn shared_manageable_guild(guild: &serenity::GuildInfo, bot_guilds: &HashSet<Gui
                 .intersects(Permissions::ADMINISTRATOR | Permissions::MANAGE_GUILD))
 }
 
-/// Discover via the user's OAuth grant and intersect with the bot's guilds.
-/// Guild mutations still independently check live bot-side permissions.
-async fn guilds_user_manages(
-    ctx: &serenity::Context,
-    user_id: UserId,
+/// Discover candidate guild IDs shared between the authenticated user's OAuth
+/// grant and the bot's guilds, without letting the user's OAuth token leave
+/// `ultros-web`.
+///
+/// Returns `Ok(None)` when Discord replies `403` (grant issued without the
+/// `guilds` scope), signalling the bot side to fall back to the legacy
+/// bot-wide scan.
+pub(crate) async fn discover_oauth_candidate_guild_ids(
+    bot_guild_ids: &[i64],
     cookies: &PrivateCookieJar,
     cache: &AuthUserCache,
-) -> Result<Vec<serenity::PartialGuild>, ApiError> {
+) -> Result<Option<Vec<i64>>, ApiError> {
     let token = cookies
         .get(crate::web::oauth::DISCORD_AUTH_COOKIE)
         .ok_or(ApiError::NoAuthCookie)?;
     let http = Http::new(&format!("Bearer {}", token.value()));
-    let bot_guilds: HashSet<_> = ctx.cache.guilds().into_iter().collect();
+    let bot_guilds: HashSet<GuildId> = bot_guild_ids
+        .iter()
+        .filter_map(|id| u64::try_from(*id).ok().map(GuildId::new))
+        .collect();
     let Some(candidates) = oauth_manageable_guild_ids(&http, cookies, &bot_guilds, cache).await?
     else {
-        return Ok(legacy_guilds_user_manages(ctx, user_id).await);
+        return Ok(None);
     };
+    let mut ids: Vec<i64> = candidates
+        .into_iter()
+        .filter_map(|id| i64::try_from(id.get()).ok())
+        .collect();
+    ids.sort_unstable();
+    Ok(Some(ids))
+}
+
+/// Resolve partial guilds from pre-intersected OAuth candidate guild IDs (when
+/// `Some`) or fall back to the legacy bot-wide permission scan (when `None`).
+///
+/// Intersects `candidate_guild_ids` against `ctx.cache.guilds()` again so the
+/// bot never probes guilds it is not in, even if the cache changed between
+/// requests.
+async fn guilds_from_candidates(
+    ctx: &serenity::Context,
+    user_id: UserId,
+    candidate_guild_ids: Option<&[i64]>,
+) -> Vec<serenity::PartialGuild> {
+    let Some(candidate_ids) = candidate_guild_ids else {
+        return legacy_guilds_user_manages(ctx, user_id).await;
+    };
+    let bot_guilds: HashSet<GuildId> = ctx.cache.guilds().into_iter().collect();
+    let mut seen = HashSet::new();
     let mut guilds = Vec::new();
-    for id in candidates {
+    for &raw_id in candidate_ids {
+        let Ok(id_u64) = u64::try_from(raw_id) else {
+            continue;
+        };
+        let id = GuildId::new(id_u64);
+        if !bot_guilds.contains(&id) || !seen.insert(id) {
+            continue;
+        }
         match id.to_partial_guild(&ctx.http).await {
             Ok(guild) => guilds.push(guild),
             Err(error) => {
@@ -353,7 +391,7 @@ async fn guilds_user_manages(
             }
         }
     }
-    Ok(guilds)
+    guilds
 }
 
 /// `None` requests the compatibility path for grants without `guilds`.
@@ -412,20 +450,19 @@ async fn oauth_manageable_guild_ids(
 }
 
 /// Guilds the user may turn into an Ultros group: the bot is in them and the
-/// user can manage them. Unlike [`writable_guilds_for_user`] this does not
-/// probe channels — a group has nothing to post, so requiring a bot-writable
-/// channel would wrongly exclude valid servers (and the channel fetch is the
-/// expensive part of that function).
-pub(crate) async fn manageable_guilds_for_user(
+/// user can manage them. Unlike [`writable_guilds_from_candidates`] this does
+/// not probe channels — a group has nothing to post, so requiring a
+/// bot-writable channel would wrongly exclude valid servers (and the channel
+/// fetch is the expensive part of that function).
+pub(crate) async fn manageable_guilds_from_candidates(
     ctx: &serenity::Context,
     user_id: i64,
-    cookies: &PrivateCookieJar,
-    cache: &AuthUserCache,
+    candidate_guild_ids: Option<&[i64]>,
 ) -> Result<Vec<(i64, String, Option<String>)>, ApiError> {
     let user_id =
         u64::try_from(user_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid user_id")))?;
-    let mut guilds = guilds_user_manages(ctx, UserId::new(user_id), cookies, cache)
-        .await?
+    let mut guilds = guilds_from_candidates(ctx, UserId::new(user_id), candidate_guild_ids)
+        .await
         .into_iter()
         .map(|partial| {
             (
@@ -447,11 +484,10 @@ pub(crate) async fn manageable_guilds_for_user(
 /// - and the bot can post embeds into at least one text/news channel.
 ///
 /// This powers the web "Discord channel" endpoint picker.
-pub(crate) async fn writable_guilds_for_user(
+pub(crate) async fn writable_guilds_from_candidates(
     ctx: &serenity::Context,
     user_id: i64,
-    cookies: &PrivateCookieJar,
-    cache: &AuthUserCache,
+    candidate_guild_ids: Option<&[i64]>,
 ) -> Result<Vec<DiscordWritableGuild>, ApiError> {
     let user_id =
         u64::try_from(user_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid user_id")))?;
@@ -459,7 +495,7 @@ pub(crate) async fn writable_guilds_for_user(
     let bot_user_id = ctx.cache.current_user().id;
     let mut guilds = Vec::new();
 
-    for partial in guilds_user_manages(ctx, user_id, cookies, cache).await? {
+    for partial in guilds_from_candidates(ctx, user_id, candidate_guild_ids).await {
         let guild_id = partial.id;
         let bot_member = match partial.member(&ctx.http, bot_user_id).await {
             Ok(member) => member,

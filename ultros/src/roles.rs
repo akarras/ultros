@@ -163,7 +163,8 @@ pub(crate) fn parse_market_url(raw: &str) -> Result<Url> {
     Ok(url)
 }
 
-/// Read the optional internal shared bearer token for `/internal/market/*`.
+/// Read the optional internal shared bearer token for `/internal/market/*` and
+/// `/internal/bot/*`.
 pub(crate) fn market_token_from_env() -> Option<String> {
     std::env::var(MARKET_TOKEN_ENV)
         .ok()
