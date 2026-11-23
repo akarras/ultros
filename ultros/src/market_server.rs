@@ -765,18 +765,20 @@ mod tests {
 
         // 1d. Malformed and oversized Accept-Encoding headers fail fast with
         //     400 Bad Request rather than silently ignoring invalid qvalues or
-        //     dropping exclusions.
-        let mut malformed_ae = axum::http::HeaderMap::new();
-        malformed_ae.insert(
-            header::ACCEPT_ENCODING,
-            HeaderValue::from_static("gzip, gzip;q=bogus"),
-        );
-        assert!(matches!(
-            client
-                .cheapest("North-America", Some("columnar"), &malformed_ae)
-                .await,
-            Err(e) if matches!(e.0.as_ref(), WebError::BadRequest)
-        ));
+        //     dropping exclusions (including RFC 9110 §12.4.2 whitespace around `=`).
+        for bad in ["gzip, gzip;q=bogus", "gzip;q =0", "gzip;q= 0"] {
+            let mut malformed_ae = axum::http::HeaderMap::new();
+            malformed_ae.insert(header::ACCEPT_ENCODING, HeaderValue::from_static(bad));
+            assert!(
+                matches!(
+                    client
+                        .cheapest("North-America", Some("columnar"), &malformed_ae)
+                        .await,
+                    Err(e) if matches!(e.0.as_ref(), WebError::BadRequest)
+                ),
+                "malformed Accept-Encoding {bad:?} must return 400 Bad Request"
+            );
+        }
         let mut oversized_ae = axum::http::HeaderMap::new();
         let long_header = std::iter::repeat_n("gzip", 300)
             .collect::<Vec<_>>()

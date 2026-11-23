@@ -783,11 +783,13 @@ fn validate_accept_encoding(combined: &str) -> Result<(), WebError> {
         }
         let mut saw_weight = false;
         for raw_param in parts {
+            // RFC 9110 §12.4.2: `weight = OWS ";" OWS "q=" qvalue` — whitespace
+            // is allowed around `;`, never around `=`.
             let param = raw_param.trim();
             let Some((k, v)) = param.split_once('=') else {
                 return Err(WebError::BadRequest);
             };
-            if saw_weight || !k.trim().eq_ignore_ascii_case("q") || !is_valid_qvalue(v.trim()) {
+            if saw_weight || !k.eq_ignore_ascii_case("q") || !is_valid_qvalue(v) {
                 return Err(WebError::BadRequest);
             }
             saw_weight = true;

@@ -145,11 +145,12 @@ fn spawn_rollup_scheduler(
                     let scheduler_token = token.child_token();
                     // One-time listing_events seed, under the same lease so
                     // only one replica ever streams the board.
-                    tokio::spawn(ultros_clickhouse::listing_seed::run_until_seeded(
-                        ch.clone(),
-                        db.clone(),
-                        scheduler_token.clone(),
-                    ));
+                    let listing_seed_handle =
+                        tokio::spawn(ultros_clickhouse::listing_seed::run_until_seeded(
+                            ch.clone(),
+                            db.clone(),
+                            scheduler_token.clone(),
+                        ));
                     let scheduler = ultros_clickhouse::rollups::run_scheduler(
                         ch.clone(),
                         scheduler_token.clone(),
@@ -171,6 +172,7 @@ fn spawn_rollup_scheduler(
                                 // `run_scheduler` only returns after its token
                                 // is cancelled. If it ever exits independently,
                                 // release the lease and start a clean election.
+                                scheduler_token.cancel();
                                 break true;
                             }
                             _ = heartbeat.tick() => {
@@ -196,6 +198,11 @@ fn spawn_rollup_scheduler(
                             }
                         }
                     };
+                    // Wait for `run_until_seeded` to finish before releasing
+                    // either the rollup lease or the enclosing worker lease.
+                    if let Err(error) = listing_seed_handle.await {
+                        warn!(?error, "listing seed task failed during shutdown");
+                    }
                     metrics::gauge!("ultros_rollup_scheduler_leader").set(0.0);
                     let _ = sea_orm::sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
                         .bind(ROLLUP_SCHEDULER_LOCK_KEY)
@@ -1323,14 +1330,20 @@ async fn main() -> Result<()> {
     }
     // Release the exclusive worker lease only when every stateful task has
     // exited cleanly. If graceful shutdown timed out with tasks still active,
-    // keep the advisory-lock session open until the OS terminates this process
-    // on exit so a standby worker cannot overlap stalled tasks.
+    // returning through Tokio runtime teardown would drop the heartbeat task
+    // and close the lease socket while stalled tasks could still run; flush
+    // telemetry and terminate the process directly so the OS closes the lease
+    // session atomically at process exit.
     if let Some(lease) = worker_lease {
         if shutdown_clean {
             lease.release().await;
         } else {
-            warn!("keeping exclusive worker lease held until process exit after shutdown timeout");
+            warn!(
+                "terminating process directly after shutdown timeout so the exclusive worker lease cannot release while stalled tasks are still running"
+            );
+            drop(_sentry_guard);
             std::mem::forget(lease);
+            std::process::exit(1);
         }
     }
     info!("Exiting");
