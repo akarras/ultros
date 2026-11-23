@@ -145,6 +145,7 @@ impl UltrosDb {
             .into());
         }
         let txn = self.db.begin().await?;
+        crate::auth_revocation::lock_auth_user_in_txn(&txn, owner).await?;
         // Account lock covers both random attempt keys and two tabs generating
         // different keys for the same device list. Never lock an attacker key.
         let account = txn

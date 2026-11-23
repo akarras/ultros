@@ -122,6 +122,10 @@ pub async fn connect_single_session_for_migrations(
     let pool = sea_orm::sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .min_connections(1)
+        // Disable pool-driven expiry so SQLx never retires a healthy
+        // lock-owning migration session during a long migration run.
+        .max_lifetime(None)
+        .idle_timeout(None)
         .after_connect(move |conn, _meta| {
             let established = established.clone();
             let search_path = search_path.clone();

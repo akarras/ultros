@@ -2065,13 +2065,10 @@ pub(crate) async fn create_list(
     user: AuthDiscordUser,
     Json(list): Json<CreateList>,
 ) -> Result<Json<()>, ApiError> {
-    let discord_user = db
-        .get_discord_user(user.id)
+    let list = db
+        .create_list_for_existing_user(user.id, list.name, Some(list.wdr_filter.into()))
         .await?
         .ok_or(ApiError::NoAuthCookie)?;
-    let list = db
-        .create_list(discord_user, list.name, Some(list.wdr_filter.into()))
-        .await?;
     send_list_event(
         &senders,
         EventType::added(ListEventData::List(List::try_from(list.clone())?)),

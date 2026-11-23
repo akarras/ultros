@@ -440,6 +440,15 @@ mod tests {
                 .is_none(),
             "revoked session must not recreate deleted discord_user"
         );
+        // Serialized list creation must refuse a deleted user without leaving
+        // an orphan list row behind.
+        assert!(
+            db.create_list_for_existing_user(777, "Orphan".into(), None)
+                .await
+                .unwrap()
+                .is_none(),
+            "deleted user must not create an orphan list"
+        );
         assert!(
             db.verify_session_and_upsert_discord_user(
                 &other_token_hash,
