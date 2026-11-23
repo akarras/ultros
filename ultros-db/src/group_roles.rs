@@ -12,9 +12,9 @@ use crate::{
 };
 use anyhow::Result;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, RelationTrait, SqlErr, TransactionTrait,
-    sea_query::OnConflict,
+    ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, DatabaseTransaction, DbBackend,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait, SqlErr,
+    Statement, TransactionTrait, sea_query::OnConflict,
 };
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -427,7 +427,9 @@ impl UltrosDb {
             return Err(GroupError::RoleManagedByDiscord.into());
         }
         let txn = self.db.begin().await?;
-        if let Some(username) = display_name {
+        if user_id != owner_id
+            && let Some(username) = display_name
+        {
             discord_user::Entity::insert(discord_user::ActiveModel {
                 id: ActiveValue::Set(user_id),
                 username: ActiveValue::Set(username),
@@ -895,26 +897,34 @@ impl UltrosDb {
     /// it adds; this covers the members it did not have to touch, which in a
     /// steady-state guild is nearly all of them.
     ///
-    /// Callers must pass ids that already exist in `discord_user`: the
-    /// statement is an upsert, so an unknown id would mint a row for someone
-    /// who has no reason to be in our database yet.
+    /// Uses `UPDATE ... FROM (VALUES ...)` rather than an upsert so unknown or
+    /// concurrently deleted users are skipped and never recreated in
+    /// `discord_user`.
     pub async fn refresh_member_display_names(&self, users: &[(i64, String)]) -> Result<()> {
         // One statement per chunk rather than per user: a whole-server role on
         // a large guild is thousands of rows, and this runs on every cycle.
         for chunk in users.chunks(DISPLAY_NAME_REFRESH_CHUNK) {
-            discord_user::Entity::insert_many(chunk.iter().map(|(id, username)| {
-                discord_user::ActiveModel {
-                    id: ActiveValue::Set(*id),
-                    username: ActiveValue::Set(username.clone()),
-                }
-            }))
-            .on_conflict(
-                OnConflict::column(discord_user::Column::Id)
-                    .update_column(discord_user::Column::Username)
-                    .to_owned(),
-            )
-            .exec(&self.db)
-            .await?;
+            let mut values = Vec::with_capacity(chunk.len() * 2);
+            let mut tuples = Vec::with_capacity(chunk.len());
+            for (idx, (id, username)) in chunk.iter().enumerate() {
+                let p = idx * 2;
+                tuples.push(format!("(${}::bigint, ${}::text)", p + 1, p + 2));
+                values.push((*id).into());
+                values.push(username.clone().into());
+            }
+            self.db
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    format!(
+                        "UPDATE discord_user AS u \
+                         SET username = v.username \
+                         FROM (VALUES {}) AS v(id, username) \
+                         WHERE u.id = v.id",
+                        tuples.join(", ")
+                    ),
+                    values,
+                ))
+                .await?;
         }
         Ok(())
     }
@@ -1684,9 +1694,11 @@ pub(crate) mod tests {
         .await
         .unwrap();
 
+        let deleted_id = next_id();
         db.refresh_member_display_names(&[
             (first.id, "Renamed One".to_string()),
             (second.id, "Renamed Two".to_string()),
+            (deleted_id, "Deleted User".to_string()),
         ])
         .await
         .unwrap();
@@ -1699,6 +1711,14 @@ pub(crate) mod tests {
                 .unwrap();
             assert_eq!(reloaded.username, expected);
         }
+        assert!(
+            discord_user::Entity::find_by_id(deleted_id)
+                .one(&db.db)
+                .await
+                .unwrap()
+                .is_none(),
+            "display-name refresh must not recreate a deleted or absent discord_user row"
+        );
         // Names are all it changes: nobody joins or leaves.
         assert_eq!(db.role_member_ids(role.id).await.unwrap().len(), 2);
         assert_eq!(
