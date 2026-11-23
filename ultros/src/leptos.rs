@@ -16,8 +16,6 @@ use axum::{
 use leptos::prelude::*;
 use leptos_axum::{LeptosRoutes, generate_route_list};
 use leptos_router::SsrMode;
-use tower_http::services::ServeDir;
-use tower_http::set_header::SetResponseHeader;
 use tracing::{info, instrument};
 use ultros_api_types::user::UserData;
 use ultros_api_types::world_helper::WorldHelper;
@@ -177,44 +175,45 @@ async fn in_order_handler(
     .await
 }
 
-/// The file service behind `/pkg/<git hash>/`: cargo-leptos's JS, wasm and CSS.
-type PkgService = SetResponseHeader<SetResponseHeader<ServeDir, HeaderValue>, HeaderValue>;
-
-/// Serves the cargo-leptos output directory.
-///
-/// Release builds run `cargo leptos build --precompress` (see the Dockerfile),
-/// which writes a brotli `-q 11` `.br` and a gzip `-9` `.gz` sibling next to
-/// every file. `ServeDir` picks the best of those the client accepts and sets
-/// `Content-Encoding` itself; the outer `CompressionLayer` leaves responses that
-/// already carry that header alone. Before this, the layer compressed the wasm
-/// on every cold request at tower-http's default quality — 7.2 MB on the wire
-/// where `-q 11` of the same file is 4.9 MB. Without siblings on disk (dev
-/// builds) the plain file is served and the layer compresses it as before.
-///
-/// `Vary: accept-encoding` is appended because `ServeDir` does not add it for
-/// precompressed responses, and the `/pkg/` URLs are cached for a year.
-fn pkg_service(dir: impl AsRef<std::path::Path>) -> PkgService {
-    let files = ServeDir::new(dir).precompressed_br().precompressed_gzip();
-    let files = SetResponseHeader::appending(
-        files,
-        header::VARY,
-        HeaderValue::from_static("accept-encoding"),
+/// Mounts `/pkg/<git_hash>/{*file}` against `bundle_dir` and, when
+/// `archive_dir` is provided, also mounts `/pkg/{hash}/{*file}` so rolling N-1
+/// bundles remain servable across deploys.
+fn mount_pkg_routes<S>(
+    mut router: Router<S>,
+    bundle_dir: std::path::PathBuf,
+    git_hash: &str,
+    archive_dir: Option<Arc<std::path::PathBuf>>,
+) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    let local_bundle = Arc::new(bundle_dir);
+    router = router.route(
+        &format!("/pkg/{git_hash}/{{*file}}"),
+        axum::routing::get(
+            move |axum::extract::Path(file): axum::extract::Path<String>,
+                  req: axum::extract::Request| {
+                let bundle = local_bundle.clone();
+                async move { crate::pkg_archive::serve_local_pkg(&bundle, &file, req).await }
+            },
+        ),
     );
-    // The pkg dir is namespaced by GIT_HASH, so these URLs change on every
-    // deploy and their contents never do — a one-day max-age just forced
-    // needless revalidation. One year is the `immutable` ceiling. Dev builds
-    // ask for revalidation instead so `cargo leptos watch` never serves stale
-    // output.
-    let cache_control = if cfg!(debug_assertions) {
-        "no-cache"
-    } else {
-        "public, max-age=31536000, immutable"
-    };
-    SetResponseHeader::appending(
-        files,
-        header::CACHE_CONTROL,
-        HeaderValue::from_static(cache_control),
-    )
+    if let Some(archive_dir) = archive_dir {
+        router = router.route(
+            "/pkg/{hash}/{*file}",
+            axum::routing::get(
+                move |axum::extract::Path((hash, file)): axum::extract::Path<(String, String)>,
+                      req: axum::extract::Request| {
+                    let archive_dir = archive_dir.clone();
+                    async move {
+                        crate::pkg_archive::serve_archived_pkg(&archive_dir, &hash, &file, req)
+                            .await
+                    }
+                },
+            ),
+        );
+    }
+    router
 }
 
 pub(crate) async fn create_leptos_app(
@@ -242,8 +241,22 @@ pub(crate) async fn create_leptos_app(
     //let pkg_service = HandleError::new(ServeDir::new("./pkg"), handle_file_error);
     let git_hash = env!("GIT_HASH");
     leptos_options.site_pkg_dir = Arc::from(["pkg/", git_hash].concat());
-    let cargo_leptos_service = pkg_service(&bundle_filepath);
     tracing::info!("Serving pkg dir: {bundle_filepath}");
+    let pkg_archive_dir = crate::pkg_archive::PkgArchiveConfig::from_env().map(|cfg| {
+        if let Err(error) = crate::pkg_archive::sync_pkg_archive(
+            std::path::Path::new(&bundle_filepath),
+            &cfg.archive_dir,
+            git_hash,
+            cfg.retain,
+        ) {
+            tracing::warn!(
+                ?error,
+                archive = %cfg.archive_dir.display(),
+                "failed to sync current pkg bundle into N-1 archive; continuing with local bundle"
+            );
+        }
+        Arc::new(cfg.archive_dir)
+    });
     let worlds = Ok(worlds);
     let routes = generate_route_list(move || {
         let worlds = worlds.clone();
@@ -271,15 +284,15 @@ pub(crate) async fn create_leptos_app(
     );
 
     // build our application with a route
-    let mut router = Router::new()
-        // Axum's generated route list omits the empty child's trailing slash.
-        // Serve the guide through the same protected Leptos handler either way.
-        .route("/plugin/", axum::routing::get(in_order_handler))
-        // `GET /` goes to `root`
-        .nest_service(
-            &["/", &leptos_options.site_pkg_dir].concat(),
-            cargo_leptos_service.clone(),
-        ); // Only need if using wasm-pack. Can be deleted if using cargo-leptos
+    let mut router = mount_pkg_routes(
+        Router::new()
+            // Axum's generated route list omits the empty child's trailing slash.
+            // Serve the guide through the same protected Leptos handler either way.
+            .route("/plugin/", axum::routing::get(in_order_handler)),
+        std::path::PathBuf::from(&bundle_filepath),
+        git_hash,
+        pkg_archive_dir,
+    );
     // .nest_service(&bundle_path, cargo_leptos_service) // Only needed if using cargo-leptos. Can be deleted if using wasm-pack and cargo-run
     //.nest_service("/static", static_service)
     if !in_order_routes.is_empty() {
@@ -294,10 +307,12 @@ pub(crate) async fn create_leptos_app(
 
 #[cfg(test)]
 mod tests {
-    use super::{escape_for_script_tag, pkg_service};
+    use super::{escape_for_script_tag, mount_pkg_routes};
+    use axum::Router;
     use axum::body::Body;
     use axum::http::{Request, StatusCode, header};
     use http_body_util::BodyExt;
+    use std::sync::Arc;
     use tower::ServiceExt;
 
     /// A pkg dir the way `cargo leptos build --precompress` leaves it: the
@@ -314,14 +329,21 @@ mod tests {
         dir: &tempfile::TempDir,
         accept_encoding: Option<&str>,
     ) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
-        let mut request = Request::builder().uri("/ultros.wasm");
+        get_pkg_path(dir, "/ultros.wasm", accept_encoding).await
+    }
+
+    async fn get_pkg_path(
+        dir: &tempfile::TempDir,
+        uri: &str,
+        accept_encoding: Option<&str>,
+    ) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+        let mut request = Request::builder().uri(uri);
         if let Some(accept_encoding) = accept_encoding {
             request = request.header(header::ACCEPT_ENCODING, accept_encoding);
         }
-        let response = pkg_service(dir.path())
-            .oneshot(request.body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let response =
+            crate::pkg_archive::serve_pkg_file(dir.path(), request.body(Body::empty()).unwrap())
+                .await;
         let (parts, body) = response.into_parts();
         let body = body.collect().await.unwrap().to_bytes().to_vec();
         (parts.status, parts.headers, body)
@@ -371,6 +393,86 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, b"plain-wasm");
         assert!(!headers.contains_key(header::CONTENT_ENCODING));
+    }
+
+    #[tokio::test]
+    async fn pkg_missing_file_returns_no_store_not_immutable() {
+        let dir = precompressed_pkg_dir();
+        let (status, headers, _) = get_pkg_path(&dir, "/does-not-exist.wasm", Some("br")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    }
+
+    #[tokio::test]
+    async fn mounted_pkg_router_prefers_local_bundle_and_falls_back_to_n_minus_1_archive() {
+        let root = tempfile::tempdir().unwrap();
+        let local_bundle = root.path().join("local");
+        let old_bundle = root.path().join("old");
+        let archive_dir = root.path().join("archive");
+        std::fs::create_dir_all(&local_bundle).unwrap();
+        std::fs::create_dir_all(&old_bundle).unwrap();
+        std::fs::write(local_bundle.join("ultros.wasm"), b"local-current").unwrap();
+        std::fs::write(old_bundle.join("ultros.wasm"), b"archived-old").unwrap();
+        std::fs::write(old_bundle.join("ultros.wasm.br"), b"archived-old-br").unwrap();
+
+        crate::pkg_archive::sync_pkg_archive(&old_bundle, &archive_dir, "oldhash", 3).unwrap();
+        crate::pkg_archive::sync_pkg_archive(&local_bundle, &archive_dir, "newhash", 3).unwrap();
+        // Mutate the archived copy of `newhash` to prove requests for the
+        // running hash serve directly from the local container bundle.
+        std::fs::write(
+            archive_dir.join("newhash").join("ultros.wasm"),
+            b"archive-copy",
+        )
+        .unwrap();
+
+        let app: Router<()> = mount_pkg_routes(
+            Router::new(),
+            local_bundle,
+            "newhash",
+            Some(Arc::new(archive_dir)),
+        );
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/pkg/newhash/ultros.wasm")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"local-current");
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/pkg/oldhash/ultros.wasm")
+                    .header(header::ACCEPT_ENCODING, "br")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers()[header::CONTENT_ENCODING], "br");
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"archived-old-br");
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/pkg/expiredhash/ultros.wasm")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
     }
 
     #[test]

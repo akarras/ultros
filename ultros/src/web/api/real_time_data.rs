@@ -60,24 +60,35 @@ fn list_document_identity_error(
 /// Distinguishes sockets so a relay never echoes an update to its sender.
 static NEXT_SOCKET_ID: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Debug, PartialEq, Eq)]
+enum ListDocRelayItem {
+    Update(Vec<u8>),
+    RemoteWake,
+}
+
 /// Which relay-stream subscribers should forward this document update: every
 /// subscriber of the same list except the socket that sent it (spec section 5).
-fn relay_for(event: &ListDocEvent, list_id: i32, socket_id: u64) -> Option<Vec<u8>> {
+fn relay_for(event: &ListDocEvent, list_id: i32, socket_id: u64) -> Option<ListDocRelayItem> {
     if event.list_id != list_id || event.origin_socket == Some(socket_id) {
         return None;
     }
-    Some(event.update.clone())
+    if event.remote_wake {
+        return Some(ListDocRelayItem::RemoteWake);
+    }
+    Some(ListDocRelayItem::Update(event.update.clone()))
 }
 
-/// Relays fired alerts to the socket that owns them: `Err(_)` (lag) maps to
-/// `Stale`, `Ok(e)` for a different owner is dropped, and `Ok(e)` for this
-/// owner is wrapped in its subscription's `SubscriptionEvent`.
+/// Relays fired alerts to the socket that owns them: `Err(_)` (lag) or a
+/// `PgListener` reconnect `wakeup_resync` maps to `Stale`, `Ok(e)` for a
+/// different owner is dropped, and `Ok(e)` for this owner is wrapped in its
+/// subscription's `SubscriptionEvent`.
 fn notification_relay(
     receiver: tokio::sync::broadcast::Receiver<EventType<Arc<NotificationEvent>>>,
+    wakeup_resync: tokio::sync::broadcast::Receiver<()>,
     subscription_id: u64,
     owner: i64,
 ) -> BoxStream<'static, ServerClient> {
-    Box::pin(BroadcastStream::new(receiver).filter_map(move |event| {
+    let events = BroadcastStream::new(receiver).filter_map(move |event| {
         let result = match event {
             Err(_) => Some(ServerClient::Stale { subscription_id }),
             Ok(event) if event.as_ref().owner == owner => Some(scoped_event(
@@ -87,11 +98,15 @@ fn notification_relay(
             Ok(_) => None,
         };
         async move { result }
-    }))
+    });
+    let resyncs =
+        BroadcastStream::new(wakeup_resync).map(move |_| ServerClient::Stale { subscription_id });
+    Box::pin(futures::stream::select(events, resyncs))
 }
 
 fn list_doc_relay<F, A>(
     receiver: tokio::sync::broadcast::Receiver<EventType<Arc<ListDocEvent>>>,
+    wakeup_resync: tokio::sync::broadcast::Receiver<()>,
     subscription_id: u64,
     list_id: i32,
     socket_id: u64,
@@ -101,11 +116,15 @@ where
     A: FnMut(ServerClient) -> F + Send + 'static,
     F: std::future::Future<Output = Option<ServerClient>> + Send + 'static,
 {
-    Box::pin(BroadcastStream::new(receiver).filter_map(move |event| {
+    let events = BroadcastStream::new(receiver).filter_map(move |event| {
         let lagged = event.is_err();
         let authorization = event.ok().and_then(|event| {
-            relay_for(event.as_ref(), list_id, socket_id)
-                .map(|update| authorize(ServerClient::ListDocUpdate { list_id, update }))
+            relay_for(event.as_ref(), list_id, socket_id).map(|item| match item {
+                ListDocRelayItem::Update(update) => {
+                    authorize(ServerClient::ListDocUpdate { list_id, update })
+                }
+                ListDocRelayItem::RemoteWake => authorize(ServerClient::Stale { subscription_id }),
+            })
         });
         async move {
             if lagged {
@@ -116,7 +135,10 @@ where
                 None
             }
         }
-    }))
+    });
+    let resyncs =
+        BroadcastStream::new(wakeup_resync).map(move |_| ServerClient::Stale { subscription_id });
+    Box::pin(futures::stream::select(events, resyncs))
 }
 
 /// A `SubscribeList` for a list that does not exist is answered on that one
@@ -238,6 +260,7 @@ async fn handle_socket(
         lists,
         list_docs,
         notifications,
+        wakeup_resync,
     } = events;
     let socket_id = NEXT_SOCKET_ID.fetch_add(1, Ordering::Relaxed);
     let (mut sender, mut receiver) = socket.split();
@@ -474,7 +497,15 @@ async fn handle_socket(
                                                         }
                                                     }
                                                 });
-                                            subscriptions.insert(subscription_id, Box::pin(stream));
+                                            let resyncs =
+                                                BroadcastStream::new(wakeup_resync.resubscribe())
+                                                    .map(move |_| ServerClient::Stale {
+                                                        subscription_id,
+                                                    });
+                                            subscriptions.insert(
+                                                subscription_id,
+                                                Box::pin(futures::stream::select(stream, resyncs)),
+                                            );
                                             sender
                                                 .send(Message::Text(
                                                     serde_json::to_string(
@@ -579,6 +610,7 @@ async fn handle_socket(
                                         // harmless because merging a CRDT update twice
                                         // is idempotent.
                                         let doc_relay = list_docs.resubscribe();
+                                        let doc_resync = wakeup_resync.resubscribe();
                                         match list_sync
                                             .subscribe_payload(list_id, user_id, &version)
                                             .await
@@ -590,6 +622,7 @@ async fn handle_socket(
                                                 let relay_db = db.clone();
                                                 let stream = list_doc_relay(
                                                     doc_relay,
+                                                    doc_resync,
                                                     subscription_id,
                                                     list_id,
                                                     socket_id,
@@ -839,6 +872,7 @@ async fn handle_socket(
                                             Ok(owner) => {
                                                 let stream = notification_relay(
                                                     notifications.resubscribe(),
+                                                    wakeup_resync.resubscribe(),
                                                     subscription_id,
                                                     owner,
                                                 );
@@ -997,7 +1031,10 @@ fn finish_list_authorization(
     event: ServerClient,
 ) -> ServerClient {
     if matches!(permission, Ok(value) if value >= ListPermission::Read) {
-        return scoped_event(subscription_id, event);
+        return match event {
+            ServerClient::Stale { .. } => event,
+            other => scoped_event(subscription_id, other),
+        };
     }
     // Fail closed on lookup errors too. The owner drops only this relay when
     // it polls the error; unrelated lists and market subscriptions remain live.
@@ -1120,7 +1157,8 @@ mod tests {
     #[tokio::test]
     async fn notification_relay_delivers_only_the_owners_events() {
         let (bus, _) = broadcast::channel(16);
-        let mut relay = notification_relay(bus.subscribe(), 11, 1);
+        let (resync, _) = broadcast::channel(4);
+        let mut relay = notification_relay(bus.subscribe(), resync.subscribe(), 11, 1);
         bus.send(notification_event(2, 99)).unwrap();
         bus.send(notification_event(1, 7)).unwrap();
 
@@ -1138,12 +1176,22 @@ mod tests {
             relay.next().now_or_never().is_none(),
             "the other owner's event was dropped, not merely delayed"
         );
+
+        // Reconnect resync emits top-level Stale so the client refetches.
+        resync.send(()).unwrap();
+        assert!(matches!(
+            relay.next().await,
+            Some(ServerClient::Stale {
+                subscription_id: 11
+            })
+        ));
     }
 
     #[tokio::test]
     async fn notification_relay_reports_lag_as_stale_then_resumes() {
         let (bus, _) = broadcast::channel(2);
-        let mut relay = notification_relay(bus.subscribe(), 11, 1);
+        let (resync, _) = broadcast::channel(4);
+        let mut relay = notification_relay(bus.subscribe(), resync.subscribe(), 11, 1);
         for i in 0..5 {
             bus.send(notification_event(1, i)).unwrap();
         }
@@ -1166,8 +1214,10 @@ mod tests {
     #[tokio::test]
     async fn notification_relay_closed_bus_releases_stream_without_closing_socket() {
         let (bus, _) = broadcast::channel::<EventType<Arc<NotificationEvent>>>(16);
-        let mut relay = notification_relay(bus.subscribe(), 11, 1);
+        let (resync, _) = broadcast::channel::<()>(4);
+        let mut relay = notification_relay(bus.subscribe(), resync.subscribe(), 11, 1);
         drop(bus);
+        drop(resync);
         assert!(
             relay.next().await.is_none(),
             "a closed bus ends the relay stream"
@@ -1211,10 +1261,14 @@ mod tests {
     #[test]
     fn notification_relay_respects_subscription_limit() {
         let (bus, _) = broadcast::channel(16);
+        let (resync, _) = broadcast::channel(4);
         let mut subscriptions = SocketSubscriptions::default();
         for id in 0..MAX_SUBSCRIPTIONS_PER_SOCKET as u64 {
             assert!(subscriptions.begin(id));
-            subscriptions.insert(id, notification_relay(bus.subscribe(), id, 1));
+            subscriptions.insert(
+                id,
+                notification_relay(bus.subscribe(), resync.subscribe(), id, 1),
+            );
         }
         assert_eq!(subscriptions.streams.len(), MAX_SUBSCRIPTIONS_PER_SOCKET);
         assert!(
@@ -1223,16 +1277,19 @@ mod tests {
         );
         // Replacing an id already held is still allowed at the cap.
         assert!(subscriptions.begin(0));
-        subscriptions.insert(0, notification_relay(bus.subscribe(), 0, 1));
+        subscriptions.insert(
+            0,
+            notification_relay(bus.subscribe(), resync.subscribe(), 0, 1),
+        );
         assert_eq!(subscriptions.streams.len(), MAX_SUBSCRIPTIONS_PER_SOCKET);
     }
 
     fn update(list_id: i32) -> EventType<Arc<ListDocEvent>> {
-        EventType::Update(Arc::new(ListDocEvent {
+        EventType::Update(Arc::new(ListDocEvent::local_update(
             list_id,
-            update: vec![99],
-            origin_socket: Some(2),
-        }))
+            vec![99],
+            Some(2),
+        )))
     }
 
     fn install(
@@ -1243,9 +1300,10 @@ mod tests {
     ) {
         assert!(subscriptions.begin(id));
         let calls = calls.clone();
+        let (_resync_tx, resync_rx) = broadcast::channel(4);
         subscriptions.insert(
             id,
-            list_doc_relay(bus.subscribe(), id, 7, 1, move |event| {
+            list_doc_relay(bus.subscribe(), resync_rx, id, 7, 1, move |event| {
                 calls.fetch_add(1, Ordering::Relaxed);
                 futures::future::ready(Some(finish_list_authorization(
                     id,
@@ -1298,13 +1356,14 @@ mod tests {
             Err(anyhow::anyhow!("lookup failed")),
         ] {
             let (bus, _) = broadcast::channel(16);
+            let (_resync_tx, resync_rx) = broadcast::channel(4);
             let (reply, response) = oneshot::channel();
             let mut response = Some(response);
             let mut subscriptions = SocketSubscriptions::default();
             assert!(subscriptions.begin(11));
             subscriptions.insert(
                 11,
-                list_doc_relay(bus.subscribe(), 11, 7, 1, move |event| {
+                list_doc_relay(bus.subscribe(), resync_rx, 11, 7, 1, move |event| {
                     let response = response.take().unwrap();
                     async move {
                         Some(finish_list_authorization(
@@ -1341,11 +1400,12 @@ mod tests {
             Err(anyhow::anyhow!("lookup failed")),
         ] {
             let (bus, _) = broadcast::channel(16);
+            let (_resync_tx, resync_rx) = broadcast::channel(4);
             let mut subscriptions = SocketSubscriptions::default();
             let mut permission = Some(permission);
             subscriptions.insert(
                 11,
-                list_doc_relay(bus.subscribe(), 11, 7, 1, move |event| {
+                list_doc_relay(bus.subscribe(), resync_rx, 11, 7, 1, move |event| {
                     futures::future::ready(Some(finish_list_authorization(
                         11,
                         7,
@@ -1388,9 +1448,10 @@ mod tests {
         // The actual handshake acquires its receiver before awaiting a snapshot.
         bus.send(update(7)).unwrap();
         let relay_calls = calls.clone();
+        let (_resync_tx, resync_rx) = broadcast::channel(4);
         subscriptions.insert(
             11,
-            list_doc_relay(receiver, 11, 7, 1, move |event| {
+            list_doc_relay(receiver, resync_rx, 11, 7, 1, move |event| {
                 relay_calls.fetch_add(1, Ordering::Relaxed);
                 futures::future::ready(Some(scoped_event(11, event)))
             }),
@@ -1432,12 +1493,13 @@ mod tests {
     #[test]
     fn socket_close_cancels_pending_permission_lookup() {
         let (bus, _) = broadcast::channel(16);
+        let (_resync_tx, resync_rx) = broadcast::channel(4);
         let (reply, response) = oneshot::channel::<()>();
         let mut response = Some(response);
         let mut subscriptions = SocketSubscriptions::default();
         subscriptions.insert(
             11,
-            list_doc_relay(bus.subscribe(), 11, 7, 1, move |_| {
+            list_doc_relay(bus.subscribe(), resync_rx, 11, 7, 1, move |_| {
                 let response = response.take().unwrap();
                 async move {
                     response.await.unwrap();
@@ -1466,19 +1528,67 @@ mod tests {
 
     #[test]
     fn relay_skips_other_lists_and_the_sending_socket() {
-        let event = ListDocEvent {
-            list_id: 9,
-            update: vec![1, 2, 3],
-            origin_socket: Some(7),
-        };
-        assert_eq!(relay_for(&event, 9, 8), Some(vec![1, 2, 3]));
+        let event = ListDocEvent::local_update(9, vec![1, 2, 3], Some(7));
+        assert_eq!(
+            relay_for(&event, 9, 8),
+            Some(ListDocRelayItem::Update(vec![1, 2, 3]))
+        );
         assert_eq!(relay_for(&event, 9, 7), None, "the sender already has it");
         assert_eq!(relay_for(&event, 10, 8), None, "another list");
-        let server_side = ListDocEvent {
-            list_id: 9,
-            update: vec![4],
-            origin_socket: None,
-        };
-        assert_eq!(relay_for(&server_side, 9, 7), Some(vec![4]));
+        let server_side = ListDocEvent::local_update(9, vec![4], None);
+        assert_eq!(
+            relay_for(&server_side, 9, 7),
+            Some(ListDocRelayItem::Update(vec![4]))
+        );
+        let remote = ListDocEvent::remote_wake(9);
+        assert_eq!(relay_for(&remote, 9, 7), Some(ListDocRelayItem::RemoteWake));
+        assert_eq!(relay_for(&remote, 10, 7), None);
+    }
+
+    #[tokio::test]
+    async fn list_doc_relay_emits_stale_for_remote_wake_and_enforces_auth() {
+        let (bus, _) = broadcast::channel(16);
+        let (resync, _) = broadcast::channel(4);
+        let mut authorized =
+            list_doc_relay(bus.subscribe(), resync.subscribe(), 11, 7, 1, |event| {
+                futures::future::ready(Some(finish_list_authorization(
+                    11,
+                    7,
+                    Ok(ListPermission::Read),
+                    event,
+                )))
+            });
+        let mut revoked = list_doc_relay(bus.subscribe(), resync.subscribe(), 12, 7, 1, |event| {
+            futures::future::ready(Some(finish_list_authorization(
+                12,
+                7,
+                Ok(ListPermission::None),
+                event,
+            )))
+        });
+
+        bus.send(EventType::Update(Arc::new(ListDocEvent::remote_wake(7))))
+            .unwrap();
+        assert!(matches!(
+            authorized.next().await,
+            Some(ServerClient::Stale {
+                subscription_id: 11
+            })
+        ));
+        assert!(matches!(
+            revoked.next().await,
+            Some(ServerClient::SubscriptionEvent {
+                subscription_id: 12,
+                ..
+            })
+        ));
+
+        resync.send(()).unwrap();
+        assert!(matches!(
+            authorized.next().await,
+            Some(ServerClient::Stale {
+                subscription_id: 11
+            })
+        ));
     }
 }

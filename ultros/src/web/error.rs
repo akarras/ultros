@@ -497,7 +497,9 @@ impl IntoResponse for ApiError {
             let mut cookies = *cookies;
             // remove the discord user cookie
             info!("Removed invalid Discord token");
-            cookies = cookies.remove(super::oauth::discord_auth_removal_cookie());
+            cookies = cookies
+                .remove(super::oauth::discord_auth_removal_cookie())
+                .remove(super::oauth::discord_auth_iat_removal_cookie());
             // An expired/revoked token is an auth failure like any other, so it
             // gets the same 401. Without an explicit status this tuple response
             // defaulted to `200`.

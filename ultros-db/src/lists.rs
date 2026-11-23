@@ -330,6 +330,10 @@ impl UltrosDb {
         .await?)
     }
 
+    pub async fn get_list_activity_by_id(&self, id: i64) -> Result<Option<list_activity::Model>> {
+        Ok(list_activity::Entity::find_by_id(id).one(&self.db).await?)
+    }
+
     pub async fn get_list_activity(
         &self,
         list_id: i32,

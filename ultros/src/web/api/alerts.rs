@@ -199,6 +199,8 @@ pub(crate) async fn create_alert(
             .await
             .map_err(ApiError::from)?;
         let _ = senders.alerts.send(EventType::added(alert.clone()));
+        db.notify_alert_changed(alert.id, ultros_db::wakeup::AlertWakeupKind::Add, &[])
+            .await;
 
         return Ok(Json(Alert {
             id: alert.id,
@@ -256,6 +258,8 @@ pub(crate) async fn create_alert(
         .await
         .map_err(ApiError::from)?;
     let _ = senders.alerts.send(EventType::added(alert.clone()));
+    db.notify_alert_changed(alert.id, ultros_db::wakeup::AlertWakeupKind::Add, &[])
+        .await;
 
     let endpoint_ids = db
         .list_endpoint_ids_for_alert(alert.id)
@@ -322,6 +326,8 @@ async fn create_list_threshold_alert_handler(
         .await
         .map_err(ApiError::from)?;
     let _ = senders.alerts.send(EventType::added(alert.clone()));
+    db.notify_alert_changed(alert.id, ultros_db::wakeup::AlertWakeupKind::Add, &[])
+        .await;
 
     Ok(Json(Alert {
         id: alert.id,
@@ -355,8 +361,15 @@ async fn create_retainer_undercut_alert_handler(
         .create_retainer_undercut_alert(owner, margin_percent, cooldown, &req.endpoint_ids)
         .await
         .map_err(ApiError::from)?;
+    let undercut_id = undercut.id;
     let _ = senders.alerts.send(EventType::added(alert.clone()));
     let _ = senders.retainer_undercut.send(EventType::added(undercut));
+    db.notify_alert_changed(
+        alert.id,
+        ultros_db::wakeup::AlertWakeupKind::Add,
+        &[undercut_id],
+    )
+    .await;
 
     Ok(Json(Alert {
         id: alert.id,
@@ -387,6 +400,8 @@ async fn create_retainer_sold_alert_handler(
         .map_err(ApiError::from)?;
     // The sale listener rebuilds its rules on every `alerts` bus event.
     let _ = senders.alerts.send(EventType::added(alert.clone()));
+    db.notify_alert_changed(alert.id, ultros_db::wakeup::AlertWakeupKind::Add, &[])
+        .await;
     Ok(Json(Alert {
         id: alert.id,
         trigger: AlertTrigger::RetainerSold {},
@@ -427,6 +442,8 @@ async fn create_list_update_alert_handler(
         .await
         .map_err(ApiError::from)?;
     let _ = senders.alerts.send(EventType::added(alert.clone()));
+    db.notify_alert_changed(alert.id, ultros_db::wakeup::AlertWakeupKind::Add, &[])
+        .await;
 
     Ok(Json(Alert {
         id: alert.id,
@@ -503,6 +520,8 @@ async fn create_market_trigger_alert_handler(
     };
     // The market-trigger listener rebuilds its rules on every `alerts` event.
     let _ = senders.alerts.send(EventType::added(alert.clone()));
+    db.notify_alert_changed(alert.id, ultros_db::wakeup::AlertWakeupKind::Add, &[])
+        .await;
     Ok(Json(Alert {
         id: alert.id,
         trigger: req.trigger.clone(),
@@ -752,6 +771,8 @@ pub(crate) async fn update_alert(
     }
     if let Some(alert) = db.get_alert(alert_id).await.map_err(ApiError::from)? {
         let _ = senders.alerts.send(EventType::updated(alert));
+        db.notify_alert_changed(alert_id, ultros_db::wakeup::AlertWakeupKind::Update, &[])
+            .await;
     }
     Ok(Json(()))
 }
@@ -771,6 +792,7 @@ pub(crate) async fn delete_alert(
         .get_retainer_alerts_for_related_alert_id(alert_id)
         .await
         .map_err(ApiError::from)?;
+    let undercut_ids: Vec<i32> = retainer_alerts.iter().map(|r| r.id).collect();
     db.delete_alert_owned_by(user.id as i64, alert_id)
         .await
         .map_err(ApiError::from)?;
@@ -780,6 +802,12 @@ pub(crate) async fn delete_alert(
             .retainer_undercut
             .send(EventType::removed(retainer_alert));
     }
+    db.notify_alert_changed(
+        alert_id,
+        ultros_db::wakeup::AlertWakeupKind::Remove,
+        &undercut_ids,
+    )
+    .await;
     Ok(Json(()))
 }
 
@@ -917,7 +945,7 @@ pub(crate) async fn resend_alert_event(
             {
                 Ok(()) => {
                     queued = true;
-                    crate::web::plugin::wake_notifications(owner);
+                    crate::web::plugin::wake_notifications(&db, owner).await;
                 }
                 Err(_) => last_err = Some("The game client is disconnected or unavailable".into()),
             }

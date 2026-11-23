@@ -114,6 +114,7 @@ pub enum RetainerAlertTx {
     Stop,
     UpdateMargin(i32),
     UpdateCooldown(i32),
+    RefreshRetainers,
 }
 
 /// Shared handles `RetainerAlertListener::create_listener` needs beyond its
@@ -675,6 +676,11 @@ impl RetainerAlertListener {
                         }
                         Some(RetainerAlertTx::UpdateCooldown(seconds)) => {
                             cooldown.seconds = seconds;
+                        }
+                        Some(RetainerAlertTx::RefreshRetainers) => {
+                            if let Err(error) = undercut_tracker.refresh_retainers().await {
+                                error!(?error, "could not refresh retainers for undercut alerts");
+                            }
                         }
                     },
                     listing = listings.recv() => {

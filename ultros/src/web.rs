@@ -170,11 +170,13 @@ async fn record_list_activity(
             message,
         )
         .await?;
+    let activity_id = activity.id;
     let activity = ListActivity::from(activity);
     send_list_event(
         senders,
         EventType::added(ListEventData::Activity(activity.clone())),
     );
+    db.notify_list_doc_changed(list_id, &[activity_id]).await;
     Ok(activity)
 }
 
@@ -268,24 +270,46 @@ async fn redirect_legacy_book_host(
     }
 }
 
+async fn publish_retainer_change(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    owner: i64,
+    retainer_id: i32,
+) {
+    let _ = senders
+        .retainers
+        .send(EventType::updated(ultros_api_types::user::OwnedRetainer {
+            id: 0,
+            retainer_id,
+            discord_id: owner,
+            character_id: None,
+            weight: None,
+        }));
+    db.notify_retainer_changed(owner).await;
+}
+
 async fn add_retainer(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     current_user: AuthDiscordUser,
     Path(retainer_id): Path<i32>,
 ) -> Result<Redirect, ApiError> {
     let _register_retainer = db
         .register_retainer(retainer_id, current_user.id, current_user.name)
         .await?;
+    publish_retainer_change(&db, &senders, current_user.id as i64, retainer_id).await;
     Ok(Redirect::to("/retainers/edit"))
 }
 
 async fn remove_owned_retainer(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     current_user: AuthDiscordUser,
     Path(retainer_id): Path<i32>,
 ) -> Result<Redirect, WebError> {
     db.remove_owned_retainer(current_user.id, retainer_id)
         .await?;
+    publish_retainer_change(&db, &senders, current_user.id as i64, retainer_id).await;
     Ok(Redirect::to("/retainers/edit"))
 }
 
@@ -1875,19 +1899,23 @@ pub(crate) async fn retainer_search(
 
 pub(crate) async fn claim_retainer(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<(), ApiError> {
     db.register_retainer(id, user.id, user.name).await?;
+    publish_retainer_change(&db, &senders, user.id as i64, id).await;
     Ok(())
 }
 
 pub(crate) async fn unclaim_retainer(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<(), ApiError> {
     db.remove_owned_retainer(user.id, id).await?;
+    publish_retainer_change(&db, &senders, user.id as i64, id).await;
     Ok(())
 }
 
@@ -3720,13 +3748,32 @@ async fn assign_retainer_character(
 async fn delete_user(
     user: AuthDiscordUser,
     State(cache): State<AuthUserCache>,
+    State(config): State<oauth::DiscordAuthConfig>,
     State(db): State<UltrosDb>,
     cookie_jar: PrivateCookieJar,
 ) -> Result<(PrivateCookieJar, Json<()>), ApiError> {
     let id = user.id;
-    db.delete_discord_user(id as i64).await?;
+    let current_token = cookie_jar
+        .get(oauth::DISCORD_AUTH_COOKIE)
+        .map(|cookie| cookie.value().to_string());
+    let token_hash = current_token
+        .as_deref()
+        .map(ultros_db::auth_revocation::hash_auth_token);
+    db.delete_discord_user_and_revoke(id as i64, token_hash.as_ref())
+        .await?;
     cache.remove_user(id).await;
-    let cookie_jar = cookie_jar.remove(oauth::discord_auth_removal_cookie());
+    if let Some(hash) = token_hash.as_ref() {
+        cache.remove_token_hash(hash).await;
+    }
+    if let Some(token_value) = current_token {
+        oauth::revoke_discord_token_best_effort(&config, token_value).await;
+        if let Some(hash) = token_hash.as_ref() {
+            cache.remove_token_hash(hash).await;
+        }
+    }
+    let cookie_jar = cookie_jar
+        .remove(oauth::discord_auth_removal_cookie())
+        .remove(oauth::discord_auth_iat_removal_cookie());
     Ok((cookie_jar, Json(())))
 }
 

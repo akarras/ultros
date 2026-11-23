@@ -355,7 +355,7 @@ pub(crate) async fn delete_endpoint(
         db.delete_game_endpoint_for_browser(user.id as i64, id)
             .await
             .map_err(|e| ApiError::from(anyhow::Error::from(e)))?;
-        crate::web::plugin::wake_notifications(user.id as i64);
+        crate::web::plugin::wake_notifications(&db, user.id as i64).await;
     } else {
         db.delete_endpoint(user.id as i64, id)
             .await
@@ -410,7 +410,7 @@ pub(crate) async fn test_endpoint(
         )
         .await
         .map_err(|_| ApiError::BadRequest("the game client is disconnected or unavailable"))?;
-        crate::web::plugin::wake_notifications(user.id as i64);
+        crate::web::plugin::wake_notifications(&db, user.id as i64).await;
         return Ok(Json(ResendResult {
             delivered: false,
             queued: true,

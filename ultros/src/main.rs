@@ -2,10 +2,12 @@
 #![recursion_limit = "256"]
 mod fd_limit;
 pub mod leptos;
+mod pkg_archive;
 #[cfg(feature = "profiling")]
 pub mod profiling;
 mod ssr_drain;
 pub(crate) mod utils;
+mod wakeup_bridge;
 mod web;
 mod web_metrics;
 
@@ -825,6 +827,24 @@ async fn main() -> Result<()> {
         }
     }
 
+    let user_cache = AuthUserCache::new();
+    // Subscribe to Postgres LISTEN/NOTIFY wake-up channels BEFORE AlertManager
+    // or WebState perform initial reads, so changes committed during startup
+    // cannot slip into a gap between initial state and live notifications.
+    let wakeup_bridge_handle = if let Ok(database_url) = std::env::var("DATABASE_URL") {
+        let bridge = wakeup_bridge::PgWakeupBridge::connect(
+            database_url,
+            db.clone(),
+            user_cache.clone(),
+            senders.clone(),
+            token.clone(),
+        )
+        .await;
+        Some(bridge.spawn())
+    } else {
+        None
+    };
+
     crate::alerts::outbox::start(db.clone(), senders.notifications.clone(), token.clone());
     tokio::spawn(crate::alerts::alert_manager::AlertManager::start_manager(
         db.clone(),
@@ -846,6 +866,7 @@ async fn main() -> Result<()> {
             world_helper: world_helper.clone(),
             notifications: senders.notifications.clone(),
             ch_client: ch_client.clone(),
+            wakeup_resync: receivers.wakeup_resync.resubscribe(),
         },
     ));
     tokio::spawn(start_discord(
@@ -894,7 +915,7 @@ async fn main() -> Result<()> {
             format!("{}/redirect", hostname.trim_end_matches('/')),
             HashSet::from_iter([OAuthScope::Identify, OAuthScope::Guilds]),
         ),
-        user_cache: AuthUserCache::new(),
+        user_cache,
         event_receivers: receivers,
         event_senders: senders,
         world_cache,
@@ -959,6 +980,11 @@ async fn main() -> Result<()> {
                 .await
             {
                 error!(?error, "Listing snapshot worker shutdown failed");
+            }
+            if let Some(handle) = wakeup_bridge_handle
+                && let Err(error) = stages.run("pg_wakeup_bridge", handle).await
+            {
+                error!(?error, "Postgres wakeup bridge shutdown failed");
             }
         };
         tokio::join!(drain_analytics, drain_web, drain_snapshots);
