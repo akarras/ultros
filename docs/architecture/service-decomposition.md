@@ -173,9 +173,9 @@ Once Phase 0 and the 2-role split are live, apply self-built Rust optimizations 
   * Upgrade `HomeFeedCache` to stale-while-revalidate and replace `market_pulse`'s Postgres `COUNT(*)` (fixes 9.75s p95 tail).
   * Add `Arc<EncodedBody>` pre-compressed caching for bulk market endpoints and measure/tune `POSTGRES_MAX_CONNECTIONS`.
 * **Phase 1B — Two-Role Split (`ULTROS_ROLES=web` ×N vs `ULTROS_ROLES=ingest,market,bot` ×1)**
-  * Introduce the typed `MarketClient` trait (in-process + coarse HTTP/2).
-  * Move `Migrator::up()` behind a single-owner advisory lock; migrate `plugin-keys.json` to env vars; retain N-1 `/pkg/<git-hash>/` assets across rolling deploys.
-  * Wire Postgres `LISTEN/NOTIFY` wake-ups + durable logout revocation for multi-replica `ultros-web`.
-  * Deploy `ultros-web-a` + `ultros-web-b` + `ultros-market` behind the existing reverse proxy.
+  * **1B-1 (shipped):** Single-owner Postgres migration lock + `ULTROS_SKIP_MIGRATIONS`, durable multi-replica auth revocation + `discord_auth_iat`, dedicated `PgWakeupBridge` (`LISTEN/NOTIFY`), and N-1 `/pkg/<git-hash>/` archive retention.
+  * **1B-2 (shipped):** Typed `MarketClient` trait (`InProcessMarketClient` + HTTP/2 `HttpMarketClient`), `ULTROS_ROLES` startup gating (`all`, `web`, `ingest,market,bot`), internal market server (`market_server` with `/healthz` and optional `ULTROS_MARKET_TOKEN` bearer auth on `/internal/market/*`), and [docker-compose.split.yml](../../docker-compose.split.yml) with `max_connections=150` pool budgeting.
+  * **Operational note on Discord-bot admin routes:** In `ULTROS_ROLES=web`, browser CRUD, OAuth, lists, notifications, alerts, `DiscordDm`/`WebPush`/`InGame` endpoints, and real-time wake-ups run on `ultros-web`, while background alert delivery, Discord slash commands, and periodic Discord group reconciliation run on `ultros-market` (`bot`). Admin endpoints that require a live Discord bot context (`DiscordChannel` endpoint validation, guild-backed group creation, manual guild role sync/lookup) return `503 Service Unavailable` on `web`-only replicas until a dedicated bot REST/reconcile proxy is added in Phase 2.
+  * **Deployment cutover:** Deploy `ultros-web-a` + `ultros-web-b` + `ultros-market` from [docker-compose.split.yml](../../docker-compose.split.yml) behind the existing reverse proxy (using `/healthz` healthchecks).
 * **Phase 2 — Profile-Driven Scale-Out (Only If Telemetry Demands It)**
   * Optional 3rd role (`ULTROS_ROLES=bot`), canonical URL SSR edge caching (with full edge/origin parity + N-1 `/pkg/`), or `mmap` generation snapshots / append-only segment log if profiling shows HTTP/2 market-read overhead.

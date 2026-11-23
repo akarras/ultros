@@ -2,9 +2,12 @@
 #![recursion_limit = "256"]
 mod fd_limit;
 pub mod leptos;
+mod market_client;
+mod market_server;
 mod pkg_archive;
 #[cfg(feature = "profiling")]
 pub mod profiling;
+mod roles;
 mod ssr_drain;
 pub(crate) mod utils;
 mod wakeup_bridge;
@@ -76,11 +79,15 @@ pub(crate) const UNIVERSALIS_USER_AGENT: &str = concat!(
 );
 
 #[derive(Debug, serde::Deserialize, Clone)]
-struct Config {
+struct WebConfig {
     hostname: String,
     discord_client_id: String,
     discord_client_secret: String,
     key: String,
+}
+
+#[derive(Debug, serde::Deserialize, Clone)]
+struct BotConfig {
     discord_token: String,
 }
 
@@ -389,6 +396,32 @@ async fn startup_world_data(
     }
 }
 
+/// Load `WorldCache` from Postgres for a stateless `web`-only replica without
+/// calling Universalis on startup. If a cold deploy races `ultros-market`
+/// priming worlds, retry briefly before failing.
+async fn load_persisted_world_cache(
+    db: &UltrosDb,
+    token: &CancellationToken,
+) -> Result<Arc<WorldCache>> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let cache = Arc::new(WorldCache::new(db).await);
+        if cache.get_all_worlds().next().is_some() {
+            return Ok(cache);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!(
+                "No worlds available in Postgres after waiting 30s; ensure ultros-market has primed world metadata"
+            );
+        }
+        warn!("No worlds in Postgres yet; waiting for ultros-market to prime world metadata");
+        tokio::select! {
+            _ = token.cancelled() => anyhow::bail!("shutdown requested while waiting for world metadata"),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {}
+        }
+    }
+}
+
 async fn init_db(db: &UltrosDb, world_data: Option<(WorldsView, DataCentersView)>) -> Result<()> {
     info!("db starting");
 
@@ -537,9 +570,41 @@ fn attach_panic_location_to_sentry() {
     }));
 }
 
+/// Fast CLI healthcheck mode (`ultros --healthcheck [http://127.0.0.1:8080/healthz]`)
+/// so minimal runtime images (`debian:bookworm-slim`, no `curl`) can probe
+/// `/healthz` directly from Docker Compose `healthcheck:`.
+async fn run_healthcheck(url: &str) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .timeout(std::time::Duration::from_secs(3))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    let resp = client.get(url).send().await?;
+    anyhow::ensure!(
+        resp.status().is_success(),
+        "healthcheck {url} returned {}",
+        resp.status()
+    );
+    Ok(())
+}
+
 // Bolt: Switched to multi-threaded runtime for better performance on multi-core systems
 #[tokio::main]
 async fn main() -> Result<()> {
+    let mut args = std::env::args().skip(1);
+    if let Some(arg) = args.next()
+        && arg == "--healthcheck"
+    {
+        let default_port = std::env::var("PORT")
+            .ok()
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(8080);
+        let url = args
+            .next()
+            .unwrap_or_else(|| format!("http://127.0.0.1:{default_port}/healthz"));
+        return run_healthcheck(&url).await;
+    }
+
     // Load environment variables from `.env` file, if present
     dotenv().ok();
 
@@ -654,148 +719,206 @@ async fn main() -> Result<()> {
     let prometheus_handle = web_metrics::setup_metrics_recorder();
     #[cfg(feature = "profiling")]
     tokio::spawn(async move { start_profiling_server().await });
-    info!("Ultros starting!");
+    let roles = roles::Roles::from_env()?;
+    let remote_market_url = roles.validate(std::env::var(roles::MARKET_URL_ENV).ok().as_deref())?;
+    let market_token = roles::market_token_from_env();
+    // Validate role-specific env config upfront so misconfigured containers
+    // fail fast before opening pools or sockets.
+    let web_config = if roles.web {
+        Some(envy::from_env::<WebConfig>()?)
+    } else {
+        None
+    };
+    let bot_config = if roles.bot {
+        Some(envy::from_env::<BotConfig>()?)
+    } else {
+        None
+    };
+
+    info!(roles = ?roles.active_names(), "Ultros starting!");
     info!("Connecting DB");
     let db = UltrosDb::connect().await?;
-    info!("Fetching datacenters/worlds from universalis");
-    let universalis_client = UniversalisClient::new(UNIVERSALIS_USER_AGENT);
-    let startup_client = universalis_client.clone();
-    let init = db.clone();
     let (senders, receivers) = create_event_busses();
     let list_sync = lists::ListSync::new(db.clone(), senders.clone());
-    let listings_sender = senders.listings.clone();
-    let history_sender = senders.history.clone();
     let token = CancellationToken::new();
-    // Migration retries in the writers/outbox so an outage at startup does not
-    // disable analytics for the lifetime of this process. Keep their
-    // cancellation separate so producers can finish sending before the final
-    // flush. `sales` drains durably from Postgres `clickhouse_sale_outbox`;
-    // `listing_events`, `floor_changes`, and `sale_receipts` remain in-memory
-    // streams (receipts cannot be recovered from Postgres). Each migration is
-    // idempotent.
     let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
-    let listing_snapshot_worker = tokio::spawn(ultros_clickhouse::listing_snapshots::run(
-        ch_client.clone(),
-        token.clone(),
-    ));
-    let sale_outbox = ultros_clickhouse::sale_outbox::SaleOutboxDrainer::spawn_recovering(
-        ch_client.clone(),
-        db.clone(),
-        CancellationToken::new(),
-    );
-    let listing_events_writer = ultros_clickhouse::writer::Writer::<
-        ultros_clickhouse::rows::ListingEventRow,
-    >::spawn_recovering(ch_client.clone(), CancellationToken::new());
-    let floor_writer = ultros_clickhouse::writer::Writer::<
-        ultros_clickhouse::rows::FloorChangeRow,
-    >::spawn_recovering(ch_client.clone(), CancellationToken::new());
-    let sale_receipts = ultros_clickhouse::writer::Writer::<
-        ultros_clickhouse::rows::SaleReceiptRow,
-    >::spawn_recovering(ch_client.clone(), CancellationToken::new());
-    let socket_sale_receipts = sale_receipts.clone();
-    let socket_listing_events = listing_events_writer.clone();
-    let socket_token = token.child_token();
-    let listener_token = socket_token.clone();
-    let websocket_disabled = universalis_websocket_disabled();
-    #[cfg(feature = "test-auth")]
-    let websocket_disabled = {
-        let isolated = test_market_isolation::enabled();
-        if isolated {
-            warn!(
-                "test-auth market fixture isolation enabled: upstream market writers are disabled"
-            );
-        }
-        websocket_disabled || isolated
-    };
-    // Populate worlds before constructing the immutable world cache. Otherwise a
-    // first boot can run reconciliation against an empty cache indefinitely.
-    let world_data = startup_world_data(
-        startup_client.get_worlds(),
-        startup_client.get_data_centers(),
-    )
-    .await;
-    info!("Initializing database with worlds/datacenters");
-    init_db(&init, world_data)
-        .await
-        .expect("Unable to populate worlds datacenters- is universalis down?");
-    let socket_worker = tokio::spawn(async move {
-        if websocket_disabled {
-            // World/datacenter data above is still primed — the app needs it to
-            // serve anything at all — we just never open the market feed.
-            warn!("skipping Universalis websocket ingest: disabled by configuration");
-            return;
-        }
-        info!("starting websocket");
-        run_socket_listener(
-            init,
-            listings_sender,
-            history_sender,
-            socket_listing_events,
-            socket_sale_receipts,
-            listener_token,
+
+    let universalis_client =
+        (roles.ingest || roles.market).then(|| UniversalisClient::new(UNIVERSALIS_USER_AGENT));
+
+    // ClickHouse writers & schedulers belong to `ingest` (and `listing_events`
+    // / `floor_changes` also serve `market` for analyzer floor tracking and
+    // manual market refreshes).
+    let listing_snapshot_worker = roles.ingest.then(|| {
+        tokio::spawn(ultros_clickhouse::listing_snapshots::run(
+            ch_client.clone(),
+            token.clone(),
+        ))
+    });
+    let sale_outbox = roles.ingest.then(|| {
+        ultros_clickhouse::sale_outbox::SaleOutboxDrainer::spawn_recovering(
+            ch_client.clone(),
+            db.clone(),
+            CancellationToken::new(),
+        )
+    });
+    let listing_events_writer = (roles.ingest || roles.market).then(|| {
+        ultros_clickhouse::writer::Writer::<ultros_clickhouse::rows::ListingEventRow>::spawn_recovering(
+            ch_client.clone(),
+            CancellationToken::new(),
+        )
+    });
+    let floor_writer = (roles.ingest || roles.market).then(|| {
+        ultros_clickhouse::writer::Writer::<ultros_clickhouse::rows::FloorChangeRow>::spawn_recovering(
+            ch_client.clone(),
+            CancellationToken::new(),
+        )
+    });
+    let sale_receipts = roles.ingest.then(|| {
+        ultros_clickhouse::writer::Writer::<ultros_clickhouse::rows::SaleReceiptRow>::spawn_recovering(
+            ch_client.clone(),
+            CancellationToken::new(),
+        )
+    });
+
+    let world_cache = if roles.ingest || roles.market {
+        info!("Fetching datacenters/worlds from universalis");
+        let startup_client = universalis_client
+            .as_ref()
+            .expect("universalis client initialized for ingest/market")
+            .clone();
+        // Populate worlds before constructing the immutable world cache. Otherwise a
+        // first boot can run reconciliation against an empty cache indefinitely.
+        let world_data = startup_world_data(
+            startup_client.get_worlds(),
+            startup_client.get_data_centers(),
         )
         .await;
-    });
-    let world_cache = Arc::new(WorldCache::new(&db).await);
-    anyhow::ensure!(
-        world_cache.get_all_worlds().next().is_some(),
-        "No worlds available after initialization; cannot start market reconciliation"
-    );
+        info!("Initializing database with worlds/datacenters");
+        init_db(&db, world_data)
+            .await
+            .expect("Unable to populate worlds datacenters- is universalis down?");
+        let world_cache = Arc::new(WorldCache::new(&db).await);
+        anyhow::ensure!(
+            world_cache.get_all_worlds().next().is_some(),
+            "No worlds available after initialization; cannot start market reconciliation"
+        );
+        world_cache
+    } else {
+        info!("Loading persisted worlds/datacenters from Postgres (stateless web role)");
+        load_persisted_world_cache(&db, &token).await?
+    };
     let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
 
-    // A Postgres advisory lock elects one web replica to refresh rollups.
-    spawn_rollup_scheduler(
-        ch_client.clone(),
-        db.clone(),
-        token.clone(),
-        sale_outbox.clone(),
-    );
+    let socket_token = token.child_token();
+    let socket_worker = if roles.ingest {
+        let websocket_disabled = universalis_websocket_disabled();
+        #[cfg(feature = "test-auth")]
+        let websocket_disabled = {
+            let isolated = test_market_isolation::enabled();
+            if isolated {
+                warn!(
+                    "test-auth market fixture isolation enabled: upstream market writers are disabled"
+                );
+            }
+            websocket_disabled || isolated
+        };
+        let init = db.clone();
+        let listings_sender = senders.listings.clone();
+        let history_sender = senders.history.clone();
+        let socket_listing_events = listing_events_writer
+            .as_ref()
+            .expect("listing_events writer initialized for ingest")
+            .clone();
+        let socket_sale_receipts = sale_receipts
+            .as_ref()
+            .expect("sale_receipts writer initialized for ingest")
+            .clone();
+        let listener_token = socket_token.clone();
+        Some(tokio::spawn(async move {
+            if websocket_disabled {
+                // World/datacenter data above is still primed — the app needs it to
+                // serve anything at all — we just never open the market feed.
+                warn!("skipping Universalis websocket ingest: disabled by configuration");
+                return;
+            }
+            info!("starting websocket");
+            run_socket_listener(
+                init,
+                listings_sender,
+                history_sender,
+                socket_listing_events,
+                socket_sale_receipts,
+                listener_token,
+            )
+            .await;
+        }))
+    } else {
+        None
+    };
 
-    let (analyzer_service, analyzer_shutdown) = AnalyzerService::start_analyzer(
-        db.clone(),
-        receivers.clone(),
-        world_cache.clone(),
-        floor_writer.clone(),
-        ch_client.clone(),
-        token.clone(),
-    )
-    .await;
-    let update_service = Arc::new(UpdateService {
-        db: db.clone(),
-        world_cache: world_cache.clone(),
-        universalis: universalis_client.clone(),
-        listings: senders.listings.clone(),
-        sales: senders.history.clone(),
-        listing_events: listing_events_writer.clone(),
-        full_sweep_cooldowns: Default::default(),
-        uncovered_worlds: Default::default(),
-        sweep_lock: Default::default(),
-        shutdown: token.clone(),
-    });
-    UpdateService::start_service(update_service.clone(), token.clone());
-    // Full-board coverage is independent of the 200-item recency window and
-    // fresh sales markers. Resume first, then cover any startup gap.
-    ultros_discord::spawn_market_reconciliation(update_service.clone(), token.clone());
-    // Exports `ultros_world_ingest_staleness_seconds`. Every silent ingest
-    // failure looks like a healthy process serving frozen numbers, so this gauge
-    // is the only thing that makes one visible from outside.
-    ingest_health::spawn_staleness_gauge(db.clone(), world_cache.clone(), token.clone());
-    // Discord group membership. Gateway events keep it fresh minute to minute;
-    // this is the periodic pass that repairs whatever the gateway missed while
-    // the process was down or a shard was reconnecting. It waits for the bot to
-    // come up on its own, so it is spawned here rather than inside the Discord
-    // setup hook — a database it can reach is all it needs to start.
-    group_sync::spawn_reconcile_scheduler(db.clone(), token.clone());
-    // begin listening to universalis events
-    // load configuration from environment
-    let config = envy::from_env::<Config>()?;
-    let Config {
-        hostname,
-        discord_client_id,
-        discord_client_secret,
-        key,
-        discord_token,
-    } = config;
+    if roles.ingest {
+        // A Postgres advisory lock elects one worker to refresh rollups.
+        spawn_rollup_scheduler(
+            ch_client.clone(),
+            db.clone(),
+            token.clone(),
+            sale_outbox
+                .as_ref()
+                .expect("sale_outbox initialized for ingest")
+                .clone(),
+        );
+    }
+
+    let (analyzer_service, analyzer_shutdown) = if roles.market {
+        let (service, shutdown) = AnalyzerService::start_analyzer(
+            db.clone(),
+            receivers.clone(),
+            world_cache.clone(),
+            floor_writer
+                .as_ref()
+                .expect("floor_writer initialized for market")
+                .clone(),
+            ch_client.clone(),
+            token.clone(),
+        )
+        .await;
+        (Some(service), Some(shutdown))
+    } else {
+        (None, None)
+    };
+
+    let update_service = if roles.ingest {
+        let service = Arc::new(UpdateService {
+            db: db.clone(),
+            world_cache: world_cache.clone(),
+            universalis: universalis_client
+                .as_ref()
+                .expect("universalis client initialized for ingest")
+                .clone(),
+            listings: senders.listings.clone(),
+            sales: senders.history.clone(),
+            listing_events: listing_events_writer
+                .as_ref()
+                .expect("listing_events writer initialized for ingest")
+                .clone(),
+            full_sweep_cooldowns: Default::default(),
+            uncovered_worlds: Default::default(),
+            sweep_lock: Default::default(),
+            shutdown: token.clone(),
+        });
+        UpdateService::start_service(service.clone(), token.clone());
+        // Full-board coverage is independent of the 200-item recency window and
+        // fresh sales markers. Resume first, then cover any startup gap.
+        ultros_discord::spawn_market_reconciliation(service.clone(), token.clone());
+        // Exports `ultros_world_ingest_staleness_seconds`. Every silent ingest
+        // failure looks like a healthy process serving frozen numbers, so this gauge
+        // is the only thing that makes one visible from outside.
+        ingest_health::spawn_staleness_gauge(db.clone(), world_cache.clone(), token.clone());
+        Some(service)
+    } else {
+        None
+    };
 
     // Web Push (VAPID) bootstrap: env vars are optional — push is feature-gated
     // at runtime. Keys must be generated offline (see docs/push.md); rotating
@@ -831,7 +954,9 @@ async fn main() -> Result<()> {
     // Subscribe to Postgres LISTEN/NOTIFY wake-up channels BEFORE AlertManager
     // or WebState perform initial reads, so changes committed during startup
     // cannot slip into a gap between initial state and live notifications.
-    let wakeup_bridge_handle = if let Ok(database_url) = std::env::var("DATABASE_URL") {
+    let wakeup_bridge_handle = if (roles.web || roles.bot)
+        && let Ok(database_url) = std::env::var("DATABASE_URL")
+    {
         let bridge = wakeup_bridge::PgWakeupBridge::connect(
             database_url,
             db.clone(),
@@ -845,104 +970,166 @@ async fn main() -> Result<()> {
         None
     };
 
-    crate::alerts::outbox::start(db.clone(), senders.notifications.clone(), token.clone());
-    tokio::spawn(crate::alerts::alert_manager::AlertManager::start_manager(
-        db.clone(),
-        (
-            receivers.retainers.resubscribe(),
-            receivers.listings.resubscribe(),
-        ),
-        (
-            receivers.alerts.resubscribe(),
-            receivers.retainer_undercut.resubscribe(),
-        ),
-        (
-            receivers.lists.resubscribe(),
-            receivers.history.resubscribe(),
-        ),
-        crate::alerts::alert_manager::AlertManagerServices {
-            token: token.clone(),
-            world_cache: world_cache.clone(),
-            world_helper: world_helper.clone(),
-            notifications: senders.notifications.clone(),
-            ch_client: ch_client.clone(),
-            wakeup_resync: receivers.wakeup_resync.resubscribe(),
-        },
-    ));
-    tokio::spawn(start_discord(
-        DiscordServices {
-            db: db.clone(),
-            list_sync: list_sync.clone(),
-            event_senders: senders.clone(),
-            analyzer_service: analyzer_service.clone(),
-            world_cache: world_cache.clone(),
-            world_helper: world_helper.clone(),
-            update_service,
-            ch_client: ch_client.clone(),
-            price_history_renderer: Arc::new(|ch, cache, worlds, item, world| {
-                Box::pin(async move {
-                    web::item_card::generate_price_history_chart(ch, cache, worlds, item, world)
-                        .await
-                        .map_err(|error| Box::new(error) as ultros_discord::Error)
-                })
-            }),
-        },
-        discord_token,
-        token.clone(),
-    ));
+    if roles.bot {
+        // Discord group membership. Gateway events keep it fresh minute to minute;
+        // this is the periodic pass that repairs whatever the gateway missed while
+        // the process was down or a shard was reconnecting.
+        group_sync::spawn_reconcile_scheduler(db.clone(), token.clone());
+        crate::alerts::outbox::start(db.clone(), senders.notifications.clone(), token.clone());
+        tokio::spawn(crate::alerts::alert_manager::AlertManager::start_manager(
+            db.clone(),
+            (
+                receivers.retainers.resubscribe(),
+                receivers.listings.resubscribe(),
+            ),
+            (
+                receivers.alerts.resubscribe(),
+                receivers.retainer_undercut.resubscribe(),
+            ),
+            (
+                receivers.lists.resubscribe(),
+                receivers.history.resubscribe(),
+            ),
+            crate::alerts::alert_manager::AlertManagerServices {
+                token: token.clone(),
+                world_cache: world_cache.clone(),
+                world_helper: world_helper.clone(),
+                notifications: senders.notifications.clone(),
+                ch_client: ch_client.clone(),
+                wakeup_resync: receivers.wakeup_resync.resubscribe(),
+            },
+        ));
+        let BotConfig { discord_token } = bot_config.expect("bot config validated");
+        tokio::spawn(start_discord(
+            DiscordServices {
+                db: db.clone(),
+                list_sync: list_sync.clone(),
+                event_senders: senders.clone(),
+                analyzer_service: analyzer_service
+                    .as_ref()
+                    .expect("analyzer initialized for bot")
+                    .clone(),
+                world_cache: world_cache.clone(),
+                world_helper: world_helper.clone(),
+                update_service: update_service
+                    .as_ref()
+                    .expect("update_service initialized for bot")
+                    .clone(),
+                ch_client: ch_client.clone(),
+                price_history_renderer: Arc::new(|ch, cache, worlds, item, world| {
+                    Box::pin(async move {
+                        web::item_card::generate_price_history_chart(ch, cache, worlds, item, world)
+                            .await
+                            .map_err(|error| Box::new(error) as ultros_discord::Error)
+                    })
+                }),
+            },
+            discord_token,
+            token.clone(),
+        ));
+    }
 
-    let character_claim = CharacterClaimService {
-        client: reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .unwrap(),
-        db: db.clone(),
-        world_cache: world_cache.clone(),
+    let price_series_cache = crate::web::price_series_cache::PriceSeriesCache::default();
+    let market_client: Option<Arc<dyn market_client::MarketClient>> = if roles.market {
+        Some(Arc::new(market_client::InProcessMarketClient::new(
+            market_client::MarketServices {
+                db: db.clone(),
+                analyzer_service: analyzer_service.expect("analyzer initialized for market"),
+                world_cache: world_cache.clone(),
+                world_helper: world_helper.clone(),
+                ch_client: ch_client.clone(),
+                universalis: universalis_client.expect("universalis client initialized for market"),
+                listing_events: listing_events_writer
+                    .as_ref()
+                    .expect("listing_events writer initialized for market")
+                    .clone(),
+                event_senders: senders.clone(),
+                price_series_cache: price_series_cache.clone(),
+                home_feed_cache: crate::web::home_feed_cache::new_home_feed_cache(),
+                sale_stats_cache: Default::default(),
+                listing_stats_cache: Default::default(),
+                cheapest_cache: crate::web::api::new_cheapest_cache(),
+                refresh_jobs: Default::default(),
+            },
+        )))
+    } else if let Some(market_url) = remote_market_url {
+        info!(%market_url, "configuring HTTP/2 MarketClient");
+        Some(Arc::new(market_client::HttpMarketClient::new(
+            market_url,
+            market_token.as_deref(),
+        )?))
+    } else {
+        None
     };
-    let search_service = SearchService::new()?;
-    let conf = get_configuration(Some("Cargo.toml")).unwrap();
-    let mut leptos_options = conf.leptos_options;
-    let git_hash = env!("GIT_HASH");
-    leptos_options.site_pkg_dir = Arc::from(["pkg/", git_hash].concat());
-    let web_state = WebState {
-        analyzer_service,
-        db,
-        key: Key::from(key.as_bytes()),
-        character_claim,
-        oauth_config: DiscordAuthConfig::new(
+
+    let mut http_task = if roles.web {
+        let WebConfig {
+            hostname,
             discord_client_id,
             discord_client_secret,
-            format!("{}/redirect", hostname.trim_end_matches('/')),
-            HashSet::from_iter([OAuthScope::Identify, OAuthScope::Guilds]),
-        ),
-        user_cache,
-        event_receivers: receivers,
-        event_senders: senders,
-        world_cache,
-        world_helper,
-        leptos_options,
-        search_service,
-        token: token.clone(),
-        ch_client,
-        listing_events: listing_events_writer.clone(),
-        universalis: universalis_client,
-        price_series_cache: Default::default(),
-        home_feed_cache: crate::web::home_feed_cache::new_home_feed_cache(),
-        sale_stats_cache: Default::default(),
-        listing_stats_cache: Default::default(),
-        cheapest_cache: crate::web::api::new_cheapest_cache(),
-        refresh_jobs: Default::default(),
-        list_sync,
+            key,
+        } = web_config.expect("web config validated");
+        let character_claim = CharacterClaimService {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap(),
+            db: db.clone(),
+            world_cache: world_cache.clone(),
+        };
+        let search_service = SearchService::new()?;
+        let conf = get_configuration(Some("Cargo.toml")).unwrap();
+        let mut leptos_options = conf.leptos_options;
+        let git_hash = env!("GIT_HASH");
+        leptos_options.site_pkg_dir = Arc::from(["pkg/", git_hash].concat());
+        let web_state = WebState {
+            db,
+            key: Key::from(key.as_bytes()),
+            character_claim,
+            oauth_config: DiscordAuthConfig::new(
+                discord_client_id,
+                discord_client_secret,
+                format!("{}/redirect", hostname.trim_end_matches('/')),
+                HashSet::from_iter([OAuthScope::Identify, OAuthScope::Guilds]),
+            ),
+            user_cache,
+            event_receivers: receivers,
+            event_senders: senders,
+            world_cache,
+            world_helper,
+            market_client: market_client.expect("market_client initialized for web"),
+            roles,
+            leptos_options,
+            search_service,
+            token: token.clone(),
+            ch_client,
+            price_series_cache,
+            list_sync,
+        };
+        tokio::spawn(web::start_web(web_state, prometheus_handle))
+    } else if roles.runs_market_only_http() {
+        tokio::spawn(market_server::start_market_server(
+            market_client.expect("market_client initialized for market"),
+            roles,
+            market_token,
+            prometheus_handle,
+            token.clone(),
+        ))
+    } else {
+        tokio::spawn(web_metrics::start_metrics_server(
+            prometheus_handle,
+            token.clone(),
+        ))
     };
-    let mut web_task = tokio::spawn(web::start_web(web_state, prometheus_handle));
-    let web_finished = tokio::select! {
+
+    let http_finished = tokio::select! {
         _ = shutdown_signal() => {
             info!("shutdown signal received");
             false
         }
-        result = &mut web_task => {
+        result = &mut http_task => {
             if let Err(e) = result {
-                error!("Web task failed: {e:?}");
+                error!("HTTP server task failed: {e:?}");
             }
             true
         }
@@ -953,31 +1140,43 @@ async fn main() -> Result<()> {
         // Accepted websocket writes must finish while the analyzer and mirror
         // consumers are still running, including receipt-only analytics that
         // cannot be reconstructed from Postgres after restart.
-        if let Err(error) = stages.run("websocket_ingest", socket_worker).await {
+        if let Some(worker) = socket_worker
+            && let Err(error) = stages.run("websocket_ingest", worker).await
+        {
             error!(?error, "Websocket ingest shutdown failed");
         }
         token.cancel();
         let drain_analytics = async {
-            if let Err(e) = stages.run("analyzer", analyzer_shutdown).await {
+            if let Some(shutdown) = analyzer_shutdown
+                && let Err(e) = stages.run("analyzer", shutdown).await
+            {
                 error!("Analyzer shutdown failed: {e:?}");
             }
             // Independent tables, independent tasks. Draining them in sequence
             // spent two drain budgets back to back against the one 30 second
             // budget below (GlitchTip #7310).
-            tokio::join!(
-                stages.run("clickhouse_sale_receipts", sale_receipts.shutdown()),
-                stages.run("clickhouse_floor", floor_writer.shutdown())
-            );
+            let drain_receipts = async {
+                if let Some(writer) = sale_receipts {
+                    stages
+                        .run("clickhouse_sale_receipts", writer.shutdown())
+                        .await;
+                }
+            };
+            let drain_floor = async {
+                if let Some(writer) = floor_writer {
+                    stages.run("clickhouse_floor", writer.shutdown()).await;
+                }
+            };
+            tokio::join!(drain_receipts, drain_floor);
         };
-        let drain_web = async {
-            if !web_finished && let Err(e) = stages.run("web", web_task).await {
-                error!("Web shutdown failed: {e:?}");
+        let drain_http = async {
+            if !http_finished && let Err(e) = stages.run("web", http_task).await {
+                error!("HTTP server shutdown failed: {e:?}");
             }
         };
         let drain_snapshots = async {
-            if let Err(error) = stages
-                .run("listing_snapshots", listing_snapshot_worker)
-                .await
+            if let Some(worker) = listing_snapshot_worker
+                && let Err(error) = stages.run("listing_snapshots", worker).await
             {
                 error!(?error, "Listing snapshot worker shutdown failed");
             }
@@ -987,19 +1186,27 @@ async fn main() -> Result<()> {
                 error!(?error, "Postgres wakeup bridge shutdown failed");
             }
         };
-        tokio::join!(drain_analytics, drain_web, drain_snapshots);
+        tokio::join!(drain_analytics, drain_http, drain_snapshots);
         // Every listing_events and sale producer (socket task, update service,
         // web) has been cancelled or drained by now. Run the durable
         // sale_outbox shutdown concurrently with listing_events (and under its
         // own 8s ceiling) so Postgres latency can never starve the non-durable
         // listing_events flush.
-        tokio::join!(
-            stages.run(
-                "clickhouse_listing_events",
-                listing_events_writer.shutdown(),
-            ),
-            stages.run("clickhouse_sale_outbox", sale_outbox.shutdown()),
-        );
+        let drain_listing_events = async {
+            if let Some(writer) = listing_events_writer {
+                stages
+                    .run("clickhouse_listing_events", writer.shutdown())
+                    .await;
+            }
+        };
+        let drain_sale_outbox = async {
+            if let Some(outbox) = sale_outbox {
+                stages
+                    .run("clickhouse_sale_outbox", outbox.shutdown())
+                    .await;
+            }
+        };
+        tokio::join!(drain_listing_events, drain_sale_outbox);
     };
     if tokio::time::timeout(std::time::Duration::from_secs(30), shutdown)
         .await

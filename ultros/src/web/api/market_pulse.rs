@@ -13,28 +13,31 @@ use axum::{
     body::Bytes,
     extract::{Path, State},
     http::HeaderMap,
-    response::IntoResponse,
+    response::Response,
 };
 use ultros_api_types::market_pulse::MarketPulseDto;
 use ultros_clickhouse::{ClickHouseClient, queries::ActiveListingCount};
 use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
-use crate::web::{
-    cached_encoded_json,
-    error::{SharedWebError, WebError},
-    home_feed_cache::HomeFeedCache,
-    json_cache::SwrLoad,
+use crate::{
+    market_client::MarketClient,
+    web::{
+        cached_encoded_json,
+        error::{SharedWebError, WebError},
+        home_feed_cache::HomeFeedCache,
+        json_cache::SwrLoad,
+    },
 };
 
-pub(crate) async fn get_market_pulse(
-    State(ch): State<ClickHouseClient>,
-    State(world_cache): State<Arc<WorldCache>>,
-    State(cache): State<HomeFeedCache>,
-    headers: HeaderMap,
-    Path(world_name): Path<String>,
-) -> Result<impl IntoResponse, SharedWebError> {
+pub(crate) async fn serve_market_pulse(
+    ch: &ClickHouseClient,
+    world_cache: &WorldCache,
+    cache: &HomeFeedCache,
+    headers: &HeaderMap,
+    world_name: &str,
+) -> Result<Response, SharedWebError> {
     let scope = world_cache
-        .lookup_value_by_name(&world_name)
+        .lookup_value_by_name(world_name)
         .map_err(WebError::from)?;
     // A world reports as itself; a datacenter or region sums its worlds and
     // reports `world_id: 0` (the logged-out home page shows a whole region).
@@ -45,6 +48,7 @@ pub(crate) async fn get_market_pulse(
     let ttl = Duration::from_secs(30);
     let stale_ttl = Duration::from_secs(300);
     let cache_key = format!("pulse:{}", scope.get_name());
+    let ch = ch.clone();
 
     let loaded = cache
         .get_or_load_swr(cache_key, ttl, stale_ttl, move || async move {
@@ -128,28 +132,47 @@ pub(crate) async fn get_market_pulse(
         return Ok(loaded
             .body
             .into_json_response(
-                &headers,
+                headers,
                 axum::http::HeaderValue::from_static("no-store"),
                 &[],
             )
             .await);
     }
-    Ok(cached_encoded_json(&loaded, &headers, ttl).await)
+    Ok(cached_encoded_json(&loaded, headers, ttl).await)
+}
+
+pub(crate) async fn get_market_pulse(
+    State(market): State<Arc<dyn MarketClient>>,
+    headers: HeaderMap,
+    Path(world_name): Path<String>,
+) -> Result<Response, SharedWebError> {
+    market.market_pulse(&world_name, &headers).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::get_market_pulse;
+    use super::serve_market_pulse;
     use crate::web::{
         encoded_body::EncodedBody,
+        error::SharedWebError,
         home_feed_cache::HomeFeedCache,
         json_cache::{SwrDisposition, SwrValue},
     };
     use axum::{
         extract::{Path, State},
         http::{HeaderMap, StatusCode, header},
-        response::IntoResponse,
+        response::{IntoResponse, Response},
     };
+
+    async fn get_market_pulse(
+        State(ch): State<ClickHouseClient>,
+        State(world_cache): State<Arc<WorldCache>>,
+        State(cache): State<HomeFeedCache>,
+        headers: HeaderMap,
+        Path(world_name): Path<String>,
+    ) -> Result<Response, SharedWebError> {
+        serve_market_pulse(&ch, &world_cache, &cache, &headers, &world_name).await
+    }
     use http_body_util::BodyExt;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;

@@ -4,7 +4,7 @@ use axum::{
     body::Bytes,
     extract::{Path, Query, State},
     http::HeaderMap,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 use ultros_api_types::cheapest_listings::CheapestListingsColumnar;
@@ -12,6 +12,7 @@ use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
 use crate::{
     analyzer_service::{AnalyzerService, CheapestListings},
+    market_client::MarketClient,
     web::{
         error::{SharedWebError, WebError},
         json_cache::{JsonCache, SwrLoad},
@@ -48,6 +49,7 @@ pub(crate) struct CheapestFormat {
     pub(crate) format: Option<String>,
 }
 
+#[cfg(test)]
 impl CheapestFormat {
     fn is_columnar(&self) -> bool {
         super::is_columnar(self.format.as_deref())
@@ -89,19 +91,20 @@ fn rows_from_map(listings: &CheapestListings) -> CheapestPerWorld {
     }
 }
 
-pub(crate) async fn cheapest_per_world(
-    State(analyzer): State<AnalyzerService>,
-    State(world_cache): State<Arc<WorldCache>>,
-    State(cache): State<CheapestCache>,
-    headers: HeaderMap,
-    Path(world): Path<String>,
-    Query(format): Query<CheapestFormat>,
-) -> Result<impl IntoResponse, SharedWebError> {
+pub(crate) async fn serve_cheapest_per_world(
+    analyzer: &AnalyzerService,
+    world_cache: &WorldCache,
+    cache: &CheapestCache,
+    headers: &HeaderMap,
+    world: &str,
+    format: Option<&str>,
+) -> Result<Response, SharedWebError> {
     let value = world_cache
-        .lookup_value_by_name(&world)
+        .lookup_value_by_name(world)
         .map_err(WebError::from)?;
     let selector = AnySelector::from(&value);
-    let columnar = format.is_columnar();
+    let columnar = super::is_columnar(format);
+    let analyzer = analyzer.clone();
 
     // 5s fresh / 15s stale SWR window: absorbs bursty traffic for ~1.5 MB
     // region payloads without repeating `serde_json` or compression per
@@ -142,7 +145,7 @@ pub(crate) async fn cheapest_per_world(
     Ok(cached
         .body
         .into_json_response_with_cache_control(
-            &headers,
+            headers,
             move || {
                 super::public_cache_control_for_deadlines(
                     Duration::from_secs(15),
@@ -156,7 +159,19 @@ pub(crate) async fn cheapest_per_world(
             },
             &[],
         )
-        .await)
+        .await
+        .into_response())
+}
+
+pub(crate) async fn cheapest_per_world(
+    State(market): State<Arc<dyn MarketClient>>,
+    headers: HeaderMap,
+    Path(world): Path<String>,
+    Query(format): Query<CheapestFormat>,
+) -> Result<Response, SharedWebError> {
+    market
+        .cheapest(&world, format.format.as_deref(), &headers)
+        .await
 }
 
 #[cfg(test)]

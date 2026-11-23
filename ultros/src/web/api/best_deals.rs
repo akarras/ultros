@@ -2,6 +2,7 @@ use crate::{
     analyzer_service::{
         AnalyzerQueryResult, AnalyzerService, ResaleOptions, ResaleStats, SoldWithin,
     },
+    market_client::MarketClient,
     web::error::WebError,
 };
 use axum::{
@@ -97,13 +98,13 @@ impl From<ResaleStats> for ResaleStatsDto {
     }
 }
 
-pub(crate) async fn get_best_deals(
-    State(analyzer): State<AnalyzerService>,
-    State(world_cache): State<Arc<WorldCache>>,
-    Path(world_name): Path<String>,
-    Query(query): Query<BestDealsQuery>,
-) -> Result<impl IntoResponse, WebError> {
-    let world = world_cache.lookup_value_by_name(&world_name)?;
+pub(crate) async fn serve_best_deals(
+    analyzer: &AnalyzerService,
+    world_cache: &Arc<WorldCache>,
+    world_name: &str,
+    query: &BestDealsQuery,
+) -> Result<Response, WebError> {
+    let world = world_cache.lookup_value_by_name(world_name)?;
     let world_id = world.as_world()?.id;
     let region = world_cache
         .get_region(&world)
@@ -129,10 +130,18 @@ pub(crate) async fn get_best_deals(
     let limit = query.limit.unwrap_or(50).clamp(1, 200) as usize;
 
     let result = analyzer
-        .get_best_resale(world_id, region.id, options, &world_cache)
+        .get_best_resale(world_id, region.id, options, world_cache)
         .await;
 
     Ok(best_deals_response(result, limit))
+}
+
+pub(crate) async fn get_best_deals(
+    State(market): State<Arc<dyn MarketClient>>,
+    Path(world_name): Path<String>,
+    Query(query): Query<BestDealsQuery>,
+) -> Result<Response, WebError> {
+    market.best_deals(&world_name, &query).await
 }
 
 fn best_deals_response(

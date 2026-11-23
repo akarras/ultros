@@ -10,7 +10,7 @@ use axum::{
     body::Bytes,
     extract::{Path, Query, State},
     http::HeaderMap,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use axum_extra::headers::{CacheControl, HeaderMapExt};
 use serde::Deserialize;
@@ -25,11 +25,14 @@ use ultros_clickhouse::{
     queries::{MoverDirection, MoverScope},
 };
 
-use crate::web::{
-    cached_encoded_json,
-    error::{SharedWebError, WebError},
-    home_feed_cache::HomeFeedCache,
-    json_cache::SwrLoad,
+use crate::{
+    market_client::MarketClient,
+    web::{
+        cached_encoded_json,
+        error::{SharedWebError, WebError},
+        home_feed_cache::HomeFeedCache,
+        json_cache::SwrLoad,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -40,16 +43,17 @@ pub(crate) struct MoversQuery {
     limit: Option<u32>,
 }
 
-pub(crate) async fn get_movers(
-    State(ch): State<ClickHouseClient>,
-    State(world_helper): State<Arc<WorldHelper>>,
-    State(cache): State<HomeFeedCache>,
-    headers: HeaderMap,
-    Path(world_name): Path<String>,
-    Query(q): Query<MoversQuery>,
-) -> Result<impl IntoResponse, SharedWebError> {
+pub(crate) async fn serve_movers(
+    ch: &ClickHouseClient,
+    world_helper: &WorldHelper,
+    cache: &HomeFeedCache,
+    headers: &HeaderMap,
+    world_name: &str,
+    direction: Option<&str>,
+    limit: Option<u32>,
+) -> Result<Response, SharedWebError> {
     let scope = world_helper
-        .lookup_world_by_name(&world_name)
+        .lookup_world_by_name(world_name)
         .ok_or(WebError::NotFound)?;
     // A world ranks its own market; a datacenter or region ranks its worlds
     // folded together (see `top_movers`) and reports `world_id: 0`.
@@ -66,9 +70,7 @@ pub(crate) async fn get_movers(
     // Parse direction with a default. Reject unknown values rather than
     // silently coercing to rising, so the frontend can rely on round-trip
     // fidelity.
-    let direction_str = q
-        .direction
-        .as_deref()
+    let direction_str = direction
         .map(str::to_ascii_lowercase)
         .unwrap_or_else(|| "rising".to_string());
     let direction = match direction_str.as_str() {
@@ -78,7 +80,7 @@ pub(crate) async fn get_movers(
         "gil" => MoverDirection::Gil,
         _ => return Err(WebError::BadRequest.into()),
     };
-    let limit = q.limit.unwrap_or(10).clamp(1, 50);
+    let limit = limit.unwrap_or(10).clamp(1, 50);
 
     // Sales_hourly refreshes every 15 min; 60s fresh / 300s stale stays ahead
     // of the data without paying ClickHouse on every page load or stalling on
@@ -86,6 +88,7 @@ pub(crate) async fn get_movers(
     let ttl = Duration::from_secs(60);
     let stale_ttl = Duration::from_secs(300);
     let cache_key = format!("movers:{}:{direction_str}:{limit}", scope.get_name());
+    let ch = ch.clone();
 
     let loaded = cache
         .get_or_load_swr(cache_key, ttl, stale_ttl, move || async move {
@@ -169,13 +172,24 @@ pub(crate) async fn get_movers(
         return Ok(loaded
             .body
             .into_json_response(
-                &headers,
+                headers,
                 axum::http::HeaderValue::from_static("no-store"),
                 &[],
             )
             .await);
     }
-    Ok(cached_encoded_json(&loaded, &headers, ttl).await)
+    Ok(cached_encoded_json(&loaded, headers, ttl).await)
+}
+
+pub(crate) async fn get_movers(
+    State(market): State<Arc<dyn MarketClient>>,
+    headers: HeaderMap,
+    Path(world_name): Path<String>,
+    Query(q): Query<MoversQuery>,
+) -> Result<Response, SharedWebError> {
+    market
+        .movers(&world_name, q.direction.as_deref(), q.limit, &headers)
+        .await
 }
 
 /// POST /api/v1/sparklines/{world} — bulk sparkline fetch by item id list.
@@ -240,13 +254,33 @@ pub(crate) async fn post_sparklines(
 
 #[cfg(test)]
 mod tests {
-    use super::{MoversQuery, get_movers};
-    use crate::web::home_feed_cache::HomeFeedCache;
+    use super::{MoversQuery, serve_movers};
+    use crate::web::{error::SharedWebError, home_feed_cache::HomeFeedCache};
     use axum::{
         extract::{Path, Query, State},
-        http::{StatusCode, header},
-        response::IntoResponse,
+        http::{HeaderMap, StatusCode, header},
+        response::{IntoResponse, Response},
     };
+
+    async fn get_movers(
+        State(ch): State<ClickHouseClient>,
+        State(world_helper): State<Arc<WorldHelper>>,
+        State(cache): State<HomeFeedCache>,
+        headers: HeaderMap,
+        Path(world_name): Path<String>,
+        Query(q): Query<MoversQuery>,
+    ) -> Result<Response, SharedWebError> {
+        serve_movers(
+            &ch,
+            &world_helper,
+            &cache,
+            &headers,
+            &world_name,
+            q.direction.as_deref(),
+            q.limit,
+        )
+        .await
+    }
     use http_body_util::BodyExt;
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
