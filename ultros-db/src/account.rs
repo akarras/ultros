@@ -7,8 +7,8 @@ use sea_orm::{
 use crate::{
     UltrosDb,
     auth_revocation::{
-        DEFAULT_AUTH_TOKEN_REVOCATION_TTL_SECS, notify_auth_revoke_on, upsert_token_revocation_on,
-        upsert_user_revocation_on,
+        DEFAULT_AUTH_TOKEN_REVOCATION_TTL_SECS, lock_auth_user_in_txn, notify_auth_revoke_on,
+        upsert_token_revocation_on, upsert_user_revocation_on,
     },
     entity::{alert, alert_price, discord_user, list, list_item, owned_retainers},
 };
@@ -27,6 +27,7 @@ impl UltrosDb {
         token_hash: Option<&[u8; 32]>,
     ) -> Result<()> {
         let txn = self.db.begin().await?;
+        lock_auth_user_in_txn(&txn, discord_id).await?;
         let user = discord_user::Entity::find_by_id(discord_id)
             .one(&txn)
             .await?

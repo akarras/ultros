@@ -74,18 +74,32 @@ pub fn is_valid_pkg_hash(hash: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-/// Reject any relative asset path that attempts traversal or targets hidden
-/// metadata files (such as `.published` or `.tmp-*`).
+/// Reject any relative asset path that attempts traversal, contains percent-
+/// encoding or URI-significant characters, or targets hidden metadata files
+/// (such as `.published` or `.tmp-*`).
+///
+/// Restricting the alphabet to `[A-Za-z0-9._/-]` guarantees that forwarding
+/// `/{rel_path}` to `ServeDir` is a fixed point of percent-decoding: no
+/// double-encoded sequence (such as `%252epublished`) can ever decode into a
+/// hidden file or traversal segment on `ServeDir`'s URI pass.
 pub fn is_safe_asset_path(rel_path: &str) -> bool {
-    if rel_path.is_empty() || rel_path.starts_with('/') || rel_path.contains('\\') {
+    if rel_path.is_empty() || rel_path.starts_with('/') {
         return false;
     }
-    rel_path.split('/').all(|segment| {
-        !segment.is_empty()
-            && !segment.starts_with('.')
-            && segment != ".."
-            && !segment.contains('\0')
-    })
+    if !rel_path
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'/'))
+    {
+        return false;
+    }
+    rel_path
+        .split('/')
+        .all(|segment| !segment.is_empty() && !segment.starts_with('.'))
+}
+
+fn raw_uri_path_has_suspicious_encoding(req: &Request<Body>) -> bool {
+    let path = req.uri().path();
+    path.contains('%') || path.contains('\\') || path.contains('\0')
 }
 
 /// Copy `bundle_dir` into `<archive_dir>/<git_hash>` atomically and prune older
@@ -309,7 +323,7 @@ pub async fn serve_local_pkg(
     rel_path: &str,
     mut req: Request<Body>,
 ) -> Response {
-    if !is_safe_asset_path(rel_path) {
+    if raw_uri_path_has_suspicious_encoding(&req) || !is_safe_asset_path(rel_path) {
         let mut resp = StatusCode::NOT_FOUND.into_response();
         apply_pkg_cache_headers(&mut resp);
         return resp;
@@ -332,7 +346,10 @@ pub async fn serve_archived_pkg(
     rel_path: &str,
     mut req: Request<Body>,
 ) -> Response {
-    if !is_valid_pkg_hash(hash) || !is_safe_asset_path(rel_path) {
+    if raw_uri_path_has_suspicious_encoding(&req)
+        || !is_valid_pkg_hash(hash)
+        || !is_safe_asset_path(rel_path)
+    {
         let mut resp = StatusCode::NOT_FOUND.into_response();
         apply_pkg_cache_headers(&mut resp);
         return resp;

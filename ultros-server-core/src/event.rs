@@ -151,6 +151,16 @@ const LISTINGS_BUS_SIZE: usize = 8192;
 /// retainer payload, so slots are cheaper than the listings bus'.
 const HISTORY_BUS_SIZE: usize = 512;
 
+/// Signal broadcast to open authenticated browser WebSockets so revoked
+/// sessions close immediately (or re-verify against Postgres after a listener
+/// reconnect) rather than outliving logout or account deletion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthRevocationSignal {
+    TokenHash([u8; 32]),
+    User(u64),
+    ClearAll,
+}
+
 pub fn create_event_busses() -> (EventSenders, EventReceivers) {
     let (retainer_sender, retainer_receiver) = channel(10);
     let (listing_sender, listing_receiver) = channel(LISTINGS_BUS_SIZE);
@@ -161,6 +171,7 @@ pub fn create_event_busses() -> (EventSenders, EventReceivers) {
     let (list_doc_sender, list_doc_receiver) = channel(LISTS_BUS_SIZE);
     let (notifications_sender, notifications_receiver) = channel(NOTIFICATIONS_BUS_SIZE);
     let (wakeup_resync_sender, wakeup_resync_receiver) = channel(16);
+    let (auth_revocations_sender, auth_revocations_receiver) = channel(256);
     (
         EventSenders {
             retainers: retainer_sender,
@@ -172,6 +183,7 @@ pub fn create_event_busses() -> (EventSenders, EventReceivers) {
             list_docs: list_doc_sender,
             notifications: notifications_sender,
             wakeup_resync: wakeup_resync_sender,
+            auth_revocations: auth_revocations_sender,
         },
         EventReceivers {
             retainers: retainer_receiver,
@@ -183,6 +195,7 @@ pub fn create_event_busses() -> (EventSenders, EventReceivers) {
             list_docs: list_doc_receiver,
             notifications: notifications_receiver,
             wakeup_resync: wakeup_resync_receiver,
+            auth_revocations: auth_revocations_receiver,
         },
     )
 }
@@ -200,8 +213,11 @@ pub struct EventSenders {
     /// Sent by `crate::alerts::inbox::record_fire` on every alert fire.
     pub notifications: EventProducer<NotificationEvent>,
     /// Broadcast whenever the Postgres `LISTEN/NOTIFY` bridge reconnects after
-    /// a disconnect and may have missed cross-replica wake-ups.
+    /// a disconnect or runs its periodic fallback reconciliation.
     pub wakeup_resync: tokio::sync::broadcast::Sender<()>,
+    /// Broadcast on logout, account deletion, remote `ultros_auth_revoke`, and
+    /// `PgListener` reconnect so open authenticated WebSockets terminate promptly.
+    pub auth_revocations: tokio::sync::broadcast::Sender<AuthRevocationSignal>,
 }
 
 /// Base event type for communicating across different parts of the app
@@ -215,9 +231,10 @@ pub struct EventReceivers {
     pub lists: EventBus<ListEventData>,
     pub list_docs: EventBus<ListDocEvent>,
     pub notifications: EventBus<NotificationEvent>,
-    /// Fires whenever the cross-replica `PgListener` reconnects so active
-    /// consumers reconcile against Postgres.
+    /// Fires whenever the cross-replica `PgListener` reconnects or reconciles.
     pub wakeup_resync: tokio::sync::broadcast::Receiver<()>,
+    /// Fires on session revocation so active authenticated sockets close.
+    pub auth_revocations: tokio::sync::broadcast::Receiver<AuthRevocationSignal>,
 }
 
 /// Outcome of a broadcast `recv()`, distinguished so callers can react
@@ -281,6 +298,7 @@ impl Clone for EventReceivers {
             list_docs: self.list_docs.resubscribe(),
             notifications: self.notifications.resubscribe(),
             wakeup_resync: self.wakeup_resync.resubscribe(),
+            auth_revocations: self.auth_revocations.resubscribe(),
         }
     }
 }

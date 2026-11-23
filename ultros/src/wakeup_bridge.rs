@@ -33,7 +33,9 @@ use ultros_db::{
 };
 
 use crate::alerts::inbox::alert_event_to_api;
-use crate::event::{EventSenders, EventType, ListDocEvent, NotificationEvent};
+use crate::event::{
+    AuthRevocationSignal, EventSenders, EventType, ListDocEvent, NotificationEvent,
+};
 use crate::web::oauth::AuthUserCache;
 
 /// Periodic fallback housekeeping interval (cleans expired token revocations).
@@ -138,6 +140,11 @@ impl PgWakeupBridge {
                     if let Err(error) = self.db.cleanup_expired_auth_token_revocations().await {
                         warn!(?error, "failed to clean up expired auth token revocations");
                     }
+                    // Periodic fallback reconciliation (docs §3.2 rule 1):
+                    // bounds staleness if any post-commit NOTIFY failed while
+                    // the listener stayed connected. AuthUserCache already has
+                    // a 60s TTL, so we only flush it on reconnect.
+                    reconcile_subscriptions(&self.senders);
                 }
                 result = listener.try_recv() => match result {
                     Ok(Some(notification)) => {
@@ -177,9 +184,17 @@ async fn open_and_listen(database_url: &str) -> Result<PgListener, sea_orm::sqlx
 
 async fn handle_reconnect(user_cache: &AuthUserCache, senders: &EventSenders) {
     metrics::counter!("ultros_pg_wakeup_reconnects_total").increment(1);
-    // Rule 4: flush local auth cache completely so any logout/deletion missed
-    // during the disconnect forces authoritative Postgres re-check.
+    // Rule 4: flush local auth cache completely and force open authenticated
+    // WebSockets to re-verify against Postgres so any logout/deletion missed
+    // during the disconnect takes effect immediately.
     user_cache.clear().await;
+    let _ = senders
+        .auth_revocations
+        .send(AuthRevocationSignal::ClearAll);
+    reconcile_subscriptions(senders);
+}
+
+fn reconcile_subscriptions(senders: &EventSenders) {
     crate::web::plugin::wake_all_notifications_local();
     let _ = senders.wakeup_resync.send(());
     // Prompt alert trackers (PriceAlertListener, MarketTriggerListener,
@@ -189,6 +204,15 @@ async fn handle_reconnect(user_cache: &AuthUserCache, senders: &EventSenders) {
     let _ = senders
         .alerts
         .send(EventType::added(reconcile_alert_tombstone(0)));
+}
+
+fn deleted_list_tombstone(list_id: i32) -> List {
+    List {
+        id: list_id,
+        owner: 0,
+        name: String::new(),
+        wdr_filter: ultros_api_types::world_helper::AnySelector::World(0),
+    }
 }
 
 fn reconcile_alert_tombstone(alert_id: i32) -> alert::Model {
@@ -231,6 +255,9 @@ pub(crate) async fn dispatch_notification(
             if let Some(hex) = msg.t.as_deref() {
                 if let Some(hash) = parse_auth_token_hash_hex(hex) {
                     user_cache.remove_token_hash(&hash).await;
+                    let _ = senders
+                        .auth_revocations
+                        .send(AuthRevocationSignal::TokenHash(hash));
                 } else {
                     warn!("ignoring malformed token hash in auth revoke wakeup");
                 }
@@ -239,6 +266,9 @@ pub(crate) async fn dispatch_notification(
                 && let Ok(uid) = u64::try_from(user_id)
             {
                 user_cache.remove_user(uid).await;
+                let _ = senders
+                    .auth_revocations
+                    .send(AuthRevocationSignal::User(uid));
             }
         }
         CHANNEL_LIST_DOC => {
@@ -254,12 +284,32 @@ pub(crate) async fn dispatch_notification(
                 .send(EventType::Update(Arc::new(ListDocEvent::remote_wake(
                     msg.l,
                 ))));
-            if let Ok(Some(list)) = db.get_list_by_id(msg.l).await
-                && let Ok(api_list) = List::try_from(list)
-            {
-                let _ = senders
-                    .lists
-                    .send(EventType::updated(ListEventData::List(api_list)));
+            if msg.d {
+                let _ = senders.lists.send(EventType::removed(ListEventData::List(
+                    deleted_list_tombstone(msg.l),
+                )));
+                return;
+            }
+            match db.get_list_by_id(msg.l).await {
+                Ok(Some(list)) => {
+                    if let Ok(api_list) = List::try_from(list) {
+                        let _ = senders
+                            .lists
+                            .send(EventType::updated(ListEventData::List(api_list)));
+                    }
+                }
+                Ok(None) => {
+                    let _ = senders.lists.send(EventType::removed(ListEventData::List(
+                        deleted_list_tombstone(msg.l),
+                    )));
+                }
+                Err(error) => {
+                    warn!(
+                        ?error,
+                        list_id = msg.l,
+                        "failed to load list on remote wakeup"
+                    );
+                }
             }
             for activity_id in msg.a {
                 if let Ok(Some(activity)) = db.get_list_activity_by_id(activity_id).await {
@@ -430,7 +480,8 @@ mod tests {
         assert!(cache.get_user("token-a").await.is_some());
         assert!(cache.get_user("token-b").await.is_some());
 
-        // Remote token + user revocation evicts both immediately.
+        // Remote token + user revocation evicts both immediately and notifies
+        // open WebSockets.
         let remote_payload = serde_json::to_string(&AuthRevokeWakeup {
             o: "remote0000000001".into(),
             t: Some(auth_token_hash_hex(&hash_auth_token("token-a"))),
@@ -440,12 +491,21 @@ mod tests {
         dispatch_notification(CHANNEL_AUTH_REVOKE, &remote_payload, &db, &cache, &senders).await;
         assert!(cache.get_user("token-a").await.is_none());
         assert!(cache.get_user("token-b").await.is_none());
+        assert_eq!(
+            receivers.auth_revocations.try_recv().unwrap(),
+            AuthRevocationSignal::TokenHash(hash_auth_token("token-a"))
+        );
+        assert_eq!(
+            receivers.auth_revocations.try_recv().unwrap(),
+            AuthRevocationSignal::User(20)
+        );
 
         // Remote list wake emits a compact remote_wake ListDocEvent.
         let list_payload = serde_json::to_string(&ListDocWakeup {
             o: "remote0000000001".into(),
             l: 42,
             a: vec![],
+            d: false,
         })
         .unwrap();
         dispatch_notification(CHANNEL_LIST_DOC, &list_payload, &db, &cache, &senders).await;
@@ -453,6 +513,23 @@ mod tests {
         assert_eq!(doc_event.as_ref().list_id, 42);
         assert!(doc_event.as_ref().remote_wake);
         assert!(doc_event.as_ref().update.is_empty());
+
+        // Remote list deletion wakes both list_docs and lists even without a DB row.
+        let deleted_payload = serde_json::to_string(&ListDocWakeup {
+            o: "remote0000000001".into(),
+            l: 88,
+            a: vec![],
+            d: true,
+        })
+        .unwrap();
+        dispatch_notification(CHANNEL_LIST_DOC, &deleted_payload, &db, &cache, &senders).await;
+        let doc_event = receivers.list_docs.try_recv().unwrap();
+        assert_eq!(doc_event.as_ref().list_id, 88);
+        assert!(doc_event.as_ref().remote_wake);
+        assert!(matches!(
+            receivers.lists.try_recv().unwrap(),
+            EventType::Remove(data) if matches!(data.as_ref(), ListEventData::List(l) if l.id == 88)
+        ));
 
         // Remote alert remove emits tombstones for both alerts and retainer_undercut.
         let alert_payload = serde_json::to_string(&AlertWakeup {
@@ -496,6 +573,10 @@ mod tests {
 
         assert!(cache.get_user("token-1").await.is_none());
         assert!(cache.get_user("token-2").await.is_none());
+        assert_eq!(
+            receivers.auth_revocations.try_recv().unwrap(),
+            AuthRevocationSignal::ClearAll
+        );
         assert!(receivers.wakeup_resync.try_recv().is_ok());
         assert!(receivers.alerts.try_recv().is_ok());
     }

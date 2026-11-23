@@ -203,8 +203,19 @@ pub(crate) fn discord_auth_removal_cookie() -> Cookie<'static> {
 }
 
 /// Companion issuance-timestamp cookie paired with `discord_auth`.
-pub(crate) fn discord_auth_iat_cookie(issued_at_millis: i64) -> Cookie<'static> {
-    let mut cookie = Cookie::new(DISCORD_AUTH_IAT_COOKIE, issued_at_millis.to_string());
+///
+/// The value binds `<issued_at_millis>:<sha256_hex(token)>` inside the AEAD
+/// `PrivateCookieJar` so a timestamp cookie from a fresh post-deletion login
+/// cannot be replayed alongside an older, pre-deletion `discord_auth` token.
+pub(crate) fn discord_auth_iat_cookie(
+    issued_at_millis: i64,
+    token_hash: &[u8; 32],
+) -> Cookie<'static> {
+    let hash_hex = ultros_db::auth_revocation::auth_token_hash_hex(token_hash);
+    let mut cookie = Cookie::new(
+        DISCORD_AUTH_IAT_COOKIE,
+        format!("{issued_at_millis}:{hash_hex}"),
+    );
     set_discord_auth_attributes(&mut cookie);
     cookie.make_permanent();
     cookie
@@ -218,14 +229,32 @@ pub(crate) fn discord_auth_iat_removal_cookie() -> Cookie<'static> {
     cookie
 }
 
-fn cookie_issued_at(cookie_jar: &PrivateCookieJar) -> chrono::DateTime<chrono::Utc> {
-    cookie_jar
-        .get(DISCORD_AUTH_IAT_COOKIE)
-        .and_then(|c| c.value().parse::<i64>().ok())
+/// Extract the verified session issuance timestamp bound to
+/// `expected_token_hash`. Missing, malformed, or mismatched-token cookies
+/// fall back to the Unix epoch so they never bypass account-deletion checks.
+pub(crate) fn cookie_issued_at(
+    cookie_jar: &PrivateCookieJar,
+    expected_token_hash: &[u8; 32],
+) -> chrono::DateTime<chrono::Utc> {
+    let epoch =
+        || chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).expect("unix epoch is valid");
+    let Some(raw) = cookie_jar.get(DISCORD_AUTH_IAT_COOKIE) else {
+        return epoch();
+    };
+    let Some((millis_str, hash_hex)) = raw.value().split_once(':') else {
+        return epoch();
+    };
+    let Some(bound_hash) = ultros_db::auth_revocation::parse_auth_token_hash_hex(hash_hex) else {
+        return epoch();
+    };
+    if bound_hash != *expected_token_hash {
+        return epoch();
+    }
+    millis_str
+        .parse::<i64>()
+        .ok()
         .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
-        .unwrap_or_else(|| {
-            chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).expect("unix epoch is valid")
-        })
+        .unwrap_or_else(epoch)
 }
 
 #[derive(Deserialize, Default)]
@@ -352,10 +381,11 @@ pub async fn redirect(
     request = request.set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier));
     let response = request.request_async(&config.inner.http_client).await?;
     let token = response.access_token().secret().clone();
+    let token_hash = ultros_db::auth_revocation::hash_auth_token(&token);
     let issued_at_ms = chrono::Utc::now().timestamp_millis();
     // store the token into a cookie
     let mut cookie = discord_auth_cookie(token);
-    let mut iat_cookie = discord_auth_iat_cookie(issued_at_ms);
+    let mut iat_cookie = discord_auth_iat_cookie(issued_at_ms, &token_hash);
     if let Some(expires_in) = response.expires_in() {
         let max_age = Duration::seconds(expires_in.as_secs().min(i64::MAX as u64) as i64);
         cookie.set_max_age(max_age);
@@ -371,6 +401,7 @@ pub async fn logout(
     State(config): State<DiscordAuthConfig>,
     State(cache): State<AuthUserCache>,
     State(db): State<UltrosDb>,
+    State(senders): State<crate::event::EventSenders>,
 ) -> Result<(PrivateCookieJar, Redirect), WebError> {
     let cookie = cookie_jar
         .get("discord_auth")
@@ -378,22 +409,23 @@ pub async fn logout(
 
     let token_value = cookie.value().to_string();
     let token_hash = ultros_db::auth_revocation::hash_auth_token(&token_value);
-    if let Err(error) = db
+    let durable_result = db
         .revoke_auth_token(
             &token_hash,
             ultros_db::auth_revocation::DEFAULT_AUTH_TOKEN_REVOCATION_TTL_SECS,
         )
-        .await
-    {
-        tracing::error!(
-            ?error,
-            "failed to persist durable auth token revocation on logout"
-        );
-    }
+        .await;
+    let _ = senders
+        .auth_revocations
+        .send(crate::event::AuthRevocationSignal::TokenHash(token_hash));
     invalidate_session_on_logout(&cache, &token_value, async {
         revoke_discord_token_best_effort(&config, token_value.clone()).await;
     })
     .await;
+    // Require the durable Postgres revocation record to commit before reporting
+    // logout success, so a DB outage cannot silently leave remote replicas
+    // accepting the session.
+    durable_result?;
 
     let cookie_jar = cookie_jar
         .remove(discord_auth_removal_cookie())
@@ -618,14 +650,7 @@ where
                 Ok(Err(error)) => return Err(anyhow::anyhow!(error).into()),
                 Err(_) => return Err(anyhow::anyhow!("Discord authentication timed out").into()),
             };
-        let issued_at = cookie_issued_at(&cookie_jar);
-        if ultros
-            .is_auth_session_revoked(&token_hash, user.id.get() as i64, issued_at)
-            .await?
-        {
-            user_cache.remove_token_hash(&token_hash).await;
-            return Err(ApiError::DiscordTokenInvalid(Box::new(cookie_jar)));
-        }
+        let issued_at = cookie_issued_at(&cookie_jar, &token_hash);
         let avatar_url = user
             .static_avatar_url()
             .unwrap_or_else(|| user.default_avatar_url());
@@ -634,9 +659,18 @@ where
             name: user.name.clone(),
             avatar_url,
         };
-        ultros
-            .get_or_create_discord_user(user.id, user.name.clone())
-            .await?;
+        if !ultros
+            .verify_session_and_upsert_discord_user(
+                &token_hash,
+                user.id,
+                user.name.clone(),
+                issued_at,
+            )
+            .await?
+        {
+            user_cache.remove_token_hash(&token_hash).await;
+            return Err(ApiError::DiscordTokenInvalid(Box::new(cookie_jar)));
+        }
         user_cache
             .store_user_with_capacity(
                 discord_auth.value(),
@@ -787,7 +821,8 @@ pub mod test_auth {
         // feature so local E2E works over plain http — see
         // `DISCORD_AUTH_SECURE` — and the removal follows it there.
         let cookie = super::discord_auth_cookie(token);
-        let iat_cookie = super::discord_auth_iat_cookie(chrono::Utc::now().timestamp_millis());
+        let iat_cookie =
+            super::discord_auth_iat_cookie(chrono::Utc::now().timestamp_millis(), &token_hash);
 
         let redirect = if params.redirect.starts_with('/') {
             params.redirect.as_str()
@@ -1045,7 +1080,8 @@ mod tests {
 
     #[test]
     fn discord_auth_iat_removal_matches_the_writes_attributes() {
-        let write = discord_auth_iat_cookie(1_700_000_000_000);
+        let token_hash = ultros_db::auth_revocation::hash_auth_token("a-token");
+        let write = discord_auth_iat_cookie(1_700_000_000_000, &token_hash);
         let removal = discord_auth_iat_removal_cookie();
 
         assert_eq!(removal.name(), write.name());
@@ -1056,6 +1092,25 @@ mod tests {
         assert_eq!(removal.same_site(), write.same_site());
         assert_eq!(removal.value(), "");
         assert_eq!(removal.max_age(), Some(Duration::seconds(0)));
+    }
+
+    #[test]
+    fn cookie_issued_at_rejects_timestamp_bound_to_different_token() {
+        let key = Key::generate();
+        let token_a_hash = ultros_db::auth_revocation::hash_auth_token("token-a");
+        let token_b_hash = ultros_db::auth_revocation::hash_auth_token("token-b");
+        let issued_ms = 1_750_000_000_123_i64;
+        let jar = PrivateCookieJar::new(key).add(discord_auth_iat_cookie(issued_ms, &token_b_hash));
+
+        assert_eq!(
+            cookie_issued_at(&jar, &token_b_hash).timestamp_millis(),
+            issued_ms
+        );
+        assert_eq!(
+            cookie_issued_at(&jar, &token_a_hash).timestamp_millis(),
+            0,
+            "an iat cookie issued for token-b must not validate token-a"
+        );
     }
 
     #[test]

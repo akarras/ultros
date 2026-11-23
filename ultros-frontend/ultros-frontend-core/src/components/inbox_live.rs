@@ -37,31 +37,34 @@ pub fn InboxLive() -> impl IntoView {
 
         if let (true, Some(inbox)) = (signed_in, inbox) {
             let i18n = use_i18n();
-
-            spawn_local(async move {
-                if let Ok(events) = get_alert_events_page(50, None).await {
-                    inbox.ingest_server_events(
-                        events,
-                        move |item_id| {
-                            tracked_data()
-                                .items
-                                .get(&ItemId(item_id))
-                                .map(|item| item.name.as_str().to_string())
-                                .unwrap_or_else(|| {
-                                    t_string!(i18n, lists_workspace_item_fallback, id = item_id)
+            let refetch_inbox = move || {
+                spawn_local(async move {
+                    if let Ok(events) = get_alert_events_page(50, None).await {
+                        inbox.ingest_server_events(
+                            events,
+                            move |item_id| {
+                                tracked_data()
+                                    .items
+                                    .get(&ItemId(item_id))
+                                    .map(|item| item.name.as_str().to_string())
+                                    .unwrap_or_else(|| {
+                                        t_string!(i18n, lists_workspace_item_fallback, id = item_id)
+                                            .to_string()
+                                    })
+                            },
+                            move |event| match event.matched_price {
+                                Some(price) => {
+                                    t_string!(i18n, inbox_fallback_price_body, price = price)
                                         .to_string()
-                                })
-                        },
-                        move |event| match event.matched_price {
-                            Some(price) => {
-                                t_string!(i18n, inbox_fallback_price_body, price = price)
-                                    .to_string()
-                            }
-                            None => t_string!(i18n, inbox_fallback_generic_body).to_string(),
-                        },
-                    );
-                }
-            });
+                                }
+                                None => t_string!(i18n, inbox_fallback_generic_body).to_string(),
+                            },
+                        );
+                    }
+                });
+            };
+
+            refetch_inbox();
 
             let realtime = use_realtime();
             let toasts = use_toast();
@@ -72,35 +75,41 @@ pub fn InboxLive() -> impl IntoView {
                     subscription.set_value(None);
                     return;
                 };
-                let sub = realtime.subscribe_notifications(move |message| {
-                    let ServerClient::Notification(event) = message else {
-                        return;
-                    };
-                    let item_name = move |item_id: i32| {
-                        tracked_data()
-                            .items
-                            .get(&ItemId(item_id))
-                            .map(|item| item.name.as_str().to_string())
-                            .unwrap_or_else(|| {
-                                t_string!(i18n, lists_workspace_item_fallback, id = item_id)
-                                    .to_string()
-                            })
-                    };
-                    let fallback_body = move |event: &ultros_api_types::alert::AlertEvent| {
-                        match event.matched_price {
-                            Some(price) => {
-                                t_string!(i18n, inbox_fallback_price_body, price = price)
-                                    .to_string()
-                            }
-                            None => t_string!(i18n, inbox_fallback_generic_body).to_string(),
+                let sub = realtime.subscribe_notifications(move |message| match message {
+                    ServerClient::Notification(event) => {
+                        let item_name = move |item_id: i32| {
+                            tracked_data()
+                                .items
+                                .get(&ItemId(item_id))
+                                .map(|item| item.name.as_str().to_string())
+                                .unwrap_or_else(|| {
+                                    t_string!(i18n, lists_workspace_item_fallback, id = item_id)
+                                        .to_string()
+                                })
+                        };
+                        let fallback_body =
+                            move |event: &ultros_api_types::alert::AlertEvent| match event
+                                .matched_price
+                            {
+                                Some(price) => {
+                                    t_string!(i18n, inbox_fallback_price_body, price = price)
+                                        .to_string()
+                                }
+                                None => t_string!(i18n, inbox_fallback_generic_body).to_string(),
+                            };
+                        let item = inbox_item_from_event(&event, item_name, fallback_body);
+                        inbox.ingest_server_events(vec![event], item_name, fallback_body);
+                        if let Some(toasts) = toasts {
+                            toasts.info(item.body.clone());
                         }
-                    };
-                    let item = inbox_item_from_event(&event, item_name, fallback_body);
-                    inbox.ingest_server_events(vec![event], item_name, fallback_body);
-                    if let Some(toasts) = toasts {
-                        toasts.info(item.body.clone());
+                        maybe_show_browser_notification(&item.title, &item.body);
                     }
-                    maybe_show_browser_notification(&item.title, &item.body);
+                    // Lag, reconnect, or periodic reconciliation: refetch the
+                    // authoritative inbox page so missed fires are never lost.
+                    ServerClient::Stale { .. } => {
+                        refetch_inbox();
+                    }
+                    _ => {}
                 });
                 subscription.set_value(Some(sub));
             });

@@ -2046,6 +2046,10 @@ pub(crate) async fn delete_list(
         &senders,
         EventType::removed(ListEventData::List(List::try_from(list)?)),
     );
+    let _ = senders.list_docs.send(EventType::Update(Arc::new(
+        crate::event::ListDocEvent::remote_wake(perm.list_id),
+    )));
+    db.notify_list_deleted(perm.list_id).await;
     Ok(Json(()))
 }
 
@@ -3750,6 +3754,7 @@ async fn delete_user(
     State(cache): State<AuthUserCache>,
     State(config): State<oauth::DiscordAuthConfig>,
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     cookie_jar: PrivateCookieJar,
 ) -> Result<(PrivateCookieJar, Json<()>), ApiError> {
     let id = user.id;
@@ -3762,8 +3767,14 @@ async fn delete_user(
     db.delete_discord_user_and_revoke(id as i64, token_hash.as_ref())
         .await?;
     cache.remove_user(id).await;
+    let _ = senders
+        .auth_revocations
+        .send(crate::event::AuthRevocationSignal::User(id));
     if let Some(hash) = token_hash.as_ref() {
         cache.remove_token_hash(hash).await;
+        let _ = senders
+            .auth_revocations
+            .send(crate::event::AuthRevocationSignal::TokenHash(*hash));
     }
     if let Some(token_value) = current_token {
         oauth::revoke_discord_token_best_effort(&config, token_value).await;

@@ -5,11 +5,42 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
+use migration::OnConflict;
+use sea_orm::{ConnectionTrait, DbBackend, EntityTrait, Set, Statement, TransactionTrait};
 use sha2::{Digest, Sha256};
 
 use crate::UltrosDb;
+use crate::entity::discord_user;
 use crate::wakeup::{AuthRevokeWakeup, CHANNEL_AUTH_REVOKE, pg_notify_on};
+
+/// Deterministic per-user Postgres transaction advisory-lock key used to
+/// serialize account deletion (`delete_discord_user_and_revoke`) against
+/// concurrent auth-cache-miss user upserts (`verify_session_and_upsert_discord_user`).
+pub(crate) fn auth_user_lock_key(discord_user_id: i64) -> i64 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"ultros_auth_user_lock:");
+    hasher.update(discord_user_id.to_be_bytes());
+    let digest = hasher.finalize();
+    let mut key_bytes = [0u8; 8];
+    key_bytes.copy_from_slice(&digest[..8]);
+    i64::from_be_bytes(key_bytes)
+}
+
+pub(crate) async fn lock_auth_user_in_txn<C: ConnectionTrait>(
+    txn: &C,
+    discord_user_id: i64,
+) -> Result<(), sea_orm::DbErr> {
+    if txn.get_database_backend() != DbBackend::Postgres {
+        return Ok(());
+    }
+    txn.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT pg_advisory_xact_lock($1)",
+        [auth_user_lock_key(discord_user_id).into()],
+    ))
+    .await?;
+    Ok(())
+}
 
 /// Discord OAuth2 access tokens expire after 7 days; retain token revocations
 /// for 8 days so a revoked token can never outlive its revocation record.
@@ -207,6 +238,71 @@ impl UltrosDb {
             .unwrap_or(false))
     }
 
+    /// Atomically verify that neither the bearer token nor the user's pre-deletion
+    /// session has been revoked, and upsert the `discord_user` row under the same
+    /// per-user transaction advisory lock held by [`UltrosDb::delete_discord_user_and_revoke`].
+    ///
+    /// Returns `Ok(true)` if the session is valid and the user row was upserted,
+    /// or `Ok(false)` if the session is revoked (leaving `discord_user` untouched
+    /// so a racing cache miss can never resurrect a deleted account).
+    pub async fn verify_session_and_upsert_discord_user(
+        &self,
+        token_hash: &[u8; 32],
+        discord_user_id: u64,
+        username: String,
+        cookie_issued_at: DateTime<Utc>,
+    ) -> Result<bool> {
+        if self.db.get_database_backend() != DbBackend::Postgres {
+            self.get_or_create_discord_user(discord_user_id, username)
+                .await?;
+            return Ok(true);
+        }
+        let user_id_i64 = discord_user_id as i64;
+        let txn = self.db.begin().await?;
+        lock_auth_user_in_txn(&txn, user_id_i64).await?;
+        let row = txn
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT (
+                    EXISTS(
+                        SELECT 1 FROM auth_token_revocation
+                        WHERE token_hash = $1 AND expires_at > now()
+                    )
+                    OR EXISTS(
+                        SELECT 1 FROM auth_user_revocation
+                        WHERE discord_user_id = $2 AND revoked_at >= $3
+                    )
+                ) AS revoked",
+                [
+                    token_hash.to_vec().into(),
+                    user_id_i64.into(),
+                    cookie_issued_at.into(),
+                ],
+            ))
+            .await?;
+        let revoked = row
+            .and_then(|r| r.try_get::<bool>("", "revoked").ok())
+            .unwrap_or(false);
+        if revoked {
+            txn.rollback().await?;
+            return Ok(false);
+        }
+        let user = discord_user::ActiveModel {
+            id: Set(user_id_i64),
+            username: Set(username),
+        };
+        discord_user::Entity::insert(user)
+            .on_conflict(
+                OnConflict::column(discord_user::Column::Id)
+                    .update_column(discord_user::Column::Username)
+                    .to_owned(),
+            )
+            .exec(&txn)
+            .await?;
+        txn.commit().await?;
+        Ok(true)
+    }
+
     /// Remove expired token revocation rows so the table stays bounded.
     pub async fn cleanup_expired_auth_token_revocations(&self) -> Result<u64> {
         if self.db.get_database_backend() != DbBackend::Postgres {
@@ -322,6 +418,44 @@ mod tests {
         assert!(
             db.is_auth_token_revoked(&token_hash).await.unwrap(),
             "the deleted session's own token must also be revoked"
+        );
+
+        // Serialized verify+upsert must refuse pre-deletion cookies without
+        // recreating the deleted discord_user row, and allow post-deletion logins.
+        assert!(
+            !db.verify_session_and_upsert_discord_user(
+                &other_token_hash,
+                777,
+                "Resurrect".into(),
+                before_delete,
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            discord_user::Entity::find_by_id(777)
+                .one(&connection)
+                .await
+                .unwrap()
+                .is_none(),
+            "revoked session must not recreate deleted discord_user"
+        );
+        assert!(
+            db.verify_session_and_upsert_discord_user(
+                &other_token_hash,
+                777,
+                "FreshLogin".into(),
+                after_delete,
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            discord_user::Entity::find_by_id(777)
+                .one(&connection)
+                .await
+                .unwrap()
+                .is_some()
         );
 
         connection

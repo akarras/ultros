@@ -82,6 +82,9 @@ pub struct ListDocWakeup {
     /// Optional newly recorded `list_activity.id` rows (bounded).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub a: Vec<i64>,
+    /// True when the list itself was deleted.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub d: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,6 +191,21 @@ impl UltrosDb {
                 .copied()
                 .take(MAX_LIST_WAKEUP_ACTIVITY_IDS)
                 .collect(),
+            d: false,
+        };
+        if let Ok(json) = serde_json::to_string(&payload) {
+            self.notify_wakeup(CHANNEL_LIST_DOC, &json).await;
+        }
+    }
+
+    /// Wake remote replicas that a list was deleted so collaborators purge
+    /// cached document state and drop subscriptions even though the DB row is gone.
+    pub async fn notify_list_deleted(&self, list_id: i32) {
+        let payload = ListDocWakeup {
+            o: self.notify_origin().to_string(),
+            l: list_id,
+            a: Vec::new(),
+            d: true,
         };
         if let Ok(json) = serde_json::to_string(&payload) {
             self.notify_wakeup(CHANNEL_LIST_DOC, &json).await;
@@ -281,6 +299,7 @@ mod tests {
             o: "0123456789abcdef".into(),
             l: 12345,
             a: (1..=MAX_LIST_WAKEUP_ACTIVITY_IDS as i64).collect(),
+            d: false,
         };
         let list_json = serde_json::to_string(&list).unwrap();
         assert!(list_json.len() < 256, "list payload too big: {list_json}");

@@ -429,7 +429,7 @@ mod tests {
             Router::new(),
             local_bundle,
             "newhash",
-            Some(Arc::new(archive_dir)),
+            Some(Arc::new(archive_dir.clone())),
         );
 
         let resp = app
@@ -463,6 +463,7 @@ mod tests {
         assert_eq!(&body[..], b"archived-old-br");
 
         let resp = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .uri("/pkg/expiredhash/ultros.wasm")
@@ -473,6 +474,49 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+
+        // Pre-publishing a future N+1 hash into the shared archive makes it
+        // immediately servable by the already-running N router during cutover.
+        let next_bundle = root.path().join("next");
+        std::fs::create_dir_all(&next_bundle).unwrap();
+        std::fs::write(next_bundle.join("ultros.wasm"), b"prepublished-next").unwrap();
+        crate::pkg_archive::sync_pkg_archive(&next_bundle, &archive_dir, "nexthash", 3).unwrap();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/pkg/nexthash/ultros.wasm")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"prepublished-next");
+
+        // Encoded and double-encoded hidden-file / traversal attempts must be
+        // rejected on both the local and archived routes with `no-store`.
+        for bad_uri in [
+            "/pkg/oldhash/.published",
+            "/pkg/oldhash/%2epublished",
+            "/pkg/oldhash/%252epublished",
+            "/pkg/oldhash/%2e%2e/newhash/ultros.wasm",
+            "/pkg/newhash/%252epublished",
+            "/pkg/newhash/ultros.wasm%3ffoo",
+        ] {
+            let resp = app
+                .clone()
+                .oneshot(Request::builder().uri(bad_uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::NOT_FOUND,
+                "URI {bad_uri} must be rejected"
+            );
+            assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+        }
     }
 
     #[test]
