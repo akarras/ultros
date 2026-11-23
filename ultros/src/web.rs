@@ -156,8 +156,11 @@ async fn record_list_activity(
     payload: serde_json::Value,
     message: String,
 ) -> Result<ListActivity, ApiError> {
-    db.get_or_create_discord_user(user.id, user.name.clone())
-        .await?;
+    // Require an existing `discord_user` row rather than upserting so a cached
+    // session racing with account deletion can never recreate a deleted user.
+    if db.get_discord_user(user.id).await?.is_none() {
+        return Err(ApiError::NoAuthCookie);
+    }
     let activity = db
         .record_list_activity(
             list_id,
@@ -295,8 +298,9 @@ async fn add_retainer(
     Path(retainer_id): Path<i32>,
 ) -> Result<Redirect, ApiError> {
     let _register_retainer = db
-        .register_retainer(retainer_id, current_user.id, current_user.name)
-        .await?;
+        .register_retainer_for_existing_user(retainer_id, current_user.id)
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
     publish_retainer_change(&db, &senders, current_user.id as i64, retainer_id).await;
     Ok(Redirect::to("/retainers/edit"))
 }
@@ -1903,7 +1907,9 @@ pub(crate) async fn claim_retainer(
     Path(id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<(), ApiError> {
-    db.register_retainer(id, user.id, user.name).await?;
+    db.register_retainer_for_existing_user(id, user.id)
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
     publish_retainer_change(&db, &senders, user.id as i64, id).await;
     Ok(())
 }
@@ -2060,8 +2066,9 @@ pub(crate) async fn create_list(
     Json(list): Json<CreateList>,
 ) -> Result<Json<()>, ApiError> {
     let discord_user = db
-        .get_or_create_discord_user(user.id, user.name.clone())
-        .await?;
+        .get_discord_user(user.id)
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
     let list = db
         .create_list(discord_user, list.name, Some(list.wdr_filter.into()))
         .await?;
@@ -2098,8 +2105,9 @@ pub(crate) async fn adopt_guest_list(
         return Err(ApiError::BadRequest("guest list contains an unknown item"));
     }
     let owner = db
-        .get_or_create_discord_user(user.id, user.name.clone())
-        .await?;
+        .get_discord_user(user.id)
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
     let outcome = db.adopt_guest_list_with_outcome(owner.id, request).await?;
     if let Some((list, items, activity)) = outcome.created {
         // A new list has no document subscribers yet. Publish the same creation,
@@ -2142,8 +2150,9 @@ pub(crate) async fn make_list_online(
         return Err(ApiError::BadRequest("list contains an unknown item"));
     }
     let owner = db
-        .get_or_create_discord_user(user.id, user.name.clone())
-        .await?;
+        .get_discord_user(user.id)
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
     let outcome = db.make_list_online(owner.id, &request).await?;
     if let Some((list, items, activity)) = outcome.created {
         send_list_event(

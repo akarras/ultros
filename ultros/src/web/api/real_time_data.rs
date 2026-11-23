@@ -74,25 +74,32 @@ fn classify_revocation_signal(
     }
 }
 
+fn socket_revocation_from_check(result: anyhow::Result<bool>, user_id: u64) -> bool {
+    match result {
+        Ok(revoked) => revoked,
+        Err(error) => {
+            // Fail closed on durable revocation check errors so an authenticated
+            // WebSocket cannot keep delivering private notifications or edits
+            // when verification fails; clients reconnect once Postgres recovers.
+            warn!(
+                ?error,
+                user_id,
+                "failed to re-verify websocket session revocation; closing authenticated socket"
+            );
+            true
+        }
+    }
+}
+
 async fn is_socket_session_revoked(db: &UltrosDb, session: &SocketSession) -> bool {
-    match db
+    let result = db
         .is_auth_session_revoked(
             &session.token_hash,
             session.user.id as i64,
             session.issued_at,
         )
-        .await
-    {
-        Ok(revoked) => revoked,
-        Err(error) => {
-            warn!(
-                ?error,
-                user_id = session.user.id,
-                "failed to re-verify websocket session revocation"
-            );
-            false
-        }
-    }
+        .await;
+    socket_revocation_from_check(result, session.user.id)
 }
 
 /// Bind a cached document to the authenticated socket, including reconnects.
@@ -1764,6 +1771,12 @@ mod tests {
         assert_eq!(
             classify_revocation_signal(&session, AuthRevocationSignal::ClearAll),
             RevocationAction::Recheck
+        );
+        assert!(!socket_revocation_from_check(Ok(false), 42));
+        assert!(socket_revocation_from_check(Ok(true), 42));
+        assert!(
+            socket_revocation_from_check(Err(anyhow::anyhow!("db unavailable")), 42),
+            "durable revocation rechecks must fail closed on DB errors"
         );
     }
 }

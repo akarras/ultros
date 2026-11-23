@@ -148,7 +148,11 @@ impl ListSync {
 
         let meta = outcome.meta_changed().then_some(&outcome.meta_after);
         let entries = entries_for(&actor.username, &outcome.changes, meta, resolve_item_name);
+        // Only Discord bot commands may act for a user who has never signed in
+        // on the web; browser/socket/plugin sessions already have an existing
+        // `discord_user` row and must never recreate one after account deletion.
         if !entries.is_empty()
+            && actor.origin == Origin::Bot
             && let Err(e) = self
                 .db
                 .get_or_create_discord_user(actor.user_id as u64, actor.username.clone())

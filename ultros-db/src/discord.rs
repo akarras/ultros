@@ -5,6 +5,18 @@ use sea_orm::{EntityTrait, Set};
 use tracing::instrument;
 
 impl UltrosDb {
+    /// Look up an existing `discord_user` row without inserting one.
+    ///
+    /// Authenticated browser handlers use this instead of
+    /// [`Self::get_or_create_discord_user`] so a cached request racing with
+    /// account deletion can never recreate the deleted user row.
+    #[instrument(skip(self))]
+    pub async fn get_discord_user(&self, user_id: u64) -> Result<Option<discord_user::Model>> {
+        Ok(discord_user::Entity::find_by_id(user_id as i64)
+            .one(&self.db)
+            .await?)
+    }
+
     #[instrument(skip(self))]
     pub async fn get_or_create_discord_user(
         &self,

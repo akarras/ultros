@@ -495,6 +495,42 @@ mod tests {
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(&body[..], b"prepublished-next");
 
+        // Reverse direction for the same N / N+1 pair: mount an N+1 router
+        // against the same shared archive and verify it serves its own local
+        // bundle for N+1 and falls back to the archive for N.
+        let app_next: Router<()> = mount_pkg_routes(
+            Router::new(),
+            next_bundle,
+            "nexthash",
+            Some(Arc::new(archive_dir)),
+        );
+        let resp = app_next
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/pkg/nexthash/ultros.wasm")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"prepublished-next");
+
+        let resp = app_next
+            .oneshot(
+                Request::builder()
+                    .uri("/pkg/newhash/ultros.wasm")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"archive-copy");
+
         // Encoded and double-encoded hidden-file / traversal attempts must be
         // rejected on both the local and archived routes with `no-store`.
         for bad_uri in [
