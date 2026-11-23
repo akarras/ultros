@@ -729,7 +729,7 @@ async fn main() -> Result<()> {
     let prometheus_handle = web_metrics::setup_metrics_recorder();
     let roles = roles::Roles::from_env()?;
     let remote_market_url = roles.validate(std::env::var(roles::MARKET_URL_ENV).ok().as_deref())?;
-    let market_token = roles::market_token_from_env();
+    let market_token = roles.validate_internal_token(roles::market_token_from_env().as_deref())?;
     // Validate role-specific env config upfront so misconfigured containers
     // fail fast before opening pools or sockets.
     let web_config = if roles.web {

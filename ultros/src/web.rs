@@ -2913,7 +2913,14 @@ pub(crate) async fn import_group_discord_role(
     // second time. If this follow-up trigger hits a transient RPC error after
     // the DB write already committed, log and return the imported role — the
     // periodic scheduler (or a manual sync) will reconcile it.
-    if let Err(err) = bot_admin.trigger_group_sync(guild_id, false).await {
+    if let Err(err) = bot_admin
+        .trigger_group_sync(
+            id,
+            user.id as i64,
+            crate::bot_admin_client::GroupSyncTrigger::PostRoleImport,
+        )
+        .await
+    {
         tracing::warn!(
             group_id = id,
             guild_id,
@@ -2937,14 +2944,20 @@ pub(crate) async fn sync_group(
     Path(id): Path<i32>,
 ) -> Result<Json<GroupSyncResponse>, ApiError> {
     // Proves ownership and that the group is still linked to a live guild.
-    let guild_id = owned_guild_id(&db, id, user.id as i64).await?;
+    let _guild_id = owned_guild_id(&db, id, user.id as i64).await?;
     let last_synced_at = db
         .get_group_roles(id, user.id as i64)
         .await?
         .into_iter()
         .filter_map(|GroupRoleReturn(role, _)| role.last_synced_at)
         .max();
-    let status = bot_admin.trigger_group_sync(guild_id, true).await?;
+    let status = bot_admin
+        .trigger_group_sync(
+            id,
+            user.id as i64,
+            crate::bot_admin_client::GroupSyncTrigger::Manual,
+        )
+        .await?;
     Ok(Json(GroupSyncResponse {
         status,
         last_synced_at,

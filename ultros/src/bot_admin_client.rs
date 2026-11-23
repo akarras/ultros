@@ -6,18 +6,27 @@
 //!   includes `bot` (including the default `ULTROS_ROLES=all`), with zero
 //!   extra network hop or serialization overhead.
 //! - [`HttpBotAdminClient`]: multiplexed HTTP/2 client targeting
-//!   `ULTROS_MARKET_URL` (`/internal/bot/*`, authenticated with
-//!   `ULTROS_MARKET_TOKEN`) when running stateless `ULTROS_ROLES=web` replicas.
+//!   `ULTROS_MARKET_URL` (`/internal/bot/*`, authenticated with a required
+//!   non-blank `ULTROS_MARKET_TOKEN`) when running stateless `ULTROS_ROLES=web`
+//!   replicas.
 //!
 //! Security boundary:
+//! - `/internal/bot/*` ALWAYS fails closed (`401 Unauthorized`) unless a
+//!   non-blank `ULTROS_MARKET_TOKEN` is configured on both ends.
 //! - User Discord OAuth tokens (`discord_auth` cookie) NEVER cross this
 //!   boundary; `ultros-web` queries Discord `GET /users/@me/guilds` locally and
 //!   only passes intersected candidate guild IDs to `ultros-market`.
+//! - Group sync passes `(group_id, owner_id, GroupSyncTrigger)` and never
+//!   arbitrary guild IDs or caller-controlled rate-limit bypasses; `ultros-market`
+//!   verifies group ownership, linked non-frozen guild state, and post-import
+//!   eligibility directly in Postgres.
 //! - Discord notification test/resend calls pass `(endpoint_id, owner_id)` and
 //!   never arbitrary channel or user IDs; `ultros-market` independently loads
 //!   and verifies endpoint ownership and Discord delivery method in Postgres.
 
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::{
     Json,
@@ -28,11 +37,15 @@ use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 use ultros_api_types::{alert::DiscordWritableGuild, user::GroupSyncStatus};
-use ultros_db::UltrosDb;
+use ultros_db::{
+    UltrosDb,
+    entity::{notification_endpoint, user_group},
+    group_roles::GroupError,
+};
 use url::Url;
 
 use crate::web::{
-    api::discord_lookup,
+    api::discord_lookup::{self, parse_positive_discord_id},
     error::{ApiError, DiscordFailure},
 };
 
@@ -51,9 +64,14 @@ pub(crate) const MAX_CANDIDATE_GUILDS: usize = 500;
 pub(crate) const MAX_DELIVERY_TITLE_BYTES: usize = 512;
 pub(crate) const MAX_DELIVERY_BODY_BYTES: usize = 4096;
 
-/// Default RPC timeout for bot-admin calls. Guild/channel discovery can issue
-/// several sequential Discord REST calls (including rate-limit waits), so this
-/// is slightly higher than market-read timeouts while remaining strictly bounded.
+/// Server-controlled burst window for [`GroupSyncTrigger::PostRoleImport`] so
+/// repeated post-import triggers cannot spam full-guild reconciles.
+const POST_IMPORT_BURST_COOLDOWN: Duration = Duration::from_secs(15);
+
+/// Default RPC timeouts for bot-admin calls. Guild/channel discovery can issue
+/// several sequential Discord REST calls (including bounded legacy scans up to
+/// 15s), so this stays strictly above the legacy scan budget while remaining
+/// bounded.
 const BOT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const FAST_BOT_RPC_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -92,6 +110,19 @@ pub(crate) struct BotGuildMember {
     pub(crate) avatar_url: String,
 }
 
+/// Why a Discord group membership sync was requested.
+///
+/// Server-side rate-limit policy is strictly controlled by `ultros-market`:
+/// `Manual` enforces the full 5-minute per-guild cooldown, while
+/// `PostRoleImport` only permits a bounded immediate reconcile when Postgres
+/// confirms the group actually has an unsynced imported Discord role.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GroupSyncTrigger {
+    Manual,
+    PostRoleImport,
+}
+
 /// Failure modes for internal Discord notification delivery (`test_endpoint` /
 /// `resend_alert_event`), preserving exact offline vs. delivery-failure wording.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,12 +133,16 @@ pub(crate) enum BotDeliveryError {
 
 /// Structured wire error returned by `/internal/bot/*` endpoints on
 /// `ultros-market` so `ultros-web` reconstructs exact `ApiError` status codes
-/// and error-tracker policies (`503` offline/transient without Sentry spam,
-/// `502` misconfiguration with single-latch Sentry alerting, `500` internal).
+/// and error-tracker policies (`400` bad request, `403` forbidden, `404` not
+/// found, `503` offline/transient without Sentry spam, `502` misconfiguration
+/// with single-latch Sentry alerting, `500` internal).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum BotAdminError {
     BotOffline,
+    BadRequest { message: String },
+    Forbidden { message: String },
+    NotFound { message: String },
     DiscordMisconfigured { message: String },
     DiscordTransient { message: String },
     Internal { message: String },
@@ -117,6 +152,13 @@ impl BotAdminError {
     pub(crate) fn from_api_error(err: ApiError) -> Self {
         match err {
             ApiError::ServiceUnavailable(_) => Self::BotOffline,
+            ApiError::BadRequest(message) => Self::BadRequest {
+                message: message.to_string(),
+            },
+            ApiError::BadRequestMessage(message) => Self::BadRequest { message },
+            ApiError::Forbidden(message) => Self::Forbidden {
+                message: message.to_string(),
+            },
             ApiError::Discord {
                 message,
                 kind: DiscordFailure::Misconfigured,
@@ -125,6 +167,30 @@ impl BotAdminError {
                 message,
                 kind: DiscordFailure::Transient,
             } => Self::DiscordTransient { message },
+            ApiError::AnyhowError(e) => {
+                if let Some(group_err) = e.downcast_ref::<GroupError>() {
+                    match group_err {
+                        GroupError::Forbidden(msg) => Self::Forbidden {
+                            message: (*msg).to_string(),
+                        },
+                        GroupError::NotFound | GroupError::RoleNotFound => Self::NotFound {
+                            message: group_err.to_string(),
+                        },
+                        GroupError::BadRequest(msg) => Self::BadRequest {
+                            message: (*msg).to_string(),
+                        },
+                        GroupError::ManagedByDiscord | GroupError::RoleManagedByDiscord => {
+                            Self::BadRequest {
+                                message: group_err.to_string(),
+                            }
+                        }
+                    }
+                } else {
+                    Self::Internal {
+                        message: e.to_string(),
+                    }
+                }
+            }
             other => Self::Internal {
                 message: other.to_string(),
             },
@@ -134,6 +200,9 @@ impl BotAdminError {
     pub(crate) fn into_api_error(self) -> ApiError {
         match self {
             Self::BotOffline => ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE),
+            Self::BadRequest { message } => ApiError::BadRequestMessage(message),
+            Self::Forbidden { .. } => ApiError::Forbidden("forbidden"),
+            Self::NotFound { .. } => ApiError::from(anyhow::Error::from(GroupError::NotFound)),
             Self::DiscordMisconfigured { message } => ApiError::Discord {
                 message,
                 kind: DiscordFailure::Misconfigured,
@@ -149,6 +218,9 @@ impl BotAdminError {
     pub(crate) fn status_code(&self) -> StatusCode {
         match self {
             Self::BotOffline | Self::DiscordTransient { .. } => StatusCode::SERVICE_UNAVAILABLE,
+            Self::BadRequest { .. } => StatusCode::BAD_REQUEST,
+            Self::Forbidden { .. } => StatusCode::FORBIDDEN,
+            Self::NotFound { .. } => StatusCode::NOT_FOUND,
             Self::DiscordMisconfigured { .. } => StatusCode::BAD_GATEWAY,
             Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -202,13 +274,14 @@ pub(crate) struct SearchGuildMembersQuery {
     pub(crate) limit: u64,
 }
 
-/// Request payload for `POST /internal/bot/guilds/{guild_id}/sync`.
+/// Request payload for `POST /internal/bot/groups/{group_id}/sync`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TriggerGroupSyncRequest {
-    pub(crate) enforce_rate_limit: bool,
+    pub(crate) owner_id: i64,
+    pub(crate) trigger: GroupSyncTrigger,
 }
 
-/// Response payload for `POST /internal/bot/guilds/{guild_id}/sync`.
+/// Response payload for `POST /internal/bot/groups/{group_id}/sync`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TriggerGroupSyncResponse {
     pub(crate) status: GroupSyncStatus,
@@ -275,11 +348,13 @@ pub(crate) trait BotAdminClient: Send + Sync {
     ) -> BoxFuture<'a, Result<Vec<BotGuildMember>, ApiError>>;
 
     /// Trigger background Discord group membership reconciliation on the bot
-    /// process, enforcing or recording against the bot's global rate limiter.
+    /// process after verifying ownership, linked non-frozen guild state, and
+    /// server-controlled rate-limit policy.
     fn trigger_group_sync<'a>(
         &'a self,
-        guild_id: i64,
-        enforce_rate_limit: bool,
+        group_id: i32,
+        owner_id: i64,
+        trigger: GroupSyncTrigger,
     ) -> BoxFuture<'a, Result<GroupSyncStatus, ApiError>>;
 
     /// Deliver a test or resend notification to an existing Discord endpoint
@@ -293,6 +368,71 @@ pub(crate) trait BotAdminClient: Send + Sync {
     ) -> BoxFuture<'a, Result<(), BotDeliveryError>>;
 }
 
+/// Validate that a candidate guild ID list is within bounds and contains only
+/// positive Discord snowflakes.
+#[allow(clippy::result_large_err)]
+fn validate_candidate_guild_ids(candidate_guild_ids: Option<&[i64]>) -> Result<(), ApiError> {
+    if let Some(ids) = candidate_guild_ids {
+        if ids.len() > MAX_CANDIDATE_GUILDS {
+            return Err(ApiError::BadRequest("too many candidate guild ids"));
+        }
+        for &id in ids {
+            parse_positive_discord_id(id, "invalid guild_id")?;
+        }
+    }
+    Ok(())
+}
+
+/// Validate that an owned group row is actively linked to a positive Discord
+/// guild ID and not frozen before touching Serenity or rate limiters.
+#[allow(clippy::result_large_err)]
+fn validate_sync_target_group(group: &user_group::Model) -> Result<i64, ApiError> {
+    group
+        .guild_id
+        .filter(|&id| id > 0 && group.frozen_reason.is_none())
+        .ok_or(ApiError::BadRequest(
+            "That group is not linked to a Discord server",
+        ))
+}
+
+/// Validate that an endpoint row belongs to `expected_owner_id` and uses a
+/// Discord delivery method before touching Serenity.
+fn validate_delivery_endpoint(
+    endpoint: &notification_endpoint::Model,
+    expected_owner_id: i64,
+) -> Result<(), BotDeliveryError> {
+    if endpoint.user_id != expected_owner_id {
+        return Err(BotDeliveryError::Failed(
+            "endpoint is not owned by caller".into(),
+        ));
+    }
+    if !matches!(endpoint.method.as_str(), "DiscordDm" | "DiscordChannel") {
+        return Err(BotDeliveryError::Failed(
+            "endpoint is not a Discord delivery method".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Server-controlled per-guild burst guard for [`GroupSyncTrigger::PostRoleImport`].
+#[derive(Clone, Default)]
+struct PostImportBurstLimiter {
+    last_triggered: Arc<Mutex<HashMap<i64, Instant>>>,
+}
+
+impl PostImportBurstLimiter {
+    fn try_acquire(&self, guild_id: i64, now: Instant, cooldown: Duration) -> bool {
+        let mut map = self.last_triggered.lock().unwrap();
+        if let Some(&prev) = map.get(&guild_id)
+            && now.saturating_duration_since(prev) < cooldown
+        {
+            return false;
+        }
+        map.insert(guild_id, now);
+        true
+    }
+}
+
 /// Direct in-process [`BotAdminClient`] used whenever the `bot` role is active
 /// in this binary (including `ULTROS_ROLES=all` and on `ultros-market` behind
 /// `/internal/bot/*`), or as a graceful offline fallback when no remote bot URL
@@ -300,11 +440,15 @@ pub(crate) trait BotAdminClient: Send + Sync {
 #[derive(Clone)]
 pub(crate) struct InProcessBotAdminClient {
     db: UltrosDb,
+    post_import_limiter: PostImportBurstLimiter,
 }
 
 impl InProcessBotAdminClient {
     pub(crate) fn new(db: UltrosDb) -> Self {
-        Self { db }
+        Self {
+            db,
+            post_import_limiter: PostImportBurstLimiter::default(),
+        }
     }
 }
 
@@ -330,13 +474,8 @@ impl BotAdminClient for InProcessBotAdminClient {
         candidate_guild_ids: Option<Vec<i64>>,
     ) -> BoxFuture<'a, Result<Vec<BotManageableGuild>, ApiError>> {
         Box::pin(async move {
-            if let Some(ref ids) = candidate_guild_ids
-                && ids.len() > MAX_CANDIDATE_GUILDS
-            {
-                return Err(ApiError::from(anyhow::anyhow!(
-                    "too many candidate guild ids"
-                )));
-            }
+            parse_positive_discord_id(user_id, "invalid user_id")?;
+            validate_candidate_guild_ids(candidate_guild_ids.as_deref())?;
             let ctx = crate::alerts::delivery::get_serenity_ctx()
                 .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
             let guilds = discord_lookup::manageable_guilds_from_candidates(
@@ -358,13 +497,8 @@ impl BotAdminClient for InProcessBotAdminClient {
         candidate_guild_ids: Option<Vec<i64>>,
     ) -> BoxFuture<'a, Result<Vec<DiscordWritableGuild>, ApiError>> {
         Box::pin(async move {
-            if let Some(ref ids) = candidate_guild_ids
-                && ids.len() > MAX_CANDIDATE_GUILDS
-            {
-                return Err(ApiError::from(anyhow::anyhow!(
-                    "too many candidate guild ids"
-                )));
-            }
+            parse_positive_discord_id(user_id, "invalid user_id")?;
+            validate_candidate_guild_ids(candidate_guild_ids.as_deref())?;
             let ctx = crate::alerts::delivery::get_serenity_ctx()
                 .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
             discord_lookup::writable_guilds_from_candidates(
@@ -382,6 +516,8 @@ impl BotAdminClient for InProcessBotAdminClient {
         user_id: i64,
     ) -> BoxFuture<'a, Result<BotManageableGuild, ApiError>> {
         Box::pin(async move {
+            parse_positive_discord_id(guild_id, "invalid guild_id")?;
+            parse_positive_discord_id(user_id, "invalid user_id")?;
             let ctx = crate::alerts::delivery::get_serenity_ctx()
                 .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
             let guild = discord_lookup::require_manageable_guild(&ctx, guild_id, user_id).await?;
@@ -399,6 +535,8 @@ impl BotAdminClient for InProcessBotAdminClient {
         user_id: i64,
     ) -> BoxFuture<'a, Result<BotResolvedChannel, ApiError>> {
         Box::pin(async move {
+            parse_positive_discord_id(channel_id, "channel_id must be positive")?;
+            parse_positive_discord_id(user_id, "invalid user_id")?;
             let ctx = crate::alerts::delivery::get_serenity_ctx()
                 .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
             let resolved = discord_lookup::resolve_channel(&ctx, channel_id).await?;
@@ -416,6 +554,7 @@ impl BotAdminClient for InProcessBotAdminClient {
         guild_id: i64,
     ) -> BoxFuture<'a, Result<Vec<BotGuildRole>, ApiError>> {
         Box::pin(async move {
+            parse_positive_discord_id(guild_id, "invalid guild_id")?;
             let ctx = crate::alerts::delivery::get_serenity_ctx()
                 .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
             let roles = discord_lookup::importable_guild_roles(&ctx, guild_id).await?;
@@ -438,6 +577,7 @@ impl BotAdminClient for InProcessBotAdminClient {
         limit: u64,
     ) -> BoxFuture<'a, Result<Vec<BotGuildMember>, ApiError>> {
         Box::pin(async move {
+            parse_positive_discord_id(guild_id, "invalid guild_id")?;
             let trimmed = query.trim();
             if trimmed.is_empty() {
                 return Ok(Vec::new());
@@ -461,22 +601,62 @@ impl BotAdminClient for InProcessBotAdminClient {
 
     fn trigger_group_sync<'a>(
         &'a self,
-        guild_id: i64,
-        enforce_rate_limit: bool,
+        group_id: i32,
+        owner_id: i64,
+        trigger: GroupSyncTrigger,
     ) -> BoxFuture<'a, Result<GroupSyncStatus, ApiError>> {
         Box::pin(async move {
+            if group_id <= 0 {
+                return Err(ApiError::BadRequest("invalid group_id"));
+            }
+            parse_positive_discord_id(owner_id, "invalid user_id")?;
+            let group = self.db.get_owned_group(group_id, owner_id).await?;
+            let guild_id = validate_sync_target_group(&group)?;
             let _ctx = crate::alerts::delivery::get_serenity_ctx()
                 .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
-            let now = std::time::Instant::now();
-            if enforce_rate_limit {
-                if !crate::group_sync::sync_rate_limiter().try_acquire(guild_id, now) {
-                    return Ok(GroupSyncStatus::RecentlySynced);
+            let now = Instant::now();
+            match trigger {
+                GroupSyncTrigger::Manual => {
+                    if !crate::group_sync::sync_rate_limiter().try_acquire(guild_id, now) {
+                        return Ok(GroupSyncStatus::RecentlySynced);
+                    }
+                    crate::group_sync::spawn_reconcile(self.db.clone(), guild_id);
+                    Ok(GroupSyncStatus::Ran)
                 }
-            } else {
-                crate::group_sync::sync_rate_limiter().record(guild_id, now);
+                GroupSyncTrigger::PostRoleImport => {
+                    // Only allow bypassing the 5-minute manual cooldown when
+                    // Postgres confirms this group actually has an unsynced
+                    // imported Discord role, and still guard against rapid
+                    // repeated triggers.
+                    let has_unsynced_discord_role = self
+                        .db
+                        .get_group_roles(group_id, owner_id)
+                        .await?
+                        .into_iter()
+                        .any(
+                            |ultros_db::common_type_conversions::GroupRoleReturn(role, _)| {
+                                role.discord_role_id.is_some() && role.last_synced_at.is_none()
+                            },
+                        );
+                    if !has_unsynced_discord_role {
+                        if !crate::group_sync::sync_rate_limiter().try_acquire(guild_id, now) {
+                            return Ok(GroupSyncStatus::RecentlySynced);
+                        }
+                        crate::group_sync::spawn_reconcile(self.db.clone(), guild_id);
+                        return Ok(GroupSyncStatus::Ran);
+                    }
+                    if !self.post_import_limiter.try_acquire(
+                        guild_id,
+                        now,
+                        POST_IMPORT_BURST_COOLDOWN,
+                    ) {
+                        return Ok(GroupSyncStatus::RecentlySynced);
+                    }
+                    crate::group_sync::sync_rate_limiter().record(guild_id, now);
+                    crate::group_sync::spawn_reconcile(self.db.clone(), guild_id);
+                    Ok(GroupSyncStatus::Ran)
+                }
             }
-            crate::group_sync::spawn_reconcile(self.db.clone(), guild_id);
-            Ok(GroupSyncStatus::Ran)
         })
     }
 
@@ -488,6 +668,11 @@ impl BotAdminClient for InProcessBotAdminClient {
         body: &'a str,
     ) -> BoxFuture<'a, Result<(), BotDeliveryError>> {
         Box::pin(async move {
+            if endpoint_id <= 0 || owner_id <= 0 {
+                return Err(BotDeliveryError::Failed(
+                    "invalid endpoint_id or owner_id".into(),
+                ));
+            }
             if title.len() > MAX_DELIVERY_TITLE_BYTES || body.len() > MAX_DELIVERY_BODY_BYTES {
                 return Err(BotDeliveryError::Failed(
                     "notification payload exceeds maximum allowed size".into(),
@@ -501,11 +686,7 @@ impl BotAdminClient for InProcessBotAdminClient {
                 .get_endpoint_owned_by(owner_id, endpoint_id)
                 .await
                 .map_err(|e| BotDeliveryError::Failed(format!("{e}")))?;
-            if !matches!(endpoint.method.as_str(), "DiscordDm" | "DiscordChannel") {
-                return Err(BotDeliveryError::Failed(
-                    "endpoint is not a Discord delivery method".into(),
-                ));
-            }
+            validate_delivery_endpoint(&endpoint, owner_id)?;
             let ctx =
                 crate::alerts::delivery::get_serenity_ctx().ok_or(BotDeliveryError::BotOffline)?;
             let push = crate::alerts::delivery::PushOptions::immediate("/alerts");
@@ -524,17 +705,43 @@ impl BotAdminClient for InProcessBotAdminClient {
 pub(crate) struct HttpBotAdminClient {
     base_url: Url,
     client: reqwest::Client,
-    bearer_auth: Option<HeaderValue>,
+    bearer_auth: HeaderValue,
+    rpc_timeout: Duration,
+    fast_rpc_timeout: Duration,
 }
 
 impl HttpBotAdminClient {
     pub(crate) fn new(base_url: Url, bearer_token: Option<&str>) -> anyhow::Result<Self> {
+        Self::with_timeouts(
+            base_url,
+            bearer_token,
+            BOT_RPC_TIMEOUT,
+            FAST_BOT_RPC_TIMEOUT,
+        )
+    }
+
+    fn with_timeouts(
+        base_url: Url,
+        bearer_token: Option<&str>,
+        rpc_timeout: Duration,
+        fast_rpc_timeout: Duration,
+    ) -> anyhow::Result<Self> {
+        let token = bearer_token
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "ULTROS_MARKET_TOKEN must be set to a non-empty value for HttpBotAdminClient"
+                )
+            })?;
+        let bearer_auth = HeaderValue::from_str(&format!("Bearer {token}"))
+            .map_err(|e| anyhow::anyhow!("invalid ULTROS_MARKET_TOKEN header value: {e}"))?;
         let mut builder = reqwest::Client::builder()
             // Private internal RPC must never route through ambient proxy env
             // vars (which break h2c and could leak ULTROS_MARKET_TOKEN).
             .no_proxy()
             .connect_timeout(Duration::from_secs(3))
-            .timeout(BOT_RPC_TIMEOUT)
+            .timeout(rpc_timeout)
             .pool_idle_timeout(Duration::from_secs(90))
             .http2_keep_alive_interval(Some(Duration::from_secs(20)))
             .http2_keep_alive_timeout(Duration::from_secs(10))
@@ -545,18 +752,22 @@ impl HttpBotAdminClient {
             builder = builder.http2_prior_knowledge();
         }
         let client = builder.build()?;
-        let bearer_auth =
-            match bearer_token.map(str::trim).filter(|s| !s.is_empty()) {
-                Some(token) => Some(HeaderValue::from_str(&format!("Bearer {token}")).map_err(
-                    |e| anyhow::anyhow!("invalid ULTROS_MARKET_TOKEN header value: {e}"),
-                )?),
-                None => None,
-            };
         Ok(Self {
             base_url,
             client,
             bearer_auth,
+            rpc_timeout,
+            fast_rpc_timeout,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_timeouts_for_test(
+        base_url: Url,
+        bearer_token: Option<&str>,
+        timeout: Duration,
+    ) -> anyhow::Result<Self> {
+        Self::with_timeouts(base_url, bearer_token, timeout, timeout)
     }
 
     fn endpoint_url(&self, segments: &[&str], query: &[(&str, String)]) -> Result<Url, ApiError> {
@@ -580,10 +791,7 @@ impl HttpBotAdminClient {
     }
 
     fn with_bearer(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match &self.bearer_auth {
-            Some(auth) => req.header(header::AUTHORIZATION, auth.clone()),
-            None => req,
-        }
+        req.header(header::AUTHORIZATION, self.bearer_auth.clone())
     }
 
     async fn decode_error(resp: reqwest::Response) -> ApiError {
@@ -667,7 +875,7 @@ impl HttpBotAdminClient {
 impl BotAdminClient for HttpBotAdminClient {
     fn bot_guild_ids<'a>(&'a self) -> BoxFuture<'a, Result<Vec<i64>, ApiError>> {
         Box::pin(async move {
-            self.get_json(&["internal", "bot", "guilds"], &[], FAST_BOT_RPC_TIMEOUT)
+            self.get_json(&["internal", "bot", "guilds"], &[], self.fast_rpc_timeout)
                 .await
         })
     }
@@ -685,7 +893,7 @@ impl BotAdminClient for HttpBotAdminClient {
             self.post_json(
                 &["internal", "bot", "manageable-guilds"],
                 &payload,
-                BOT_RPC_TIMEOUT,
+                self.rpc_timeout,
             )
             .await
         })
@@ -704,7 +912,7 @@ impl BotAdminClient for HttpBotAdminClient {
             self.post_json(
                 &["internal", "bot", "writable-guilds"],
                 &payload,
-                BOT_RPC_TIMEOUT,
+                self.rpc_timeout,
             )
             .await
         })
@@ -720,7 +928,7 @@ impl BotAdminClient for HttpBotAdminClient {
             self.post_json(
                 &["internal", "bot", "require-manageable-guild"],
                 &payload,
-                FAST_BOT_RPC_TIMEOUT,
+                self.fast_rpc_timeout,
             )
             .await
         })
@@ -739,7 +947,7 @@ impl BotAdminClient for HttpBotAdminClient {
             self.post_json(
                 &["internal", "bot", "resolve-channel"],
                 &payload,
-                FAST_BOT_RPC_TIMEOUT,
+                self.fast_rpc_timeout,
             )
             .await
         })
@@ -754,7 +962,7 @@ impl BotAdminClient for HttpBotAdminClient {
             self.get_json(
                 &["internal", "bot", "guilds", &guild_seg, "roles"],
                 &[],
-                FAST_BOT_RPC_TIMEOUT,
+                self.fast_rpc_timeout,
             )
             .await
         })
@@ -767,6 +975,7 @@ impl BotAdminClient for HttpBotAdminClient {
         limit: u64,
     ) -> BoxFuture<'a, Result<Vec<BotGuildMember>, ApiError>> {
         Box::pin(async move {
+            parse_positive_discord_id(guild_id, "invalid guild_id")?;
             let trimmed = query.trim();
             if trimmed.is_empty() {
                 return Ok(Vec::new());
@@ -776,7 +985,7 @@ impl BotAdminClient for HttpBotAdminClient {
             self.get_json(
                 &["internal", "bot", "guilds", &guild_seg, "members", "search"],
                 &params,
-                FAST_BOT_RPC_TIMEOUT,
+                self.fast_rpc_timeout,
             )
             .await
         })
@@ -784,17 +993,18 @@ impl BotAdminClient for HttpBotAdminClient {
 
     fn trigger_group_sync<'a>(
         &'a self,
-        guild_id: i64,
-        enforce_rate_limit: bool,
+        group_id: i32,
+        owner_id: i64,
+        trigger: GroupSyncTrigger,
     ) -> BoxFuture<'a, Result<GroupSyncStatus, ApiError>> {
         Box::pin(async move {
-            let guild_seg = guild_id.to_string();
-            let payload = TriggerGroupSyncRequest { enforce_rate_limit };
+            let group_seg = group_id.to_string();
+            let payload = TriggerGroupSyncRequest { owner_id, trigger };
             let resp: TriggerGroupSyncResponse = self
                 .post_json(
-                    &["internal", "bot", "guilds", &guild_seg, "sync"],
+                    &["internal", "bot", "groups", &group_seg, "sync"],
                     &payload,
-                    FAST_BOT_RPC_TIMEOUT,
+                    self.fast_rpc_timeout,
                 )
                 .await?;
             Ok(resp.status)
@@ -822,7 +1032,7 @@ impl BotAdminClient for HttpBotAdminClient {
                 .with_bearer(
                     self.client
                         .post(url)
-                        .timeout(FAST_BOT_RPC_TIMEOUT)
+                        .timeout(self.fast_rpc_timeout)
                         .json(&payload),
                 )
                 .send()
@@ -838,7 +1048,10 @@ impl BotAdminClient for HttpBotAdminClient {
                     )
                 })?;
             let status = resp.status();
-            if status.is_success() {
+            // Strictly require `204 No Content` (the internal delivery contract)
+            // so a misrouted `200 OK` from an unrelated upstream can never be
+            // mistaken for confirmed Discord delivery.
+            if status == StatusCode::NO_CONTENT {
                 return Ok(());
             }
             if status == StatusCode::UNAUTHORIZED {
@@ -853,14 +1066,147 @@ impl BotAdminClient for HttpBotAdminClient {
             if let Ok(bot_err) = serde_json::from_slice::<BotAdminError>(&body_bytes) {
                 return match bot_err {
                     BotAdminError::BotOffline => Err(BotDeliveryError::BotOffline),
-                    BotAdminError::DiscordMisconfigured { message }
+                    BotAdminError::BadRequest { message }
+                    | BotAdminError::Forbidden { message }
+                    | BotAdminError::NotFound { message }
+                    | BotAdminError::DiscordMisconfigured { message }
                     | BotAdminError::DiscordTransient { message }
                     | BotAdminError::Internal { message } => Err(BotDeliveryError::Failed(message)),
                 };
             }
             Err(BotDeliveryError::Failed(format!(
-                "Discord bot service returned HTTP {status}"
+                "Discord bot service returned unexpected HTTP {status} (expected 204 No Content)"
             )))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_group(guild_id: Option<i64>, frozen_reason: Option<&str>) -> user_group::Model {
+        user_group::Model {
+            id: 7,
+            name: "Raid Static".into(),
+            owner_id: 99,
+            guild_id,
+            guild_icon_url: None,
+            source: 1,
+            frozen_reason: frozen_reason.map(str::to_owned),
+            sync_revision: 1,
+        }
+    }
+
+    fn test_endpoint(user_id: i64, method: &str) -> notification_endpoint::Model {
+        notification_endpoint::Model {
+            id: 11,
+            user_id,
+            name: "Test".into(),
+            method: method.into(),
+            config: serde_json::json!({}),
+            created_at: chrono::Utc::now(),
+            disabled_at: None,
+            last_error: None,
+        }
+    }
+
+    #[test]
+    fn validate_sync_target_group_rejects_unlinked_frozen_and_zero_guild_ids() {
+        assert_eq!(
+            validate_sync_target_group(&test_group(None, None))
+                .unwrap_err()
+                .into_response()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            validate_sync_target_group(&test_group(Some(123), Some("bot removed")))
+                .unwrap_err()
+                .into_response()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            validate_sync_target_group(&test_group(Some(0), None))
+                .unwrap_err()
+                .into_response()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            validate_sync_target_group(&test_group(Some(-42), None))
+                .unwrap_err()
+                .into_response()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            validate_sync_target_group(&test_group(Some(12345), None)).unwrap(),
+            12345
+        );
+    }
+
+    #[test]
+    fn validate_delivery_endpoint_enforces_owner_and_discord_method() {
+        assert!(validate_delivery_endpoint(&test_endpoint(99, "DiscordDm"), 99).is_ok());
+        assert!(validate_delivery_endpoint(&test_endpoint(99, "DiscordChannel"), 99).is_ok());
+
+        // Foreign owner rejected.
+        assert!(matches!(
+            validate_delivery_endpoint(&test_endpoint(100, "DiscordDm"), 99),
+            Err(BotDeliveryError::Failed(msg)) if msg.contains("not owned")
+        ));
+
+        // Non-Discord methods rejected.
+        for method in ["Webhook", "WebPush", "InApp", "InGame"] {
+            assert!(
+                matches!(
+                    validate_delivery_endpoint(&test_endpoint(99, method), 99),
+                    Err(BotDeliveryError::Failed(msg)) if msg.contains("not a Discord delivery method")
+                ),
+                "expected rejection for method {method}"
+            );
+        }
+    }
+
+    #[test]
+    fn post_import_burst_limiter_enforces_cooldown_per_guild() {
+        let limiter = PostImportBurstLimiter::default();
+        let start = Instant::now();
+        let cooldown = Duration::from_secs(15);
+
+        assert!(limiter.try_acquire(100, start, cooldown));
+        assert!(!limiter.try_acquire(100, start + Duration::from_secs(5), cooldown));
+        assert!(limiter.try_acquire(200, start + Duration::from_secs(5), cooldown));
+        assert!(limiter.try_acquire(100, start + Duration::from_secs(16), cooldown));
+    }
+
+    #[test]
+    fn validate_candidate_guild_ids_rejects_zero_negative_and_oversized_lists() {
+        assert!(validate_candidate_guild_ids(None).is_ok());
+        assert!(validate_candidate_guild_ids(Some(&[1, 2, 3])).is_ok());
+        assert_eq!(
+            validate_candidate_guild_ids(Some(&[1, 0]))
+                .unwrap_err()
+                .into_response()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            validate_candidate_guild_ids(Some(&[-1]))
+                .unwrap_err()
+                .into_response()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        let too_many: Vec<i64> = (1..=(MAX_CANDIDATE_GUILDS as i64 + 1)).collect();
+        assert_eq!(
+            validate_candidate_guild_ids(Some(&too_many))
+                .unwrap_err()
+                .into_response()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
     }
 }
