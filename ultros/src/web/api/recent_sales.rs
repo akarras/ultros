@@ -14,6 +14,7 @@ use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 use super::is_columnar;
 use crate::{
     analyzer_service::AnalyzerService,
+    market_client::MarketClient,
     web::{
         error::{SharedWebError, WebError},
         home_feed_cache::HomeFeedCache,
@@ -50,18 +51,18 @@ fn body(sales: Vec<SaleData>, columnar: bool) -> Body {
 /// that across a region's 30+ worlds would ship megabytes for eight rows.
 const GROUP_RECENT_ITEMS: usize = 50;
 
-pub(crate) async fn recent_sales(
-    State(analyzer): State<AnalyzerService>,
-    State(world_cache): State<Arc<WorldCache>>,
-    State(cache): State<HomeFeedCache>,
-    headers: HeaderMap,
-    Path(world): Path<String>,
-    Query(query): Query<RecentSalesQuery>,
-) -> Result<impl IntoResponse, SharedWebError> {
+pub(crate) async fn serve_recent_sales(
+    analyzer: &AnalyzerService,
+    world_cache: &WorldCache,
+    cache: &HomeFeedCache,
+    headers: &HeaderMap,
+    world: &str,
+    format: Option<&str>,
+) -> Result<Response, SharedWebError> {
     let scope = world_cache
-        .lookup_value_by_name(&world)
+        .lookup_value_by_name(world)
         .map_err(WebError::from)?;
-    let columnar = is_columnar(query.format.as_deref());
+    let columnar = is_columnar(format);
     let ttl = Duration::from_secs(30);
     let sales: Vec<_> = match AnySelector::from(&scope) {
         selector @ AnySelector::World(_) => analyzer
@@ -92,6 +93,7 @@ pub(crate) async fn recent_sales(
         _ => {
             let cache_key = format!("recent_sales:{}:{columnar}", scope.get_name());
             let world_ids = world_cache.get_all_worlds_in(&scope).unwrap_or_default();
+            let analyzer = analyzer.clone();
             let loaded = cache
                 .get_or_load_swr(
                     cache_key,
@@ -136,7 +138,7 @@ pub(crate) async fn recent_sales(
                 "disposition" => loaded.disposition.as_str()
             )
             .increment(1);
-            return Ok(crate::web::cached_encoded_json(&loaded, &headers, ttl).await);
+            return Ok(crate::web::cached_encoded_json(&loaded, headers, ttl).await);
         }
     };
     let mut response: Response = Json(body(sales, columnar)).into_response();
@@ -146,6 +148,17 @@ pub(crate) async fn recent_sales(
         super::public_cache_control(secs, secs * 4, super::PUBLIC_STALE_IF_ERROR_SECS),
     );
     Ok(response)
+}
+
+pub(crate) async fn recent_sales(
+    State(market): State<Arc<dyn MarketClient>>,
+    headers: HeaderMap,
+    Path(world): Path<String>,
+    Query(query): Query<RecentSalesQuery>,
+) -> Result<Response, SharedWebError> {
+    market
+        .recent_sales(&world, query.format.as_deref(), &headers)
+        .await
 }
 
 /// Newest-first, one row per `(item_id, hq)`, at most `limit` rows.

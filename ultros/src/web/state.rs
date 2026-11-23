@@ -8,14 +8,13 @@ use axum_extra::extract::cookie::Key;
 use leptos::config::LeptosOptions;
 use tokio_util::sync::CancellationToken;
 use ultros_api_types::world_helper::WorldHelper;
-use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
-use universalis::UniversalisClient;
-
 use ultros_clickhouse::ClickHouseClient;
+use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 
-use crate::analyzer_service::AnalyzerService;
 use crate::character_claim::CharacterClaimService;
 use crate::event::{EventReceivers, EventSenders};
+use crate::market_client::MarketClient;
+use crate::roles::Roles;
 use crate::search_service::SearchService;
 use crate::web::oauth::{AuthUserCache, DiscordAuthConfig};
 
@@ -30,36 +29,19 @@ pub(crate) struct WebState {
     pub(crate) world_cache: Arc<WorldCache>,
     /// Common variant of world_cache. Maybe get rid of world_cache?
     pub(crate) world_helper: Arc<WorldHelper>,
-    pub(crate) analyzer_service: AnalyzerService,
+    /// Typed market boundary: in-process when `ULTROS_ROLES` includes `market`,
+    /// or coarse HTTP/2 against `ULTROS_MARKET_URL` on stateless `web` replicas.
+    pub(crate) market_client: Arc<dyn MarketClient>,
+    pub(crate) roles: Roles,
     pub(crate) character_claim: CharacterClaimService,
     pub(crate) leptos_options: LeptosOptions,
     pub(crate) search_service: SearchService,
     pub(crate) token: CancellationToken,
-    /// ClickHouse client for analytical queries (Phase 1+ uses this; Phase 0
-    /// only writes via the analyzer's dual-write path).
+    /// ClickHouse client for per-item analytical queries directly served by web.
     pub(crate) ch_client: ClickHouseClient,
-    /// ClickHouse `listing_events` mirror for the manual refresh route.
-    pub(crate) listing_events:
-        ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
-    /// Shared Universalis client — reuses one connection pool instead of
-    /// building a reqwest client per request.
-    pub(crate) universalis: UniversalisClient,
-    /// Absorbs bursts of identical chart requests. See
-    /// [`crate::web::price_series_cache`].
+    /// Absorbs bursts of identical chart requests (`floor_history`,
+    /// `undercut_pressure`, `price_density`). See [`crate::web::price_series_cache`].
     pub(crate) price_series_cache: crate::web::price_series_cache::PriceSeriesCache,
-    /// Absorbs the identical home-page feed requests every anonymous visitor
-    /// in a region makes. See [`crate::web::home_feed_cache`].
-    pub(crate) home_feed_cache: crate::web::home_feed_cache::HomeFeedCache,
-    /// Coalesces and serves stale bulk market-stat snapshots so page traffic
-    /// cannot multiply ClickHouse work. See [`crate::web::stats_cache`].
-    pub(crate) sale_stats_cache: crate::web::stats_cache::SaleStatsCache,
-    /// Same contract for `/api/v1/listing_stats`, as its own instance so a
-    /// listing snapshot never evicts a sale snapshot (or the reverse).
-    pub(crate) listing_stats_cache: crate::web::stats_cache::ListingStatsCache,
-    /// Pre-compressed short-TTL SWR cache for `/api/v1/cheapest/{world}` bulk
-    /// payloads (`(selector, columnar)`).
-    pub(crate) cheapest_cache: crate::web::api::CheapestCache,
-    pub(crate) refresh_jobs: crate::web::refresh_jobs::RefreshJobs,
     /// The local-first list document's server side: merge path, activity
     /// classification, and the legacy-event/relay fanout.
     pub(crate) list_sync: crate::lists::ListSync,
@@ -107,9 +89,15 @@ impl FromRef<WebState> for Arc<WorldHelper> {
     }
 }
 
-impl FromRef<WebState> for AnalyzerService {
+impl FromRef<WebState> for Arc<dyn MarketClient> {
     fn from_ref(input: &WebState) -> Self {
-        input.analyzer_service.clone()
+        input.market_client.clone()
+    }
+}
+
+impl FromRef<WebState> for Roles {
+    fn from_ref(input: &WebState) -> Self {
+        input.roles
     }
 }
 
@@ -143,53 +131,9 @@ impl FromRef<WebState> for ClickHouseClient {
     }
 }
 
-impl FromRef<WebState>
-    for ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>
-{
-    fn from_ref(input: &WebState) -> Self {
-        input.listing_events.clone()
-    }
-}
-
-impl FromRef<WebState> for UniversalisClient {
-    fn from_ref(input: &WebState) -> Self {
-        input.universalis.clone()
-    }
-}
-
 impl FromRef<WebState> for crate::web::price_series_cache::PriceSeriesCache {
     fn from_ref(input: &WebState) -> Self {
         input.price_series_cache.clone()
-    }
-}
-
-impl FromRef<WebState> for crate::web::home_feed_cache::HomeFeedCache {
-    fn from_ref(input: &WebState) -> Self {
-        input.home_feed_cache.clone()
-    }
-}
-
-impl FromRef<WebState> for crate::web::stats_cache::SaleStatsCache {
-    fn from_ref(input: &WebState) -> Self {
-        input.sale_stats_cache.clone()
-    }
-}
-
-impl FromRef<WebState> for crate::web::stats_cache::ListingStatsCache {
-    fn from_ref(input: &WebState) -> Self {
-        input.listing_stats_cache.clone()
-    }
-}
-
-impl FromRef<WebState> for crate::web::api::CheapestCache {
-    fn from_ref(input: &WebState) -> Self {
-        input.cheapest_cache.clone()
-    }
-}
-
-impl FromRef<WebState> for crate::web::refresh_jobs::RefreshJobs {
-    fn from_ref(input: &WebState) -> Self {
-        input.refresh_jobs.clone()
     }
 }
 

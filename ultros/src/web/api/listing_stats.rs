@@ -26,7 +26,7 @@ use axum::{
     body::Bytes,
     extract::{Path, Query, State},
     http::HeaderMap,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use ultros_api_types::listing_stats::{
     BulkListingStats, BulkListingStatsColumnar, ItemListingStats,
@@ -35,9 +35,12 @@ use ultros_clickhouse::{ClickHouseClient, queries::BulkListingAliveRow};
 use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
 use super::is_columnar;
-use crate::web::{
-    error::{ClickHouseQueryError, WebError},
-    stats_cache::{CacheKey, ListingStatsCache, cached_response},
+use crate::{
+    market_client::MarketClient,
+    web::{
+        error::{ClickHouseQueryError, WebError},
+        stats_cache::{CacheKey, ListingStatsCache, cached_response},
+    },
 };
 
 #[derive(serde::Deserialize)]
@@ -50,36 +53,35 @@ pub(crate) struct ListingStatsQuery {
 /// Current-only requests retain their separate cache slot.
 const NO_WINDOW: u16 = 0;
 
-pub(crate) async fn get_listing_stats(
-    State(ch): State<ClickHouseClient>,
-    State(world_cache): State<Arc<WorldCache>>,
-    State(cache): State<ListingStatsCache>,
-    headers: HeaderMap,
-    Path(world): Path<String>,
-    Query(query): Query<ListingStatsQuery>,
-) -> Result<impl IntoResponse, WebError> {
-    if query
-        .window
-        .is_some_and(|w| !ultros_clickhouse::listing_history::WINDOWS.contains(&w))
-    {
+pub(crate) async fn serve_listing_stats(
+    ch: &ClickHouseClient,
+    world_cache: &WorldCache,
+    cache: &ListingStatsCache,
+    headers: &HeaderMap,
+    world: &str,
+    window: Option<u16>,
+    format: Option<&str>,
+) -> Result<Response, WebError> {
+    if window.is_some_and(|w| !ultros_clickhouse::listing_history::WINDOWS.contains(&w)) {
         return Err(WebError::BadRequest);
     }
-    let value = world_cache.lookup_value_by_name(&world)?;
+    let value = world_cache.lookup_value_by_name(world)?;
     let selector = AnySelector::from(&value);
     let world_ids = world_cache
         .get_all_worlds_in(&value)
         .ok_or(WebError::NotFound)?;
 
-    let columnar = is_columnar(query.format.as_deref());
+    let columnar = is_columnar(format);
+    let ch = ch.clone();
 
     let cached = cache
         .get_or_load(
             CacheKey {
                 selector,
-                window_days: query.window.unwrap_or(NO_WINDOW),
+                window_days: window.unwrap_or(NO_WINDOW),
                 columnar,
             },
-            move || async move { load_listing_stats(&ch, world_ids, query.window, columnar).await },
+            move || async move { load_listing_stats(&ch, world_ids, window, columnar).await },
         )
         .await?;
     let disposition = cached.disposition.as_str();
@@ -88,7 +90,18 @@ pub(crate) async fn get_listing_stats(
         "disposition" => disposition
     )
     .increment(1);
-    Ok(cached_response(&cached, &headers).await)
+    Ok(cached_response(&cached, headers).await.into_response())
+}
+
+pub(crate) async fn get_listing_stats(
+    State(market): State<Arc<dyn MarketClient>>,
+    headers: HeaderMap,
+    Path(world): Path<String>,
+    Query(query): Query<ListingStatsQuery>,
+) -> Result<Response, WebError> {
+    market
+        .listing_stats(&world, query.window, query.format.as_deref(), &headers)
+        .await
 }
 
 async fn load_listing_stats(

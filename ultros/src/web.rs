@@ -402,12 +402,12 @@ struct ExtendedHistoryQuery {
 }
 
 #[derive(serde::Deserialize, Debug)]
-struct PriceSeriesQuery {
-    from: Option<i64>,
-    to: Option<i64>,
-    bucket: Option<i64>,
-    group: Option<String>,
-    hq: Option<String>,
+pub(crate) struct PriceSeriesQuery {
+    pub(crate) from: Option<i64>,
+    pub(crate) to: Option<i64>,
+    pub(crate) bucket: Option<i64>,
+    pub(crate) group: Option<String>,
+    pub(crate) hq: Option<String>,
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -785,12 +785,13 @@ pub(crate) async fn build_price_series(
 ///
 /// Caching and serialization live here; the actual series construction is
 /// [`build_price_series`], shared with the item-card PNG handler.
-async fn price_series(
-    State(world_cache): State<Arc<WorldCache>>,
-    State(ch): State<ClickHouseClient>,
-    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
-    Path((world, item_id)): Path<(String, i32)>,
-    axum::extract::Query(query): axum::extract::Query<PriceSeriesQuery>,
+pub(crate) async fn serve_price_series(
+    world_cache: &Arc<WorldCache>,
+    ch: &ClickHouseClient,
+    cache: &crate::web::price_series_cache::PriceSeriesCache,
+    world: &str,
+    item_id: i32,
+    query: &PriceSeriesQuery,
 ) -> Result<axum::response::Response, error::SharedWebError> {
     let group = match query.group.as_deref() {
         Some("region") => SeriesGroup::Region,
@@ -840,25 +841,11 @@ async fn price_series(
     // The cache key is built from the *pre-widening* `bucket_seconds` — the
     // value resolved above from the request, before `build_price_series`'s
     // internal loop potentially widens (or narrows) it in response to how
-    // much data comes back. This is deliberate: checking the cache has to happen before
-    // running the query at all (that's the entire point — skip the CH scan
-    // on a hit), and the widened bucket is only known *after* the query
-    // runs. Building the key post-query would mean always querying first,
-    // defeating the cache.
-    //
-    // The tradeoff: if a client takes the `bucket_seconds` reported in a
-    // widened response and re-requests with that as an explicit `bucket=`
-    // query param, it computes a different cache key than the original
-    // request and misses even though the same rows are cached under the
-    // pre-widen key. This is a pure cache miss, not a correctness bug — the
-    // re-request still runs the same query, widens to the same bucket, and
-    // produces the same (correct) answer, just without benefiting from the
-    // cache. Given widening only triggers on pathologically large requests
-    // (see `MAX_BUCKETS`), this is rare enough not to be worth doubling the
-    // number of cache entries written per request to cover it.
+    // much data comes back.
+    let world_owned = world.to_string();
     let cache_key = crate::web::price_series_cache::CacheKey {
         item_id,
-        scope: world.clone(),
+        scope: world_owned.clone(),
         from: cache_from,
         to: cache_to,
         default_from: query.from.is_none(),
@@ -868,13 +855,15 @@ async fn price_series(
         hq: hq.as_str(),
         bins: 0,
     };
+    let ch = ch.clone();
+    let world_cache = world_cache.clone();
     let body = cache
         .get_or_load(cache_key, ttl, move || async move {
             let payload = build_price_series(
                 &ch,
                 &world_cache,
                 PriceSeriesArgs {
-                    world: &world,
+                    world: &world_owned,
                     item_id,
                     from,
                     to,
@@ -889,6 +878,14 @@ async fn price_series(
         })
         .await?;
     Ok(cached_json(body, ttl))
+}
+
+pub(crate) async fn price_series(
+    State(market): State<Arc<dyn crate::market_client::MarketClient>>,
+    Path((world, item_id)): Path<(String, i32)>,
+    axum::extract::Query(query): axum::extract::Query<PriceSeriesQuery>,
+) -> Result<axum::response::Response, error::SharedWebError> {
+    market.price_series(&world, item_id, &query).await
 }
 
 /// Last-observed cheapest listing, sampled across every world in scope.
@@ -1665,31 +1662,31 @@ mod price_series_tests {
     }
 }
 
-async fn refresh_world_item_listings(
-    State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
-    Path((world, item_id)): Path<(String, i32)>,
-    State(world_cache): State<Arc<WorldCache>>,
-    State(universalis): State<UniversalisClient>,
-    State(refreshes): State<refresh_jobs::RefreshJobs>,
-    State(listing_events): State<
-        ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
-    >,
-) -> Result<axum::response::Response, WebError> {
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_refresh_world_item_listings(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    world_cache: &WorldCache,
+    universalis: &UniversalisClient,
+    refreshes: &refresh_jobs::RefreshJobs,
+    listing_events: &ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
+    world: &str,
+    item_id: i32,
+) -> Result<crate::market_client::RefreshOutcome, WebError> {
     #[cfg(feature = "test-auth")]
     if crate::test_market_isolation::enabled() {
-        return Ok((
-            axum::http::StatusCode::CONFLICT,
-            crate::test_market_isolation::BLOCKED,
-        )
-            .into_response());
+        return Ok(crate::market_client::RefreshOutcome::MarketIsolationBlocked);
     }
-    let lookup = world_cache.lookup_value_by_name(&world)?;
+    let lookup = world_cache.lookup_value_by_name(world)?;
     let refresh_key = (AnySelector::from(&lookup), item_id);
     let all_worlds = world_cache
         .get_all_worlds_in(&lookup)
         .ok_or_else(|| anyhow::Error::msg("Unable to get worlds"))?;
-    let world_clone = world.clone();
+    let world_clone = world.to_string();
+    let db = db.clone();
+    let senders = senders.clone();
+    let universalis = universalis.clone();
+    let listing_events = listing_events.clone();
     refreshes
         .run(refresh_key, move || async move {
             let boards: Vec<_> = all_worlds
@@ -1769,7 +1766,31 @@ async fn refresh_world_item_listings(
             Ok(())
         })
         .await?;
-    Ok(Redirect::to(&format!("/item/{world}/{item_id}")).into_response())
+    Ok(crate::market_client::RefreshOutcome::Refreshed)
+}
+
+async fn refresh_world_item_listings(
+    State(market): State<Arc<dyn crate::market_client::MarketClient>>,
+    Path((world, item_id)): Path<(String, i32)>,
+) -> Result<axum::response::Response, WebError> {
+    #[cfg(feature = "test-auth")]
+    if crate::test_market_isolation::enabled() {
+        return Ok((
+            axum::http::StatusCode::CONFLICT,
+            crate::test_market_isolation::BLOCKED,
+        )
+            .into_response());
+    }
+    match market.refresh_listings(&world, item_id).await? {
+        crate::market_client::RefreshOutcome::Refreshed => {
+            Ok(Redirect::to(&format!("/item/{world}/{item_id}")).into_response())
+        }
+        crate::market_client::RefreshOutcome::MarketIsolationBlocked => Ok((
+            axum::http::StatusCode::CONFLICT,
+            "market fixture isolation enabled",
+        )
+            .into_response()),
+    }
 }
 
 pub(crate) use self::state::WebState;
@@ -4168,6 +4189,18 @@ fn app_commit_header_layer() -> SetResponseHeaderLayer<HeaderValue> {
     )
 }
 
+async fn web_healthz(State(roles): State<crate::roles::Roles>) -> impl IntoResponse {
+    let mut response = Json(serde_json::json!({
+        "status": "ok",
+        "roles": roles.active_names(),
+    }))
+    .into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
 pub(crate) async fn start_web(
     state: WebState,
     prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
@@ -4181,6 +4214,7 @@ pub(crate) async fn start_web(
     );
     let ssr_api = ultros_app::ssr_api::SsrApi::new(api.clone().with_state(state.clone()));
     let app = api
+        .route("/healthz", get(web_healthz))
         .route("/alerts/websocket", get(connect_websocket))
         .route(
             "/item/refresh/{worldid}/{itemid}",

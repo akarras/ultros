@@ -58,7 +58,7 @@ exclude = ["vendor/reactive_graph", "vendor/loro-kv-store"]
 resolver = "2"
 
 [workspace.dependencies]
-axum = { version = "0.8.9", features = ["ws", "json", "macros"] }
+axum = { version = "0.8.9", features = ["ws", "json", "macros", "http2"] }
 axum-extra = { version = "0.12.6", features = [
     "cookie",
     "cookie-private",

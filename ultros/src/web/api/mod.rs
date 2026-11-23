@@ -18,18 +18,20 @@ mod resale_quality;
 mod sale_stats;
 mod trends;
 
-pub(crate) use best_deals::get_best_deals;
+pub(crate) use best_deals::{BestDealsQuery, get_best_deals, serve_best_deals};
 pub(crate) use changelog::get_changelog;
-pub(crate) use cheapest_per_world::{CheapestCache, cheapest_per_world, new_cheapest_cache};
+pub(crate) use cheapest_per_world::{
+    CheapestCache, cheapest_per_world, new_cheapest_cache, serve_cheapest_per_world,
+};
 pub(crate) use item_stats::get_item_stats;
-pub(crate) use listing_stats::get_listing_stats;
+pub(crate) use listing_stats::{get_listing_stats, serve_listing_stats};
 pub(crate) use market_heat::get_market_heat;
-pub(crate) use market_pulse::get_market_pulse;
-pub(crate) use movers::{get_movers, post_sparklines};
-pub(crate) use recent_sales::recent_sales;
+pub(crate) use market_pulse::{get_market_pulse, serve_market_pulse};
+pub(crate) use movers::{get_movers, post_sparklines, serve_movers};
+pub(crate) use recent_sales::{recent_sales, serve_recent_sales};
 pub(crate) use resale_quality::post_resale_quality;
-pub(crate) use sale_stats::get_sale_stats;
-pub(crate) use trends::get_trends;
+pub(crate) use sale_stats::{get_sale_stats, serve_sale_stats};
+pub(crate) use trends::{TrendsQuery, get_trends, serve_trends};
 
 use std::time::{Duration, Instant};
 

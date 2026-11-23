@@ -13,6 +13,7 @@ use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
 use crate::{
     analyzer_service::{AnalyzerQueryResult, AnalyzerService},
+    market_client::MarketClient,
     web::error::WebError,
 };
 
@@ -30,28 +31,19 @@ pub struct TrendsQuery {
 }
 
 #[instrument(skip(analyzer, world_cache))]
-pub async fn get_trends(
-    State(analyzer): State<AnalyzerService>,
-    State(world_cache): State<Arc<WorldCache>>,
-    Path(world_name): Path<String>,
-    Query(query): Query<TrendsQuery>,
-) -> Result<impl IntoResponse, WebError> {
+pub(crate) async fn serve_trends(
+    analyzer: &AnalyzerService,
+    world_cache: &WorldCache,
+    world_name: &str,
+    query: &TrendsQuery,
+) -> Result<Response, WebError> {
     let selector = world_cache
-        .lookup_value_by_name(&world_name)
+        .lookup_value_by_name(world_name)
         .map_err(|_| WebError::NotFound)?;
     let selector = AnySelector::from(&selector);
 
-    // Currently only supporting trends for specific Worlds, as AnalyzerService::get_trends takes a world_id
-    // If we want DC trends, we'd need to aggregate or the AnalyzerService needs to support it.
-    // For now, if it's a datacenter, we error or pick a default?
-    // Let's stick to World for now, or map DC to its worlds and aggregate?
-    // Aggregating is expensive. Let's just enforce World for V1.
-
     let world_id = match selector {
         AnySelector::World(id) => id,
-        // TODO: Implement Data Center aggregation.
-        // This is computationally expensive to do on-the-fly. Consider pre-aggregating or
-        // caching DC trends in the background worker.
         _ => return Err(WebError::BadRequest),
     };
 
@@ -82,6 +74,15 @@ pub async fn get_trends(
     };
 
     Ok(trends_response(result))
+}
+
+#[instrument(skip(market))]
+pub async fn get_trends(
+    State(market): State<Arc<dyn MarketClient>>,
+    Path(world_name): Path<String>,
+    Query(query): Query<TrendsQuery>,
+) -> Result<Response, WebError> {
+    market.trends(&world_name, &query).await
 }
 
 fn trends_response(result: Option<AnalyzerQueryResult<TrendsData>>) -> Response {
