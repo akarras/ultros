@@ -10,6 +10,7 @@ use std::{
 use super::{AnySelector, CheapestListings, ItemKey};
 
 /// Stage a complete history stream before the caller publishes any of it.
+#[cfg(test)]
 pub(super) async fn load_history<S, E>(
     worlds: impl Iterator<Item = i32>,
     stream: S,
@@ -30,6 +31,43 @@ where
         }
     }
     Ok(history)
+}
+
+/// Stage a complete history stream with Postgres `pg_id`s before publishing
+/// any of it, returning both the staged per-world histories (preserving exact
+/// multiplicity and late-arriving sales) and the set of loaded `pg_id`s so the
+/// live event consumer can skip already-loaded sales idempotently.
+pub(super) async fn load_history_with_ids<S, E>(
+    worlds: impl Iterator<Item = i32>,
+    stream: S,
+) -> Result<
+    (
+        BTreeMap<i32, super::SaleHistory>,
+        std::collections::HashSet<i32>,
+        u64,
+    ),
+    E,
+>
+where
+    S: futures::Stream<Item = Result<ultros_db::sales::RecentProjectionSale, E>>,
+{
+    use futures::TryStreamExt;
+
+    let mut history: BTreeMap<_, super::SaleHistory> =
+        worlds.map(|world| (world, Default::default())).collect();
+    let mut loaded_pg_ids = std::collections::HashSet::new();
+    let mut loaded = 0u64;
+    futures::pin_mut!(stream);
+    while let Some(value) = stream.try_next().await? {
+        if let Some(world_history) = history.get_mut(&value.world_id) {
+            loaded_pg_ids.insert(value.pg_id);
+            world_history.add_sale(&value);
+            loaded += 1;
+        } else {
+            super::skipped_event("db_reload_sale", "unknown_world");
+        }
+    }
+    Ok((history, loaded_pg_ids, loaded))
 }
 
 type ChangedKeys = BTreeMap<AnySelector, BTreeSet<ItemKey>>;

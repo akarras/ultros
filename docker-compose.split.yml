@@ -1,0 +1,124 @@
+# Two-role production topology template (Phase 1B-2).
+#
+# Runs one stateful market/ingest/bot worker (`ultros-market`) alongside two
+# stateless web/SSR replicas (`ultros-web-a`, `ultros-web-b`) from the same
+# container image, gated by `ULTROS_ROLES`.
+#
+# Cutover & upgrade prerequisites:
+#   1. Seed the shared `/pkg/` archive directory on the host BEFORE cutover:
+#      upgrade the existing single container once to a Phase 1B-1+ image with
+#      `${ULTROS_PKG_ARCHIVE_HOST_DIR:-/srv/ultros-pkg-archive}` bind-mounted at
+#      `/srv/ultros-pkg-archive` (`ULTROS_PKG_ARCHIVE_DIR=/srv/ultros-pkg-archive`)
+#      so `m20261121_000001_auth_revocations` and the N-1 `<git-hash>` bundle
+#      exist in that exact host directory before starting the split stack.
+#   2. Migrate `./data/plugin-keys.json` to `ULTROS_PLUGIN_PAIRING_KEY` and
+#      `ULTROS_PLUGIN_IDENTITY_KEY` env vars so `ultros-web` has no local state.
+#   3. Set a strong non-empty `ULTROS_MARKET_TOKEN` in `.env` (required by
+#      split `ultros-market` and `ultros-web-*` to authenticate `/internal/bot/*`
+#      and `/internal/market/*`).
+#   4. Initial cutover from `ULTROS_ROLES=all` MUST be stop-before-start:
+#      stop the legacy all-in-one container before starting `ultros-market`
+#      (the legacy `all` container does not hold the split worker lease).
+#      Once split, `ultros-market` holds a dedicated whole-worker Postgres
+#      advisory lease (`WORKER_LEASE_LOCK_KEY`) from startup until final drain,
+#      so any overlapping replacement `ultros-market` stays cleanly in standby
+#      (0 ingest sockets, 0 Discord gateway, unhealthy `/healthz`) until the
+#      outgoing worker finishes draining and releases the lease.
+#   5. Before switching reverse-proxy traffic to `ultros-web-a:8080` and
+#      `ultros-web-b:8080`, verify BOTH the previous (`<N-1>`) and current
+#      (`<N>`) `/pkg/<hash>/ultros.wasm` bundles are present in
+#      `${ULTROS_PKG_ARCHIVE_HOST_DIR:-/srv/ultros-pkg-archive}` and both web
+#      replicas pass `/healthz`.
+#
+# Postgres connection-pool budget (`max_connections=150`):
+#   - ultros-market (active): max=30, min=4  (+1 lease connection for standby,
+#                             which does not open the SeaORM pool until active)
+#   - ultros-web-a:           max=25, min=2
+#   - ultros-web-b:           max=25, min=2  (+25 during rolling web replacement)
+#   - Steady state:           80 pooled + ~6 LISTEN/advisory = 86 / 150
+#   - Peak rolling overlap:   105 pooled + ~7 LISTEN/advisory = 112 / 150
+#                             (leaves 38 connections headroom for migrations,
+#                             standby handoff, and ops queries)
+
+x-ultros-common: &ultros-common
+  image: ${ULTROS_IMAGE:-ghcr.io/akarras/ultros:latest}
+  restart: unless-stopped
+  stop_grace_period: 35s
+  env_file:
+    - .env
+  networks:
+    - ultros_internal
+
+services:
+  ultros-market:
+    <<: *ultros-common
+    environment:
+      ULTROS_ROLES: ingest,market,bot
+      PORT: "8081"
+      ULTROS_MARKET_TOKEN: ${ULTROS_MARKET_TOKEN:?ULTROS_MARKET_TOKEN must be set in .env}
+      ULTROS_SKIP_MIGRATIONS: "false"
+      POSTGRES_MAX_CONNECTIONS: "30"
+      POSTGRES_MIN_CONNECTIONS: "4"
+    volumes:
+      - analyzer_data:/app/analyzer-data
+    healthcheck:
+      test: ["CMD", "/app/ultros", "--healthcheck", "http://127.0.0.1:8081/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  ultros-web-a:
+    <<: *ultros-common
+    depends_on:
+      ultros-market:
+        condition: service_healthy
+    environment:
+      ULTROS_ROLES: web
+      PORT: "8080"
+      ULTROS_MARKET_URL: http://ultros-market:8081
+      ULTROS_MARKET_TOKEN: ${ULTROS_MARKET_TOKEN:?ULTROS_MARKET_TOKEN must be set in .env}
+      ULTROS_SKIP_MIGRATIONS: "true"
+      ULTROS_PKG_ARCHIVE_DIR: /srv/ultros-pkg-archive
+      ULTROS_PKG_ARCHIVE_RETAIN: "3"
+      POSTGRES_MAX_CONNECTIONS: "25"
+      POSTGRES_MIN_CONNECTIONS: "2"
+    volumes:
+      - ${ULTROS_PKG_ARCHIVE_HOST_DIR:-/srv/ultros-pkg-archive}:/srv/ultros-pkg-archive
+    healthcheck:
+      test: ["CMD", "/app/ultros", "--healthcheck", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  ultros-web-b:
+    <<: *ultros-common
+    depends_on:
+      ultros-market:
+        condition: service_healthy
+    environment:
+      ULTROS_ROLES: web
+      PORT: "8080"
+      ULTROS_MARKET_URL: http://ultros-market:8081
+      ULTROS_MARKET_TOKEN: ${ULTROS_MARKET_TOKEN:?ULTROS_MARKET_TOKEN must be set in .env}
+      ULTROS_SKIP_MIGRATIONS: "true"
+      ULTROS_PKG_ARCHIVE_DIR: /srv/ultros-pkg-archive
+      ULTROS_PKG_ARCHIVE_RETAIN: "3"
+      POSTGRES_MAX_CONNECTIONS: "25"
+      POSTGRES_MIN_CONNECTIONS: "2"
+    volumes:
+      - ${ULTROS_PKG_ARCHIVE_HOST_DIR:-/srv/ultros-pkg-archive}:/srv/ultros-pkg-archive
+    healthcheck:
+      test: ["CMD", "/app/ultros", "--healthcheck", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  analyzer_data:
+
+networks:
+  ultros_internal:
+    driver: bridge

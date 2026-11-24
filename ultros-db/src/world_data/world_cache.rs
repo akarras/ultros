@@ -246,6 +246,14 @@ impl WorldCache {
             .get_all_worlds_regions_and_datacenters()
             .await
             .expect("World query shouldn't ever fail");
+        Self::from_models(worlds, datacenters, regions)
+    }
+
+    pub fn from_models(
+        worlds: Vec<world::Model>,
+        datacenters: Vec<datacenter::Model>,
+        regions: Vec<region::Model>,
+    ) -> Self {
         let name_map: HashMap<_, _> = worlds
             .iter()
             .map(|i| (i.name.to_lowercase(), AnySelector::World(i.id)))

@@ -53,7 +53,7 @@ pub async fn window(
         UNION ALL
         SELECT item_id,toUInt64(0),toUInt64(0),countIf(event_time > toDateTime({from})),toUInt64(0) FROM floor_changes WHERE world_id IN ({world_sql}) AND event_time < toDateTime({to}) GROUP BY item_id
         UNION ALL
-        SELECT item_id,toUInt64(0),toUInt64(0),toUInt64(0),count() FROM sales WHERE world_id IN ({world_sql}) AND sold_date >= toDateTime({from}) AND sold_date < toDateTime({to}) GROUP BY item_id
+        SELECT item_id,toUInt64(0),toUInt64(0),toUInt64(0),count() FROM sales FINAL WHERE world_id IN ({world_sql}) AND sold_date >= toDateTime({from}) AND sold_date < toDateTime({to}) GROUP BY item_id
         ) GROUP BY item_id ORDER BY item_id{LIMITS}", from-600, from-600))
         .fetch_all::<ItemCounts>().await?;
     if items.len() > 100_000 {

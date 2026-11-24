@@ -307,10 +307,31 @@ async fn remove(
     let list = resolve_list(&ctx, ctx.author().id.get() as i64, &list_name)
         .await?
         .ok_or(anyhow!("Failed to find list {list_name}"))?;
+    let list_id = list.id;
+    let api_list = ultros_api_types::list::List::try_from(list).ok();
     ctx.data()
         .db
-        .delete_list(list.id, ctx.author().id.get() as i64)
+        .delete_list(list_id, ctx.author().id.get() as i64)
         .await?;
+    if let Some(api_list) = api_list {
+        let _ = ctx
+            .data()
+            .event_senders
+            .lists
+            .send(ultros_server_core::event::EventType::removed(
+                ultros_api_types::websocket::ListEventData::List(api_list),
+            ));
+    }
+    let _ = ctx
+        .data()
+        .event_senders
+        .list_docs
+        .send(ultros_server_core::event::EventType::Update(
+            std::sync::Arc::new(ultros_server_core::event::ListDocEvent::remote_wake(
+                list_id,
+            )),
+        ));
+    ctx.data().db.notify_list_deleted(list_id).await;
     ctx.send(
         poise::CreateReply::default().embed(
             poise::serenity_prelude::CreateEmbed::new()

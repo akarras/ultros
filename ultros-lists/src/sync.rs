@@ -148,7 +148,11 @@ impl ListSync {
 
         let meta = outcome.meta_changed().then_some(&outcome.meta_after);
         let entries = entries_for(&actor.username, &outcome.changes, meta, resolve_item_name);
+        // Only Discord bot commands may act for a user who has never signed in
+        // on the web; browser/socket/plugin sessions already have an existing
+        // `discord_user` row and must never recreate one after account deletion.
         if !entries.is_empty()
+            && actor.origin == Origin::Bot
             && let Err(e) = self
                 .db
                 .get_or_create_discord_user(actor.user_id as u64, actor.username.clone())
@@ -156,6 +160,7 @@ impl ListSync {
         {
             warn!(error = %e, "failed to ensure the activity actor exists");
         }
+        let mut activity_ids = Vec::new();
         for entry in entries {
             match self
                 .db
@@ -172,6 +177,7 @@ impl ListSync {
                 .await
             {
                 Ok(activity) => {
+                    activity_ids.push(activity.id);
                     let activity = ListActivity::from(activity);
                     if let Err(e) = self
                         .senders
@@ -189,17 +195,20 @@ impl ListSync {
             Origin::Socket(id) => Some(id),
             Origin::Rest | Origin::Bot | Origin::Plugin => None,
         };
-        if let Err(e) = self
-            .senders
-            .list_docs
-            .send(EventType::Update(Arc::new(ListDocEvent {
-                list_id,
-                update: outcome.relay.clone(),
-                origin_socket,
-            })))
+        if let Err(e) =
+            self.senders
+                .list_docs
+                .send(EventType::Update(Arc::new(ListDocEvent::local_update(
+                    list_id,
+                    outcome.relay.clone(),
+                    origin_socket,
+                ))))
         {
             warn!(error = %e, "failed to relay list document update");
         }
+        self.db
+            .notify_list_doc_changed(list_id, &activity_ids)
+            .await;
 
         let meta_changed = outcome.meta_changed();
         Applied {

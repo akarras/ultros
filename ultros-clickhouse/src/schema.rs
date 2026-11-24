@@ -28,12 +28,17 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_floor_anchors_table(client).await?;
     apply_listing_events_seed_marker(client).await?;
     apply_listing_alive(client).await?;
+    apply_listing_alive_refresh_marker(client).await?;
     crate::listing_snapshots::apply_schema(client).await?;
     Ok(())
 }
 
 /// Name of the one-row marker table that records the `listing_events` seed.
 pub const LISTING_EVENTS_SEED_MARKER_TABLE: &str = "_listing_events_seed";
+
+/// Name of the one-row marker table that records each completed
+/// [`crate::rollups::refresh_listing_alive`] pass (including empty boards).
+pub const LISTING_ALIVE_REFRESH_MARKER_TABLE: &str = "_listing_alive_refresh";
 
 /// Append-only log of every change Ultros observes to `active_listing`.
 ///
@@ -211,6 +216,25 @@ async fn apply_listing_alive(client: &Client) -> Result<(), ClickHouseError> {
             SETTINGS index_granularity = 8192
             "#,
         )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Marker updated after every successful [`crate::rollups::refresh_listing_alive`]
+/// pass so readers can distinguish a completed empty-board refresh from an
+/// unrefreshed or truncated `listing_alive` table.
+async fn apply_listing_alive_refresh_marker(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(&format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {LISTING_ALIVE_REFRESH_MARKER_TABLE} (
+                refreshed_at DateTime
+            )
+            ENGINE = ReplacingMergeTree(refreshed_at)
+            ORDER BY tuple()
+            "#
+        ))
         .execute()
         .await?;
     Ok(())

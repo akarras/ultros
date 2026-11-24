@@ -14,6 +14,8 @@ use universalis::{ItemId, WorldId};
 
 pub const RECENT_SALE_LIMIT: usize = 6;
 const COLUMNS: &str = "sold_item_id,hq,price_per_item,sold_date,world_id";
+const PROJECTION_COLUMNS: &str = "pg_id,sold_item_id,hq,price_per_item,sold_date,world_id";
+const LEGACY_ID_COLUMNS: &str = "id AS pg_id,sold_item_id,hq,price_per_item,sold_date,world_id";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, FromQueryResult)]
 pub struct BackfillStatus {
@@ -158,6 +160,71 @@ async fn merge_on(tx: &DatabaseTransaction, board: Board, sales: &[RecentSale]) 
 impl UltrosDb {
     pub async fn recent_sales_backfill_status(&self) -> Result<BackfillStatus, DbErr> {
         status_on(&self.db).await
+    }
+
+    pub(crate) fn projection_rows_statement(&self) -> Statement {
+        Statement::from_string(
+            DbBackend::Postgres,
+            format!("SELECT {PROJECTION_COLUMNS} FROM recent_sale_history"),
+        )
+    }
+
+    pub(crate) async fn recent_sales_with_ids_statement(
+        &self,
+        count: i32,
+    ) -> Result<(bool, Statement), DbErr> {
+        if count <= 0 {
+            return Ok((
+                false,
+                Statement::from_string(
+                    DbBackend::Postgres,
+                    format!("SELECT {PROJECTION_COLUMNS} FROM recent_sale_history WHERE FALSE"),
+                ),
+            ));
+        }
+        let status = self.recent_sales_backfill_status().await?;
+        if status.complete
+            && status.retention == RECENT_SALE_LIMIT as i32
+            && count <= status.retention
+        {
+            if count == status.retention {
+                return Ok((true, self.projection_rows_statement()));
+            }
+            return Ok((
+                true,
+                Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    format!(
+                        r#"
+                SELECT {PROJECTION_COLUMNS} FROM (SELECT p.*,ROW_NUMBER() OVER(
+                    PARTITION BY sold_item_id,hq,world_id ORDER BY sold_date DESC,pg_id DESC
+                ) AS position FROM recent_sale_history p) recent WHERE position<=$1
+            "#
+                    ),
+                    [count.into()],
+                ),
+            ));
+        }
+        tracing::warn!(
+            count,
+            complete = status.complete,
+            retention = status.retention,
+            "recent-sales projection unavailable for this limit; using legacy history scan (run recent_sales_backfill after deploying all sale writers)"
+        );
+        Ok((
+            false,
+            Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                format!(
+                    r#"
+            SELECT {LEGACY_ID_COLUMNS} FROM (SELECT h.*,RANK() OVER(
+                PARTITION BY sold_item_id,hq,world_id ORDER BY sold_date DESC
+            ) AS position FROM sale_history h) history WHERE position<=$1
+        "#
+                ),
+                [count.into()],
+            ),
+        ))
     }
 
     pub(crate) async fn recent_sales_statement(&self, count: i32) -> Result<Statement, DbErr> {

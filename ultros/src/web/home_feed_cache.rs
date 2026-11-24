@@ -15,6 +15,14 @@
 
 pub(crate) type HomeFeedCache = super::json_cache::JsonCache<String>;
 
+/// Construct the production home-feed SWR cache (`market_pulse`, `movers`,
+/// region/DC `recentSales`). Runs up to 32 coalesced jobs concurrently and
+/// falls back to inline execution on overflow so cold home-page bursts never
+/// 503 visitors.
+pub(crate) fn new_home_feed_cache() -> HomeFeedCache {
+    super::json_cache::JsonCache::with_swr_budget(512, 32 * 1024 * 1024, 32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

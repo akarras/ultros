@@ -125,6 +125,24 @@ impl UltrosDb {
             .0)
     }
 
+    /// Register a retainer only if `discord_user_id` already exists in
+    /// `discord_user`. Used by authenticated browser routes so a cached request
+    /// racing with account deletion cannot recreate a deleted user row.
+    pub async fn register_retainer_for_existing_user(
+        &self,
+        retainer_id: i32,
+        discord_user_id: u64,
+    ) -> Result<Option<owned_retainers::Model>> {
+        if self.get_discord_user(discord_user_id).await?.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(
+            self.register_retainer_existing_row(retainer_id, discord_user_id)
+                .await?
+                .0,
+        ))
+    }
+
     /// Idempotent, including concurrent requests. A duplicate must preserve
     /// character assignment and ordering, rather than updating either.
     pub async fn register_retainer_with_status(
@@ -136,6 +154,15 @@ impl UltrosDb {
         let _user = self
             .get_or_create_discord_user(discord_user_id, username)
             .await?;
+        self.register_retainer_existing_row(retainer_id, discord_user_id)
+            .await
+    }
+
+    async fn register_retainer_existing_row(
+        &self,
+        retainer_id: i32,
+        discord_user_id: u64,
+    ) -> Result<(owned_retainers::Model, bool)> {
         // validate that the discord user & retainer exist in the database
         let retainer = retainer::Entity::find_by_id(retainer_id)
             .one(&self.db)
