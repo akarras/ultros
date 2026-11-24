@@ -272,6 +272,7 @@ fn AdChoice() -> impl IntoView {
                     ad_slot=slots::SETTINGS_PREVIEW
                     format="horizontal"
                     full_width_responsive=true
+                    lazy=true
                 />
             </div>
         </div>

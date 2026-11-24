@@ -1620,7 +1620,12 @@ fn ListingsContent(
             </div>
 
             <div class="mt-6 flex justify-center">
-                <Ad class="ad-rect-ins" ad_slot=ad_slots::ITEM_BOTTOM />
+                <Ad
+                    class="ad-rect-ins"
+                    ad_slot=ad_slots::ITEM_BOTTOM
+                    lazy=true
+                    refresh_key=Signal::derive(move || format!("{}/{}", world(), item_id()))
+                />
             </div>
         </div>
     }

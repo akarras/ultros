@@ -33,9 +33,13 @@ wasm-bindgen = { version = "0.2" }
 web-sys = { version = "0.3", features = [
     "AbortController",
     "AbortSignal",
+    "DomRect",
     "Window",
     "Document",
     "HtmlDocument",
+    "IntersectionObserver",
+    "IntersectionObserverEntry",
+    "IntersectionObserverInit",
     "Location",
     "Storage",
     "HtmlInputElement",
