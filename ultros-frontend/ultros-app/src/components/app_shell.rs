@@ -1,4 +1,4 @@
-use crate::components::ad::DesktopAdRail;
+use crate::components::ad::{DesktopAdRail, LaptopBottomAnchorAd};
 use crate::components::app_link::provide_router_available;
 use crate::components::mobile_bar::MobileBar;
 use crate::components::search_overlay::SearchOverlay;
@@ -116,6 +116,7 @@ pub fn AppShell(children: Children) -> impl IntoView {
 
             <Show when=allow_ads>
                 <div class="app-shell-ad-rail"><DesktopAdRail /></div>
+                <LaptopBottomAnchorAd />
             </Show>
 
             <SearchOverlay />

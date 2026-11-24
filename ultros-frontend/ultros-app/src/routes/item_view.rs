@@ -1593,6 +1593,21 @@ fn ListingsContent(
                 </div>
             </div>
 
+            // Mid-page banner for viewports without the desktop ad rail: sits
+            // below listings & sales so price lookups stay instant above the
+            // fold, while visitors scrolling to verdicts or charts still view it.
+            <div class="app-inline-ad mt-6">
+                <div class="w-full flex justify-center">
+                    <Ad
+                        class="ad-banner-ins"
+                        ad_slot=ad_slots::ITEM_MID
+                        placement="item_mid"
+                        lazy=true
+                        refresh_key=Signal::derive(move || format!("{}/{}", world(), item_id()))
+                    />
+                </div>
+            </div>
+
             // The sell/craft verdicts and the bulk basket are for sellers and
             // bulk buyers deciding what to do next, so they follow the raw
             // market data. `VerdictSummary` above keeps their one-line
@@ -1623,6 +1638,7 @@ fn ListingsContent(
                 <Ad
                     class="ad-rect-ins"
                     ad_slot=ad_slots::ITEM_BOTTOM
+                    placement="item_bottom"
                     lazy=true
                     refresh_key=Signal::derive(move || format!("{}/{}", world(), item_id()))
                 />

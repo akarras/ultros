@@ -1,3 +1,4 @@
+use crate::components::ad::{Ad, slots as ad_slots};
 use crate::components::meta::{MetaCanonical, MetaDescription, MetaTitle};
 use crate::i18n::*;
 use leptos::prelude::*;
@@ -99,6 +100,16 @@ pub fn BotGuide() -> impl IntoView {
                     ]
                 />
             </section>
+            <div class="app-inline-ad">
+                <div class="w-full flex justify-center">
+                    <Ad
+                        class="ad-banner-ins"
+                        ad_slot=ad_slots::CONTENT_INLINE
+                        placement="bot_guide"
+                        lazy=true
+                    />
+                </div>
+            </div>
         </div>
     }
 }

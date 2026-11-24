@@ -12,6 +12,7 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 use xiv_gen::{ENpcResidentId, ItemId, MapId, NpcPlacement};
 
+use crate::components::ad::{Ad, slots as ad_slots};
 use crate::components::app_link::AppLink;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
@@ -536,6 +537,17 @@ pub fn NpcView() -> impl IntoView {
                             })}
                             {(!exchanges.is_empty()).then(|| view! { <ExchangesSection shops=exchanges.clone() /> })}
                             {(!collectables.is_empty()).then(|| view! { <CollectablesSection groups=collectables.clone() /> })}
+                        </div>
+                    </div>
+                    <div class="app-inline-ad mt-2">
+                        <div class="w-full flex justify-center">
+                            <Ad
+                                class="ad-banner-ins"
+                                ad_slot=ad_slots::CONTENT_INLINE
+                                placement="npc_view"
+                                lazy=true
+                                refresh_key=Signal::derive(move || npc_id.get().to_string())
+                            />
                         </div>
                     </div>
                 </div>

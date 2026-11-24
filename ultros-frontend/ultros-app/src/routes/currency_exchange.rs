@@ -951,6 +951,7 @@ pub fn CurrencyExchange() -> impl IntoView {
                 <Ad
                     class="ad-banner-ins"
                     ad_slot=ad_slots::CURRENCY_INLINE
+                    placement="currency_inline"
                     refresh_key=route_key
                 />
             </div>
