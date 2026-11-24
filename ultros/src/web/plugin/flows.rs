@@ -133,14 +133,27 @@ async fn observe(
 }
 async fn register(
     State(db): State<UltrosDb>,
+    State(senders): State<crate::event::EventSenders>,
     Extension(config): Extension<Arc<PluginConfig>>,
     PluginUser(user): PluginUser,
     Json(request): Json<RegisterRetainers>,
 ) -> Result<Json<Vec<UnverifiedCharacter>>, PluginApiError> {
-    Ok(Json(
-        db.register_plugin_retainers(&user, &config.keys, &request)
-            .await?,
-    ))
+    let result = db
+        .register_plugin_retainers(&user, &config.keys, &request)
+        .await?;
+    if let Ok(owner) = user.session.account_id.parse::<i64>() {
+        let _ = senders.retainers.send(crate::event::EventType::updated(
+            ultros_api_types::user::OwnedRetainer {
+                id: 0,
+                retainer_id: 0,
+                discord_id: owner,
+                character_id: None,
+                weight: None,
+            },
+        ));
+        db.notify_retainer_changed(owner).await;
+    }
+    Ok(Json(result))
 }
 async fn consent(
     State(db): State<UltrosDb>,
@@ -164,14 +177,27 @@ async fn retainer_order(
 }
 async fn retainer_enabled(
     State(db): State<UltrosDb>,
+    State(senders): State<crate::event::EventSenders>,
     PluginUser(user): PluginUser,
     Path(id): Path<i64>,
     Json(request): Json<RetainerEnabled>,
 ) -> Result<Json<Vec<UnverifiedCharacter>>, PluginApiError> {
-    Ok(Json(
-        db.set_plugin_retainer_enabled(&user, id, request.enabled)
-            .await?,
-    ))
+    let result = db
+        .set_plugin_retainer_enabled(&user, id, request.enabled)
+        .await?;
+    if let Ok(owner) = user.session.account_id.parse::<i64>() {
+        let _ = senders.retainers.send(crate::event::EventType::updated(
+            ultros_api_types::user::OwnedRetainer {
+                id: 0,
+                retainer_id: 0,
+                discord_id: owner,
+                character_id: None,
+                weight: None,
+            },
+        ));
+        db.notify_retainer_changed(owner).await;
+    }
+    Ok(Json(result))
 }
 async fn upload(
     State(db): State<UltrosDb>,
@@ -229,11 +255,13 @@ async fn test_notification(
     db.test_plugin_delivery(&user, &request.operation_id)
         .await?;
     super::wake_notifications(
+        &db,
         user.session
             .account_id
             .parse()
             .map_err(|_| ultros_db::plugin::PluginError::Unauthorized)?,
-    );
+    )
+    .await;
     Ok(axum::http::StatusCode::ACCEPTED)
 }
 

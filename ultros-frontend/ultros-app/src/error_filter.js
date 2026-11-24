@@ -153,6 +153,20 @@
 //      Both are reproduced by importing an empty module. Scoped to an unhandled
 //      rejection with no frame inside the pkg bundle, so a genuine failure in
 //      our code still reports.
+//  12. A frameless unhandled rejection whose reason is an `AbortError`
+//      DOMException. That is a fetch (or other abortable API) cancelled by its
+//      owner, with nobody listening for the rejection. Ultros's own cancellable
+//      work always handles it: wasm-bindgen's JsFuture attaches a reject handler
+//      to every promise it awaits (the search box's aborted request lands as an
+//      AppError), and our JS fetches (plugin link bootstrap, wasm symbolicator)
+//      carry a `.catch`. Leptos cancels its own futures with a Rust
+//      AbortHandle, which never produces a DOMException. What is left is a
+//      third-party page script (AdSense, gtag, Cloudflare's edge scripts)
+//      tearing down in-flight requests when a client-side navigation unmounts
+//      its slot. #8170 and #8171 are Firefox 160 sessions where each event lands
+//      ~15 ms after a side-nav click, with Firefox's no-reason abort message
+//      "The operation was aborted. ". Nothing to act on, and the user sees
+//      nothing. Any stack frame, or an onerror mechanism, keeps the event.
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
   // Third-party analytics / ads / consent / CDN-telemetry hosts. Ultros loads
@@ -888,6 +902,21 @@
     return false;
   }
 
+  // Category 12: an abort nobody listened for. See the header.
+  function isUnobservedAbortRejection(event) {
+    try {
+      var ex = firstException(event);
+      if (!ex || ex.type !== "AbortError") return false;
+      var mech = (ex.mechanism && ex.mechanism.type) || "";
+      if (mech.indexOf("onunhandledrejection") === -1) return false;
+      var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
+      return frames.length === 0;
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return false;
+  }
+
   // Category 10: the page is instrumented by Baidu's render crawler, whose
   // hooks break DOM APIs under our code. See the header.
   function isCrawlerHookedPage(event) {
@@ -998,7 +1027,8 @@
       isEmptyPromiseRejection(event) ||
       isHeadlessFetchAbortRejection(event) ||
       isCrawlerHookedPage(event) ||
-      isStubbedBundleModule(event)
+      isStubbedBundleModule(event) ||
+      isUnobservedAbortRejection(event)
     );
   };
 })();

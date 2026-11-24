@@ -65,7 +65,8 @@ pub(crate) async fn profit(
         .analyzer_service
         .get_best_resale(world_id, region_id, resale, &ctx.data().world_cache)
         .await
-        .ok_or(anyhow::anyhow!("Unable to get resale results"))?;
+        .ok_or(anyhow::anyhow!("Unable to get resale results"))?
+        .data;
     let total_results = sales.len();
     // ⚡ Bolt: Optimization: Extract top N elements in O(N) time with select_nth_unstable_by_key before sorting
     if sales.len() > 15 {

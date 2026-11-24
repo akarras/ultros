@@ -20,7 +20,7 @@ use super::error::WebError;
 
 const CACHE_ENTRIES: usize = 64;
 const CACHE_BYTES: usize = 16 * 1024 * 1024;
-const CACHE_CONTROL: &str = "public, max-age=86400";
+const CACHE_CONTROL: &str = "public, max-age=86400, stale-if-error=86400";
 
 // Keep CPU-heavy font rasterization and PNG encoding off the async workers,
 // with bounded parallelism even when crawlers discover many new cards at once.

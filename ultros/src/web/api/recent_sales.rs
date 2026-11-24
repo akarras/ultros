@@ -2,10 +2,11 @@ use std::{sync::Arc, time::Duration};
 
 use axum::{
     Json,
+    body::Bytes,
     extract::{Path, Query, State},
+    http::{HeaderMap, header},
     response::{IntoResponse, Response},
 };
-use axum_extra::headers::{CacheControl, HeaderMapExt};
 use serde::{Deserialize, Serialize};
 use ultros_api_types::recent_sales::{RecentSales, RecentSalesColumnar, SaleData, Sales};
 use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
@@ -13,7 +14,12 @@ use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 use super::is_columnar;
 use crate::{
     analyzer_service::AnalyzerService,
-    web::{error::WebError, home_feed_cache::HomeFeedCache},
+    market_client::MarketClient,
+    web::{
+        error::{SharedWebError, WebError},
+        home_feed_cache::HomeFeedCache,
+        json_cache::SwrLoad,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -45,81 +51,114 @@ fn body(sales: Vec<SaleData>, columnar: bool) -> Body {
 /// that across a region's 30+ worlds would ship megabytes for eight rows.
 const GROUP_RECENT_ITEMS: usize = 50;
 
-pub(crate) async fn recent_sales(
-    State(analyzer): State<AnalyzerService>,
-    State(world_cache): State<Arc<WorldCache>>,
-    State(cache): State<HomeFeedCache>,
-    Path(world): Path<String>,
-    Query(query): Query<RecentSalesQuery>,
-) -> Result<impl IntoResponse, WebError> {
-    let scope = world_cache.lookup_value_by_name(&world)?;
-    let columnar = is_columnar(query.format.as_deref());
+pub(crate) async fn serve_recent_sales(
+    analyzer: &AnalyzerService,
+    world_cache: &WorldCache,
+    cache: &HomeFeedCache,
+    headers: &HeaderMap,
+    world: &str,
+    format: Option<&str>,
+) -> Result<Response, SharedWebError> {
+    let scope = world_cache
+        .lookup_value_by_name(world)
+        .map_err(WebError::from)?;
+    let columnar = is_columnar(format);
     let ttl = Duration::from_secs(30);
     let sales: Vec<_> = match AnySelector::from(&scope) {
-        selector @ AnySelector::World(_) => {
-            analyzer
-                .read_sale_history(&selector, |sales| {
-                    sales
-                        .item_map
-                        .iter()
-                        .map(|(key, sales)| SaleData {
-                            item_id: key.item_id,
-                            hq: key.hq,
-                            sales: sales
-                                .into_iter()
-                                .map(|sale| Sales {
-                                    price_per_unit: sale.price_per_item,
-                                    sale_date: sale.sale_date,
-                                })
-                                .collect(),
-                        })
-                        .collect()
-                })
-                .await?
-        }
+        selector @ AnySelector::World(_) => analyzer
+            .read_sale_history(&selector, |sales| {
+                sales
+                    .item_map
+                    .iter()
+                    .map(|(key, sales)| SaleData {
+                        item_id: key.item_id,
+                        hq: key.hq,
+                        sales: sales
+                            .into_iter()
+                            .map(|sale| Sales {
+                                price_per_unit: sale.price_per_item,
+                                sale_date: sale.sale_date,
+                            })
+                            .collect(),
+                    })
+                    .collect()
+            })
+            .await
+            .map_err(WebError::from)?,
         // The analyzer buffers sales per world, so a datacenter or region is
         // assembled here: each world's newest sale per item, newest first,
-        // one row per (item, hq), capped. Cached because the logged-out home
-        // page sends every visitor in a region to the same scope.
+        // one row per (item, hq), capped. Served through SWR HomeFeedCache
+        // because the logged-out home page sends every visitor in a region to
+        // the same scope.
         _ => {
             let cache_key = format!("recent_sales:{}:{columnar}", scope.get_name());
-            if let Some(body) = cache.get(&cache_key) {
-                return Ok(crate::web::cached_json(body, ttl));
-            }
-            let mut newest = Vec::new();
-            for world_id in world_cache.get_all_worlds_in(&scope).unwrap_or_default() {
-                let world_sales = analyzer
-                    .read_sale_history(&AnySelector::World(world_id), |sales| {
-                        sales
-                            .item_map
-                            .iter()
-                            .filter_map(|(key, sales)| {
-                                sales.first().map(|sale| (key.item_id, key.hq, *sale))
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .await;
-                // A world the analyzer never loaded is skipped rather than
-                // failing the whole region; an uninitialized analyzer still
-                // surfaces as the usual 503.
-                match world_sales {
-                    Ok(rows) => newest.extend(rows),
-                    Err(crate::analyzer_service::AnalyzerError::NotFound) => {}
-                    Err(e) => return Err(e.into()),
-                }
-            }
-            let sales = newest_per_item(newest, GROUP_RECENT_ITEMS);
-            let body =
-                serde_json::to_string(&body(sales, columnar)).map_err(anyhow::Error::from)?;
-            cache.insert(cache_key, body.clone(), ttl);
-            return Ok(crate::web::cached_json(body, ttl));
+            let world_ids = world_cache.get_all_worlds_in(&scope).unwrap_or_default();
+            let analyzer = analyzer.clone();
+            let loaded = cache
+                .get_or_load_swr(
+                    cache_key,
+                    ttl,
+                    Duration::from_secs(150),
+                    move || async move {
+                        let mut newest = Vec::new();
+                        for world_id in world_ids {
+                            let world_sales = analyzer
+                                .read_sale_history(&AnySelector::World(world_id), |sales| {
+                                    sales
+                                        .item_map
+                                        .iter()
+                                        .filter_map(|(key, sales)| {
+                                            sales.first().map(|sale| (key.item_id, key.hq, *sale))
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                                .await;
+                            // A world the analyzer never loaded is skipped rather than
+                            // failing the whole region; an uninitialized analyzer still
+                            // surfaces as the usual 503.
+                            match world_sales {
+                                Ok(rows) => newest.extend(rows),
+                                Err(crate::analyzer_service::AnalyzerError::NotFound) => {}
+                                Err(e) => return Err(e.into()),
+                            }
+                        }
+                        let sales = newest_per_item(newest, GROUP_RECENT_ITEMS);
+                        let bytes = serde_json::to_vec(&body(sales, columnar))
+                            .map_err(anyhow::Error::from)?;
+                        Ok(SwrLoad {
+                            body: Bytes::from(bytes),
+                            cacheable: true,
+                        })
+                    },
+                )
+                .await?;
+            metrics::counter!(
+                "ultros_home_feed_cache_total",
+                "feed" => "recent_sales",
+                "disposition" => loaded.disposition.as_str()
+            )
+            .increment(1);
+            return Ok(crate::web::cached_encoded_json(&loaded, headers, ttl).await);
         }
     };
     let mut response: Response = Json(body(sales, columnar)).into_response();
-    response
-        .headers_mut()
-        .typed_insert(CacheControl::new().with_max_age(ttl));
+    let secs = ttl.as_secs();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        super::public_cache_control(secs, secs * 4, super::PUBLIC_STALE_IF_ERROR_SECS),
+    );
     Ok(response)
+}
+
+pub(crate) async fn recent_sales(
+    State(market): State<Arc<dyn MarketClient>>,
+    headers: HeaderMap,
+    Path(world): Path<String>,
+    Query(query): Query<RecentSalesQuery>,
+) -> Result<Response, SharedWebError> {
+    market
+        .recent_sales(&world, query.format.as_deref(), &headers)
+        .await
 }
 
 /// Newest-first, one row per `(item_id, hq)`, at most `limit` rows.

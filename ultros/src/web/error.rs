@@ -223,6 +223,8 @@ define_error_enum!(ApiError {
     Forbidden(&'static str),
     #[error("{0}")]
     BadRequest(&'static str),
+    #[error("{0}")]
+    BadRequestMessage(String),
     /// A dependency we don't control is down — in practice the Discord
     /// gateway. Distinct from the `anyhow` catch-all because that one is
     /// reported as a 500 *and* has its message replaced by "Internal server
@@ -302,7 +304,7 @@ impl ApiError {
             // failure at error level (the GlitchTip 2218/2210 lineage).
             ApiError::NoAuthCookie | ApiError::DiscordTokenInvalid(_) => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
-            ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            ApiError::BadRequest(_) | ApiError::BadRequestMessage(_) => StatusCode::BAD_REQUEST,
             ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             // A refusal from Discord is an upstream answering "no" to *us*:
             // 502 says the gateway between the caller and Discord is at
@@ -343,6 +345,9 @@ impl ApiError {
             ApiError::Forbidden(_) => ultros_api_types::result::ApiError::Forbidden,
             ApiError::BadRequest(message) => {
                 ultros_api_types::result::ApiError::BadRequest((*message).into())
+            }
+            ApiError::BadRequestMessage(message) => {
+                ultros_api_types::result::ApiError::BadRequest(message.clone())
             }
             // Explicit arm: 503 is a server error, so the fallback below would
             // swap this message for "Internal server error" and defeat the
@@ -497,12 +502,18 @@ impl IntoResponse for ApiError {
             let mut cookies = *cookies;
             // remove the discord user cookie
             info!("Removed invalid Discord token");
-            cookies = cookies.remove(super::oauth::discord_auth_removal_cookie());
+            cookies = cookies
+                .remove(super::oauth::discord_auth_removal_cookie())
+                .remove(super::oauth::discord_auth_iat_removal_cookie());
             // An expired/revoked token is an auth failure like any other, so it
             // gets the same 401. Without an explicit status this tuple response
             // defaulted to `200`.
             return (
                 StatusCode::UNAUTHORIZED,
+                [(
+                    axum::http::header::CACHE_CONTROL,
+                    axum::http::HeaderValue::from_static("no-store"),
+                )],
                 cookies,
                 Json(JsonErrorWrapper::ApiError(
                     ultros_api_types::result::ApiError::NotAuthenticated,
@@ -526,6 +537,10 @@ impl IntoResponse for ApiError {
         }
         (
             status,
+            [(
+                axum::http::header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static("no-store"),
+            )],
             Json(JsonErrorWrapper::ApiError(self.as_api_error())),
         )
             .into_response()
@@ -612,7 +627,15 @@ impl WebError {
         } else {
             tracing::debug!(error = %self, %status, "{title}");
         }
-        (status, message).into_response()
+        (
+            status,
+            [(
+                axum::http::header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static("no-store"),
+            )],
+            message,
+        )
+            .into_response()
     }
 }
 
@@ -653,11 +676,33 @@ mod tests {
             ),
         ] {
             let shared = Arc::new(error);
+            let first = SharedWebError(shared.clone()).into_response();
+            assert_eq!(first.status(), expected);
             assert_eq!(
-                SharedWebError(shared.clone()).into_response().status(),
-                expected
+                first.headers()[axum::http::header::CACHE_CONTROL],
+                "no-store"
             );
-            assert_eq!(SharedWebError(shared).into_response().status(), expected);
+            let second = SharedWebError(shared).into_response();
+            assert_eq!(second.status(), expected);
+            assert_eq!(
+                second.headers()[axum::http::header::CACHE_CONTROL],
+                "no-store"
+            );
+        }
+    }
+
+    #[test]
+    fn api_errors_emit_no_store_cache_control() {
+        for error in [
+            ApiError::NoAuthCookie,
+            ApiError::BadRequest("invalid"),
+            ApiError::ServiceUnavailable("offline"),
+        ] {
+            let response = error.into_response();
+            assert_eq!(
+                response.headers()[axum::http::header::CACHE_CONTROL],
+                "no-store"
+            );
         }
     }
 

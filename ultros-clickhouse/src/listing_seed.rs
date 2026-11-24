@@ -127,7 +127,19 @@ pub async fn run_until_seeded(
             outcome = seed_listing_events(&ch, &pg) => outcome,
         };
         match outcome {
-            Ok(SeedOutcome::AlreadySeeded) | Ok(SeedOutcome::Seeded { .. }) => return,
+            Ok(SeedOutcome::AlreadySeeded) => return,
+            Ok(SeedOutcome::Seeded { .. }) => {
+                // Immediately populate `listing_alive` once seeding finishes so
+                // consumers (`market_pulse`, `listing_stats`) do not wait up to
+                // 15 minutes for the next scheduled refresh tick.
+                if let Err(error) = crate::rollups::refresh_listing_alive(&ch).await {
+                    warn!(
+                        ?error,
+                        "post-seed listing_alive refresh failed; scheduler will retry"
+                    );
+                }
+                return;
+            }
             Err(error) => {
                 metrics::counter!("ultros_listing_events_seed_failures_total").increment(1);
                 warn!(?error, "listing_events seed failed; retrying in 10 minutes");

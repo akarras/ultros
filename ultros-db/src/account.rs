@@ -1,17 +1,33 @@
 use anyhow::Result;
 use sea_orm::{
-    ColumnTrait, Condition, EntityTrait, ModelTrait, QueryFilter, QuerySelect, QueryTrait,
-    TransactionTrait,
+    ColumnTrait, Condition, ConnectionTrait, DbBackend, EntityTrait, ModelTrait, QueryFilter,
+    QuerySelect, QueryTrait, TransactionTrait,
 };
 
 use crate::{
     UltrosDb,
+    auth_revocation::{
+        DEFAULT_AUTH_TOKEN_REVOCATION_TTL_SECS, lock_auth_user_in_txn, notify_auth_revoke_on,
+        upsert_token_revocation_on, upsert_user_revocation_on,
+    },
     entity::{alert, alert_price, discord_user, list, list_item, owned_retainers},
 };
 
 impl UltrosDb {
     pub async fn delete_discord_user(&self, discord_id: i64) -> Result<()> {
+        self.delete_discord_user_and_revoke(discord_id, None).await
+    }
+
+    /// Delete a Discord account and atomically persist its revocation record
+    /// (plus an optional current session token hash) and emit the
+    /// `ultros_auth_revoke` wake-up inside the same transaction.
+    pub async fn delete_discord_user_and_revoke(
+        &self,
+        discord_id: i64,
+        token_hash: Option<&[u8; 32]>,
+    ) -> Result<()> {
         let txn = self.db.begin().await?;
+        lock_auth_user_in_txn(&txn, discord_id).await?;
         let user = discord_user::Entity::find_by_id(discord_id)
             .one(&txn)
             .await?
@@ -54,6 +70,16 @@ impl UltrosDb {
         // Alerts, character claims, endpoints, and group/share memberships
         // already cascade. Keep public character and market data intact.
         user.delete(&txn).await?;
+
+        if txn.get_database_backend() == DbBackend::Postgres {
+            upsert_user_revocation_on(&txn, discord_id).await?;
+            if let Some(hash) = token_hash {
+                upsert_token_revocation_on(&txn, hash, DEFAULT_AUTH_TOKEN_REVOCATION_TTL_SECS)
+                    .await?;
+            }
+            notify_auth_revoke_on(&txn, self.notify_origin(), token_hash, Some(discord_id)).await?;
+        }
+
         txn.commit().await?;
         Ok(())
     }
