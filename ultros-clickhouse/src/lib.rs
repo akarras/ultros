@@ -22,6 +22,7 @@ pub mod quality_filter;
 pub mod queries;
 pub mod rollups;
 pub mod rows;
+pub mod sale_outbox;
 pub mod schema;
 pub mod undercut_pressure;
 pub mod writer;

@@ -1,14 +1,13 @@
 //! `/api/v1/market_heat/{world}` — feeds the home-page Market Heat band.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::{
     Json,
     extract::{Path, State},
+    http::header,
     response::IntoResponse,
 };
-use axum_extra::headers::{CacheControl, HeaderMapExt};
 use ultros_api_types::{
     market_heat::{CategoryHeat, HeatBand, MarketHeatResponse},
     world_helper::{AnySelector, WorldHelper},
@@ -65,8 +64,9 @@ pub(crate) async fn get_market_heat(
         categories,
     })
     .into_response();
-    response
-        .headers_mut()
-        .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(60)));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        super::public_cache_control(60, 300, super::PUBLIC_STALE_IF_ERROR_SECS),
+    );
     Ok(response)
 }

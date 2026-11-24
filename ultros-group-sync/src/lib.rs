@@ -29,7 +29,9 @@ pub mod diff;
 pub mod events;
 pub mod reconcile;
 
-pub use reconcile::{spawn_reconcile, spawn_reconcile_scheduler, sync_rate_limiter};
+pub use reconcile::{
+    schedule_post_import_follow_up, spawn_reconcile, spawn_reconcile_scheduler, sync_rate_limiter,
+};
 
 /// The name to store for a Discord user, per the spec: their global display
 /// name, falling back to their username.

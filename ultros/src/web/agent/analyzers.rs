@@ -36,18 +36,17 @@ use xiv_gen::{
     RecipeLevelTableId,
 };
 
-use crate::analyzer_service::{
-    AnalyzerError, AnalyzerService, ResaleOptions, SoldAmount, SoldWithin,
-};
+use crate::analyzer_service::AnalyzerError;
 use crate::web::api::query::optional_flag;
+use crate::web::api::{BestDealsQuery, ResaleStatsDto, TrendsQuery};
 use crate::web::error::WebError;
 use crate::web::state::WebState;
 
 use super::{
-    AgentEnvelope, SITE_ORIGIN, craft_type_info, db_selector, is_shard_item, item_category_name,
-    item_name, item_url, normalize_crafter_job, recipe_url, recipes_by_output, resolve_item_arg,
-    shared_heavy_semaphore, shared_result_cache, snapshot_cheapest_map, static_planner_graph,
-    tool_url, vendor_price_map, world_name_by_id,
+    AgentEnvelope, SITE_ORIGIN, craft_type_info, db_selector, decode_market_json, is_shard_item,
+    item_category_name, item_name, item_url, normalize_crafter_job, recipe_url, recipes_by_output,
+    resolve_item_arg, shared_heavy_semaphore, shared_result_cache, snapshot_cheapest_map,
+    static_planner_graph, tool_url, vendor_price_map, world_name_by_id,
 };
 
 const DEFAULT_LIMIT: usize = 20;
@@ -202,34 +201,20 @@ fn buy_scope_selector(world: &ResolvedSingleWorld, scope: &str) -> (DbAnySelecto
 }
 
 async fn snapshot_world_sales_by_item(
-    analyzer: &AnalyzerService,
-    world_id: i32,
+    state: &WebState,
+    world: &str,
 ) -> Result<HashMap<(i32, bool), SaleData>, WebError> {
-    let sales = analyzer
-        .read_sale_history(&DbAnySelector::World(world_id), |history| {
-            history
-                .item_map
-                .iter()
-                .map(|(key, rows)| {
-                    (
-                        (key.item_id, key.hq),
-                        SaleData {
-                            item_id: key.item_id,
-                            hq: key.hq,
-                            sales: rows
-                                .into_iter()
-                                .map(|s| Sales {
-                                    price_per_unit: s.price_per_item,
-                                    sale_date: s.sale_date,
-                                })
-                                .collect(),
-                        },
-                    )
-                })
-                .collect::<HashMap<_, _>>()
-        })
-        .await?;
-    Ok(sales)
+    let response = state
+        .market_client
+        .recent_sales(world, None, &Default::default())
+        .await
+        .map_err(|_| WebError::TemporarilyUnavailable)?;
+    let rows: ultros_api_types::recent_sales::RecentSales = decode_market_json(response).await?;
+    Ok(rows
+        .sales
+        .into_iter()
+        .map(|row| ((row.item_id, row.hq), row))
+        .collect())
 }
 
 fn median_sale_price(sale: &SaleData) -> Option<i32> {
@@ -598,7 +583,7 @@ pub(crate) async fn query_item_market(
             }
             _ => db_selector(&scope),
         };
-        if let Ok(cheapest_map) = snapshot_cheapest_map(&state.analyzer_service, &buy_sel).await {
+        if let Ok(cheapest_map) = snapshot_cheapest_map(state, &buy_sel).await {
             let on_hand = EmptyOnHand;
             let opts = CraftingCostOptions {
                 require_hq: false,
@@ -739,43 +724,33 @@ pub(crate) async fn query_flips(
     q: PublicFlipsQuery,
 ) -> Result<AgentEnvelope<Vec<PublicFlipRow>>, WebError> {
     let resolved = resolve_single_world(&state.world_helper, world_arg)?;
-    let filter_sale = match q
-        .filter_sale
-        .as_deref()
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("day") => Some(SoldWithin::Today(SoldAmount(1))),
-        Some("week") => Some(SoldWithin::Week(SoldAmount(1))),
-        Some("month") => Some(SoldWithin::Month(SoldAmount(1))),
-        _ => None,
-    };
+    let filter_sale = q.filter_sale.as_deref().and_then(|s| {
+        ["Day", "Week", "Month"]
+            .into_iter()
+            .find(|value| value.eq_ignore_ascii_case(s))
+            .map(str::to_owned)
+    });
     let show_suspicious = q.show_suspicious.unwrap_or(false);
     let limit = clamp_limit(q.limit);
-
-    let options = ResaleOptions {
-        minimum_profit: q.min_profit,
-        filter_world: None,
-        filter_datacenter: None,
+    let query = BestDealsQuery {
+        min_profit: q.min_profit,
         filter_sale,
-        include_suspicious: show_suspicious,
-        min_velocity_per_day: q.min_velocity,
+        show_suspicious: Some(show_suspicious),
+        min_velocity: q.min_velocity,
         min_buffer_sales: q.min_buffer_sales,
         max_roi: q.max_roi,
+        limit: Some(limit as u32),
     };
-
-    // Propagate analyzer warm-up (`None`) as 503 instead of caching a misleading empty list.
-    let all_rows = state
-        .analyzer_service
-        .get_best_resale(
-            resolved.world_id,
-            resolved.region_id,
-            options,
-            &state.world_cache,
-        )
-        .await
-        .ok_or(AnalyzerError::Uninitialized)?;
-    let total = all_rows.len();
+    let response = state
+        .market_client
+        .best_deals(&resolved.world_name, &query)
+        .await?;
+    let total = response
+        .headers()
+        .get("x-total-count")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok());
+    let all_rows: Vec<ResaleStatsDto> = decode_market_json(response).await?;
     let data = xiv_gen_db::data();
 
     let rows: Vec<PublicFlipRow> = all_rows
@@ -796,7 +771,7 @@ pub(crate) async fn query_flips(
                 est_sale_price: r.est_sale_price,
                 profit: r.profit,
                 roi_pct: (r.return_on_investment * 10.0).round() / 10.0,
-                sold_within: r.sold_within.to_string(),
+                sold_within: r.sold_within,
                 velocity_per_day: r.velocity_per_day.map(|v| (v * 100.0).round() / 100.0),
                 recent_sales_count: r.buffer_sale_count,
                 confidence_band: r.confidence_band,
@@ -808,19 +783,18 @@ pub(crate) async fn query_flips(
         .collect();
 
     let view_url = build_flips_view_url(&resolved.world_name, &q);
-    Ok(
-        AgentEnvelope::new(view_url, Some(resolved.world_name), rows)
-            .with_filters(json!({
-                "min_profit": q.min_profit,
-                "filter_sale": q.filter_sale,
-                "min_velocity": q.min_velocity,
-                "min_buffer_sales": q.min_buffer_sales,
-                "max_roi": q.max_roi,
-                "show_suspicious": show_suspicious,
-                "limit": limit,
-            }))
-            .with_total_matches(total),
-    )
+    let mut envelope =
+        AgentEnvelope::new(view_url, Some(resolved.world_name), rows).with_filters(json!({
+            "min_profit": q.min_profit,
+            "filter_sale": q.filter_sale,
+            "min_velocity": q.min_velocity,
+            "min_buffer_sales": q.min_buffer_sales,
+            "max_roi": q.max_roi,
+            "show_suspicious": show_suspicious,
+            "limit": limit,
+        }));
+    envelope.total_matches = total;
+    Ok(envelope)
 }
 
 pub(crate) async fn http_flips(
@@ -984,12 +958,9 @@ pub(crate) async fn query_recipes(
         .map_err(|_| AnalyzerError::Uninitialized)?;
 
     let (sell_map, buy_map, sales_map) = try_join3(
-        snapshot_cheapest_map(
-            &state.analyzer_service,
-            &DbAnySelector::World(resolved.world_id),
-        ),
-        snapshot_cheapest_map(&state.analyzer_service, &buy_selector),
-        snapshot_world_sales_by_item(&state.analyzer_service, resolved.world_id),
+        snapshot_cheapest_map(state, &DbAnySelector::World(resolved.world_id)),
+        snapshot_cheapest_map(state, &buy_selector),
+        snapshot_world_sales_by_item(state, &resolved.world_name),
     )
     .await?;
 
@@ -1325,11 +1296,8 @@ pub(crate) async fn query_vendor_resale(
         .map_err(|_| AnalyzerError::Uninitialized)?;
 
     let (cheapest_map, sales_map) = futures::future::try_join(
-        snapshot_cheapest_map(
-            &state.analyzer_service,
-            &DbAnySelector::World(resolved.world_id),
-        ),
-        snapshot_world_sales_by_item(&state.analyzer_service, resolved.world_id),
+        snapshot_cheapest_map(state, &DbAnySelector::World(resolved.world_id)),
+        snapshot_world_sales_by_item(state, &resolved.world_name),
     )
     .await?;
 
@@ -1568,11 +1536,8 @@ pub(crate) async fn query_leves(
         .map_err(|_| AnalyzerError::Uninitialized)?;
 
     let (prices, reward_prices) = futures::future::try_join(
-        snapshot_cheapest_map(&state.analyzer_service, &buy_selector),
-        snapshot_cheapest_map(
-            &state.analyzer_service,
-            &DbAnySelector::World(resolved.world_id),
-        ),
+        snapshot_cheapest_map(state, &buy_selector),
+        snapshot_cheapest_map(state, &DbAnySelector::World(resolved.world_id)),
     )
     .await?;
 
@@ -1838,11 +1803,8 @@ pub(crate) async fn query_ventures(
         .map_err(|_| AnalyzerError::Uninitialized)?;
 
     let (cheapest_map, sales_map) = futures::future::try_join(
-        snapshot_cheapest_map(
-            &state.analyzer_service,
-            &DbAnySelector::World(resolved.world_id),
-        ),
-        snapshot_world_sales_by_item(&state.analyzer_service, resolved.world_id),
+        snapshot_cheapest_map(state, &DbAnySelector::World(resolved.world_id)),
+        snapshot_world_sales_by_item(state, &resolved.world_name),
     )
     .await?;
 
@@ -2067,7 +2029,7 @@ pub(crate) async fn query_scrips(
         .await
         .map_err(|_| AnalyzerError::Uninitialized)?;
 
-    let buy_map = snapshot_cheapest_map(&state.analyzer_service, &buy_selector).await?;
+    let buy_map = snapshot_cheapest_map(state, &buy_selector).await?;
     let world_name = resolved.world_name.clone();
 
     let (rows, total) = tokio::task::spawn_blocking(move || {
@@ -2269,19 +2231,25 @@ pub(crate) async fn query_trends(
         .map(str::to_ascii_lowercase)
         .unwrap_or_else(|| "gil_volume".to_string());
 
-    let mut items = match state
-        .analyzer_service
-        .get_trends_v2(resolved.world_id, window_days, show_suspicious)
-        .await
-    {
-        Some(v2) if !v2.is_empty() => v2,
-        v2_opt => {
-            // Fall back to v1 in-memory trends when CH rollup is absent; if both are
-            // unavailable (`None`), return 503 instead of caching a misleading empty list.
-            match state.analyzer_service.get_trends(resolved.world_id).await {
-                Some(v1) => v1.high_velocity,
-                None if v2_opt.is_none() => return Err(AnalyzerError::Uninitialized.into()),
-                None => Vec::new(),
+    let query = TrendsQuery {
+        window: Some(window_days),
+        show_suspicious: Some(show_suspicious),
+    };
+    let response = state
+        .market_client
+        .trends(&resolved.world_name, &query)
+        .await?;
+    let trends = decode_market_json::<ultros_api_types::trends::TrendsData>(response).await;
+    let mut items = match trends {
+        Ok(trends) if !trends.items.is_empty() => trends.items,
+        window_result => {
+            let legacy = state
+                .market_client
+                .trends(&resolved.world_name, &TrendsQuery::default())
+                .await?;
+            match decode_market_json::<ultros_api_types::trends::TrendsData>(legacy).await {
+                Ok(trends) => trends.high_velocity,
+                Err(_) => window_result?.items,
             }
         }
     };
@@ -2488,7 +2456,7 @@ pub(crate) async fn query_plan_craft(
         .await
         .map_err(|_| AnalyzerError::Uninitialized)?;
 
-    let buy_map = snapshot_cheapest_map(&state.analyzer_service, &buy_selector).await?;
+    let buy_map = snapshot_cheapest_map(state, &buy_selector).await?;
     let world_helper = state.world_helper.clone();
     let world_name = resolved.world_name.clone();
 

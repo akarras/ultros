@@ -2,10 +2,11 @@ pub(crate) mod agent;
 mod alerts_websocket;
 pub(crate) mod api;
 pub(crate) mod country_code_decoder;
+pub(crate) mod encoded_body;
 pub(crate) mod error;
 pub(crate) mod home_feed_cache;
 pub(crate) mod item_card;
-mod json_cache;
+pub(crate) mod json_cache;
 #[cfg(feature = "test-auth")]
 mod list_market_fixture;
 pub(crate) mod list_permission;
@@ -59,8 +60,8 @@ use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{
     AddGroupMember, CreateGroup, CreateGroupFromGuild, CreateGroupInvite, CreateGroupRole,
     DiscordGuildRole, DiscordManageableGuild, GroupInvite, GroupMemberSearchResult, GroupRole,
-    GroupSyncResponse, GroupSyncStatus, ImportDiscordRole, RenameGroupRole, UserGroup,
-    UserGroupDetail, UserGroupMember, UserGroupSummary,
+    GroupSyncResponse, ImportDiscordRole, RenameGroupRole, UserGroup, UserGroupDetail,
+    UserGroupMember, UserGroupSummary,
 };
 use ultros_api_types::user::{AssignRetainerCharacter, OwnedRetainer, UserData};
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
@@ -156,8 +157,11 @@ async fn record_list_activity(
     payload: serde_json::Value,
     message: String,
 ) -> Result<ListActivity, ApiError> {
-    db.get_or_create_discord_user(user.id, user.name.clone())
-        .await?;
+    // Require an existing `discord_user` row rather than upserting so a cached
+    // session racing with account deletion can never recreate a deleted user.
+    if db.get_discord_user(user.id).await?.is_none() {
+        return Err(ApiError::NoAuthCookie);
+    }
     let activity = db
         .record_list_activity(
             list_id,
@@ -170,11 +174,13 @@ async fn record_list_activity(
             message,
         )
         .await?;
+    let activity_id = activity.id;
     let activity = ListActivity::from(activity);
     send_list_event(
         senders,
         EventType::added(ListEventData::Activity(activity.clone())),
     );
+    db.notify_list_doc_changed(list_id, &[activity_id]).await;
     Ok(activity)
 }
 
@@ -268,24 +274,47 @@ async fn redirect_legacy_book_host(
     }
 }
 
+async fn publish_retainer_change(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    owner: i64,
+    retainer_id: i32,
+) {
+    let _ = senders
+        .retainers
+        .send(EventType::updated(ultros_api_types::user::OwnedRetainer {
+            id: 0,
+            retainer_id,
+            discord_id: owner,
+            character_id: None,
+            weight: None,
+        }));
+    db.notify_retainer_changed(owner).await;
+}
+
 async fn add_retainer(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     current_user: AuthDiscordUser,
     Path(retainer_id): Path<i32>,
 ) -> Result<Redirect, ApiError> {
     let _register_retainer = db
-        .register_retainer(retainer_id, current_user.id, current_user.name)
-        .await?;
+        .register_retainer_for_existing_user(retainer_id, current_user.id)
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
+    publish_retainer_change(&db, &senders, current_user.id as i64, retainer_id).await;
     Ok(Redirect::to("/retainers/edit"))
 }
 
 async fn remove_owned_retainer(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     current_user: AuthDiscordUser,
     Path(retainer_id): Path<i32>,
 ) -> Result<Redirect, WebError> {
     db.remove_owned_retainer(current_user.id, retainer_id)
         .await?;
+    publish_retainer_change(&db, &senders, current_user.id as i64, retainer_id).await;
     Ok(Redirect::to("/retainers/edit"))
 }
 
@@ -294,7 +323,7 @@ async fn world_item_listings(
     State(db): State<UltrosDb>,
     State(world_cache): State<Arc<WorldCache>>,
     Path((world, item_id)): Path<(String, i32)>,
-) -> Result<axum::Json<CurrentlyShownItem>, WebError> {
+) -> Result<axum::response::Response, WebError> {
     let selected_value = world_cache.lookup_value_by_name(&world)?;
     let worlds = world_cache
         .get_all_worlds_in(&selected_value)
@@ -323,7 +352,12 @@ async fn world_item_listings(
             })
             .collect(),
     };
-    Ok(axum::Json(currently_shown))
+    let mut response = axum::Json(currently_shown).into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        api::public_cache_control(5, 30, api::PUBLIC_STALE_IF_ERROR_SECS),
+    );
+    Ok(response)
 }
 
 /// Compact extended sale history for charting. Returns up to `limit` rows (default
@@ -369,12 +403,12 @@ struct ExtendedHistoryQuery {
 }
 
 #[derive(serde::Deserialize, Debug)]
-struct PriceSeriesQuery {
-    from: Option<i64>,
-    to: Option<i64>,
-    bucket: Option<i64>,
-    group: Option<String>,
-    hq: Option<String>,
+pub(crate) struct PriceSeriesQuery {
+    pub(crate) from: Option<i64>,
+    pub(crate) to: Option<i64>,
+    pub(crate) bucket: Option<i64>,
+    pub(crate) group: Option<String>,
+    pub(crate) hq: Option<String>,
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -752,12 +786,13 @@ pub(crate) async fn build_price_series(
 ///
 /// Caching and serialization live here; the actual series construction is
 /// [`build_price_series`], shared with the item-card PNG handler.
-async fn price_series(
-    State(world_cache): State<Arc<WorldCache>>,
-    State(ch): State<ClickHouseClient>,
-    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
-    Path((world, item_id)): Path<(String, i32)>,
-    axum::extract::Query(query): axum::extract::Query<PriceSeriesQuery>,
+pub(crate) async fn serve_price_series(
+    world_cache: &Arc<WorldCache>,
+    ch: &ClickHouseClient,
+    cache: &crate::web::price_series_cache::PriceSeriesCache,
+    world: &str,
+    item_id: i32,
+    query: &PriceSeriesQuery,
 ) -> Result<axum::response::Response, error::SharedWebError> {
     let group = match query.group.as_deref() {
         Some("region") => SeriesGroup::Region,
@@ -807,25 +842,11 @@ async fn price_series(
     // The cache key is built from the *pre-widening* `bucket_seconds` — the
     // value resolved above from the request, before `build_price_series`'s
     // internal loop potentially widens (or narrows) it in response to how
-    // much data comes back. This is deliberate: checking the cache has to happen before
-    // running the query at all (that's the entire point — skip the CH scan
-    // on a hit), and the widened bucket is only known *after* the query
-    // runs. Building the key post-query would mean always querying first,
-    // defeating the cache.
-    //
-    // The tradeoff: if a client takes the `bucket_seconds` reported in a
-    // widened response and re-requests with that as an explicit `bucket=`
-    // query param, it computes a different cache key than the original
-    // request and misses even though the same rows are cached under the
-    // pre-widen key. This is a pure cache miss, not a correctness bug — the
-    // re-request still runs the same query, widens to the same bucket, and
-    // produces the same (correct) answer, just without benefiting from the
-    // cache. Given widening only triggers on pathologically large requests
-    // (see `MAX_BUCKETS`), this is rare enough not to be worth doubling the
-    // number of cache entries written per request to cover it.
+    // much data comes back.
+    let world_owned = world.to_string();
     let cache_key = crate::web::price_series_cache::CacheKey {
         item_id,
-        scope: world.clone(),
+        scope: world_owned.clone(),
         from: cache_from,
         to: cache_to,
         default_from: query.from.is_none(),
@@ -835,13 +856,15 @@ async fn price_series(
         hq: hq.as_str(),
         bins: 0,
     };
+    let ch = ch.clone();
+    let world_cache = world_cache.clone();
     let body = cache
         .get_or_load(cache_key, ttl, move || async move {
             let payload = build_price_series(
                 &ch,
                 &world_cache,
                 PriceSeriesArgs {
-                    world: &world,
+                    world: &world_owned,
                     item_id,
                     from,
                     to,
@@ -856,6 +879,14 @@ async fn price_series(
         })
         .await?;
     Ok(cached_json(body, ttl))
+}
+
+pub(crate) async fn price_series(
+    State(market): State<Arc<dyn crate::market_client::MarketClient>>,
+    Path((world, item_id)): Path<(String, i32)>,
+    axum::extract::Query(query): axum::extract::Query<PriceSeriesQuery>,
+) -> Result<axum::response::Response, error::SharedWebError> {
+    market.price_series(&world, item_id, &query).await
 }
 
 /// Last-observed cheapest listing, sampled across every world in scope.
@@ -1116,15 +1147,73 @@ fn cached_json(
     ttl: std::time::Duration,
 ) -> axum::response::Response {
     let body = body.into();
+    let secs = ttl.as_secs();
+    let swr = secs.saturating_mul(4).clamp(60, 1_800);
     (
         [
             (
                 axum::http::header::CONTENT_TYPE,
-                "application/json".to_string(),
+                HeaderValue::from_static("application/json"),
             ),
             (
                 axum::http::header::CACHE_CONTROL,
-                format!("public, max-age={}", ttl.as_secs()),
+                api::public_cache_control(secs, swr, api::PUBLIC_STALE_IF_ERROR_SECS),
+            ),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+/// JSON response backed by a pre-compressed [`encoded_body::EncodedBody`] slab,
+/// negotiating `Accept-Encoding` (`zstd`/`br`/`gzip`/`identity`) and setting
+/// `Vary: accept-encoding` alongside age-adjusted public CDN `Cache-Control`
+/// computed *after* encoding finishes so cold-encode latency never extends
+/// downstream freshness or SWR past the origin cache deadline.
+pub(crate) async fn cached_encoded_json(
+    loaded: &json_cache::SwrValue,
+    headers: &axum::http::HeaderMap,
+    ttl: std::time::Duration,
+) -> axum::response::Response {
+    let secs = ttl.as_secs();
+    let swr = std::time::Duration::from_secs(secs.saturating_mul(4).clamp(60, 1_800));
+    let stored_at = loaded.stored_at;
+    let fresh_until = loaded.fresh_until;
+    let stale_until = loaded.stale_until;
+    loaded
+        .body
+        .into_json_response_with_cache_control(
+            headers,
+            move || {
+                api::public_cache_control_for_deadlines(
+                    ttl,
+                    swr,
+                    api::PUBLIC_STALE_IF_ERROR_SECS,
+                    stored_at,
+                    fresh_until,
+                    stale_until,
+                    std::time::Instant::now(),
+                )
+            },
+            &[],
+        )
+        .await
+}
+
+/// JSON response for degraded `200 OK` fallbacks (e.g. ClickHouse soft-fail)
+/// that must never be stored in a browser or CDN cache.
+#[cfg(test)]
+fn uncached_json(body: impl Into<axum::body::Bytes>) -> axum::response::Response {
+    let body = body.into();
+    (
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            ),
+            (
+                axum::http::header::CACHE_CONTROL,
+                HeaderValue::from_static("no-store"),
             ),
         ],
         body,
@@ -1574,31 +1663,31 @@ mod price_series_tests {
     }
 }
 
-async fn refresh_world_item_listings(
-    State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>,
-    Path((world, item_id)): Path<(String, i32)>,
-    State(world_cache): State<Arc<WorldCache>>,
-    State(universalis): State<UniversalisClient>,
-    State(refreshes): State<refresh_jobs::RefreshJobs>,
-    State(listing_events): State<
-        ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
-    >,
-) -> Result<axum::response::Response, WebError> {
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_refresh_world_item_listings(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    world_cache: &WorldCache,
+    universalis: &UniversalisClient,
+    refreshes: &refresh_jobs::RefreshJobs,
+    listing_events: &ultros_clickhouse::writer::Writer<ultros_clickhouse::rows::ListingEventRow>,
+    world: &str,
+    item_id: i32,
+) -> Result<crate::market_client::RefreshOutcome, WebError> {
     #[cfg(feature = "test-auth")]
     if crate::test_market_isolation::enabled() {
-        return Ok((
-            axum::http::StatusCode::CONFLICT,
-            crate::test_market_isolation::BLOCKED,
-        )
-            .into_response());
+        return Ok(crate::market_client::RefreshOutcome::MarketIsolationBlocked);
     }
-    let lookup = world_cache.lookup_value_by_name(&world)?;
+    let lookup = world_cache.lookup_value_by_name(world)?;
     let refresh_key = (AnySelector::from(&lookup), item_id);
     let all_worlds = world_cache
         .get_all_worlds_in(&lookup)
         .ok_or_else(|| anyhow::Error::msg("Unable to get worlds"))?;
-    let world_clone = world.clone();
+    let world_clone = world.to_string();
+    let db = db.clone();
+    let senders = senders.clone();
+    let universalis = universalis.clone();
+    let listing_events = listing_events.clone();
     refreshes
         .run(refresh_key, move || async move {
             let boards: Vec<_> = all_worlds
@@ -1678,12 +1767,37 @@ async fn refresh_world_item_listings(
             Ok(())
         })
         .await?;
-    Ok(Redirect::to(&format!("/item/{world}/{item_id}")).into_response())
+    Ok(crate::market_client::RefreshOutcome::Refreshed)
+}
+
+async fn refresh_world_item_listings(
+    State(market): State<Arc<dyn crate::market_client::MarketClient>>,
+    Path((world, item_id)): Path<(String, i32)>,
+) -> Result<axum::response::Response, WebError> {
+    #[cfg(feature = "test-auth")]
+    if crate::test_market_isolation::enabled() {
+        return Ok((
+            axum::http::StatusCode::CONFLICT,
+            crate::test_market_isolation::BLOCKED,
+        )
+            .into_response());
+    }
+    match market.refresh_listings(&world, item_id).await? {
+        crate::market_client::RefreshOutcome::Refreshed => {
+            Ok(Redirect::to(&format!("/item/{world}/{item_id}")).into_response())
+        }
+        crate::market_client::RefreshOutcome::MarketIsolationBlocked => Ok((
+            axum::http::StatusCode::CONFLICT,
+            "market fixture isolation enabled",
+        )
+            .into_response()),
+    }
 }
 
 pub(crate) use self::state::WebState;
 use self::static_files::{
-    fallback_item_icon, favicon, get_item_icon, get_map, robots, service_worker_js, static_path,
+    ads_txt, fallback_item_icon, favicon, get_item_icon, get_map, robots, service_worker_js,
+    static_path,
 };
 
 pub(crate) async fn invite() -> Redirect {
@@ -1812,19 +1926,25 @@ pub(crate) async fn retainer_search(
 
 pub(crate) async fn claim_retainer(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<(), ApiError> {
-    db.register_retainer(id, user.id, user.name).await?;
+    db.register_retainer_for_existing_user(id, user.id)
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
+    publish_retainer_change(&db, &senders, user.id as i64, id).await;
     Ok(())
 }
 
 pub(crate) async fn unclaim_retainer(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<(), ApiError> {
     db.remove_owned_retainer(user.id, id).await?;
+    publish_retainer_change(&db, &senders, user.id as i64, id).await;
     Ok(())
 }
 
@@ -1955,6 +2075,10 @@ pub(crate) async fn delete_list(
         &senders,
         EventType::removed(ListEventData::List(List::try_from(list)?)),
     );
+    let _ = senders.list_docs.send(EventType::Update(Arc::new(
+        crate::event::ListDocEvent::remote_wake(perm.list_id),
+    )));
+    db.notify_list_deleted(perm.list_id).await;
     Ok(Json(()))
 }
 
@@ -1964,12 +2088,10 @@ pub(crate) async fn create_list(
     user: AuthDiscordUser,
     Json(list): Json<CreateList>,
 ) -> Result<Json<()>, ApiError> {
-    let discord_user = db
-        .get_or_create_discord_user(user.id, user.name.clone())
-        .await?;
     let list = db
-        .create_list(discord_user, list.name, Some(list.wdr_filter.into()))
-        .await?;
+        .create_list_for_existing_user(user.id, list.name, Some(list.wdr_filter.into()))
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
     send_list_event(
         &senders,
         EventType::added(ListEventData::List(List::try_from(list.clone())?)),
@@ -2003,8 +2125,9 @@ pub(crate) async fn adopt_guest_list(
         return Err(ApiError::BadRequest("guest list contains an unknown item"));
     }
     let owner = db
-        .get_or_create_discord_user(user.id, user.name.clone())
-        .await?;
+        .get_discord_user(user.id)
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
     let outcome = db.adopt_guest_list_with_outcome(owner.id, request).await?;
     if let Some((list, items, activity)) = outcome.created {
         // A new list has no document subscribers yet. Publish the same creation,
@@ -2047,8 +2170,9 @@ pub(crate) async fn make_list_online(
         return Err(ApiError::BadRequest("list contains an unknown item"));
     }
     let owner = db
-        .get_or_create_discord_user(user.id, user.name.clone())
-        .await?;
+        .get_discord_user(user.id)
+        .await?
+        .ok_or(ApiError::NoAuthCookie)?;
     let outcome = db.make_list_online(owner.id, &request).await?;
     if let Some((list, items, activity)) = outcome.created {
         send_list_event(
@@ -2445,33 +2569,41 @@ pub(crate) async fn create_group(
 pub(crate) async fn get_group_discord_guilds(
     State(db): State<UltrosDb>,
     State(cache): State<AuthUserCache>,
+    State(bot_admin): State<Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     cookies: PrivateCookieJar,
 ) -> Result<Json<Vec<DiscordManageableGuild>>, ApiError> {
-    let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
-        ApiError::from(anyhow::anyhow!(
-            "Discord bot is not connected; cannot load your servers right now"
-        ))
-    })?;
-    let guilds = crate::web::api::discord_lookup::manageable_guilds_for_user(
-        &ctx,
-        user.id as i64,
+    if cookies
+        .get(crate::web::oauth::DISCORD_AUTH_COOKIE)
+        .is_none()
+    {
+        return Err(ApiError::NoAuthCookie);
+    }
+    let bot_guild_ids = bot_admin.bot_guild_ids().await?;
+    let candidates = crate::web::api::discord_lookup::discover_oauth_candidate_guild_ids(
+        &bot_guild_ids,
         &cookies,
         &cache,
     )
     .await?;
+    if matches!(candidates.as_deref(), Some([])) {
+        return Ok(Json(Vec::new()));
+    }
+    let guilds = bot_admin
+        .manageable_guilds(user.id as i64, candidates)
+        .await?;
 
-    let guild_ids: Vec<i64> = guilds.iter().map(|(id, _, _)| *id).collect();
+    let guild_ids: Vec<i64> = guilds.iter().map(|g| g.id).collect();
     let existing = db.group_ids_for_guilds(&guild_ids).await?;
 
     Ok(Json(
         guilds
             .into_iter()
-            .map(|(id, name, icon_url)| DiscordManageableGuild {
-                id,
-                name,
-                icon_url,
-                existing_group_id: existing.get(&id).copied(),
+            .map(|guild| DiscordManageableGuild {
+                id: guild.id,
+                name: guild.name,
+                icon_url: guild.icon_url,
+                existing_group_id: existing.get(&guild.id).copied(),
             })
             .collect(),
     ))
@@ -2479,30 +2611,20 @@ pub(crate) async fn get_group_discord_guilds(
 
 pub(crate) async fn create_group_from_guild(
     State(db): State<UltrosDb>,
+    State(bot_admin): State<Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     Json(CreateGroupFromGuild { guild_id }): Json<CreateGroupFromGuild>,
 ) -> Result<Json<UserGroup>, ApiError> {
-    let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
-        ApiError::from(anyhow::anyhow!(
-            "Discord bot is not connected; cannot create a group from a server right now"
-        ))
-    })?;
-
     // Re-check against Discord rather than trusting the picker: the guild id
     // arrives from the client, and the user's roles may have changed since the
     // list was rendered. This also proves the bot is in the guild, and hands
     // back the name and icon so a group can't claim to be a server it isn't.
-    let guild =
-        crate::web::api::discord_lookup::require_manageable_guild(&ctx, guild_id, user.id as i64)
-            .await?;
+    let guild = bot_admin
+        .require_manageable_guild(guild_id, user.id as i64)
+        .await?;
 
     let group = db
-        .create_group_from_guild(
-            guild.name.clone(),
-            user.id as i64,
-            guild_id,
-            guild.icon_url(),
-        )
+        .create_group_from_guild(guild.name, user.id as i64, guild_id, guild.icon_url)
         .await?;
     Ok(Json(UserGroup::from(group)))
 }
@@ -2661,34 +2783,17 @@ pub(crate) async fn remove_group_member(
 
 // --- Group roles ---
 
-/// What every group endpoint that talks to Discord says when the gateway is
-/// down, so an offline bot reads the same way everywhere instead of surfacing
-/// as an opaque 500.
-///
-/// A shared constant rather than a `fn` returning `Result<_, ApiError>`:
-/// `ApiError` is a large error type, and a *non-async* function handing one
-/// back beside a pointer-sized `Ok` trips `clippy::result_large_err`.
-const DISCORD_BOT_OFFLINE: &str =
-    "The Ultros Discord bot is not connected right now; try again in a moment";
-
-/// Owner-only access to a group's *live* Discord guild: proves the caller owns
-/// the group, that it is still linked (a frozen group has no guild to ask),
-/// and that the bot is connected.
-async fn owned_guild(
-    db: &UltrosDb,
-    group_id: i32,
-    user_id: i64,
-) -> Result<(i64, Arc<poise::serenity_prelude::Context>), ApiError> {
+/// Owner-only access to a group's *live* Discord guild id: proves the caller
+/// owns the group and that it is still linked (a frozen group has no guild to
+/// ask).
+async fn owned_guild_id(db: &UltrosDb, group_id: i32, user_id: i64) -> Result<i64, ApiError> {
     let group = db.get_owned_group(group_id, user_id).await?;
-    let guild_id = group
+    group
         .guild_id
         .filter(|_| group.frozen_reason.is_none())
         .ok_or(ApiError::BadRequest(
             "That group is not linked to a Discord server",
-        ))?;
-    let ctx = crate::alerts::delivery::get_serenity_ctx()
-        .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
-    Ok((guild_id, ctx))
+        ))
 }
 
 /// Re-read one role together with its member count.
@@ -2729,10 +2834,11 @@ pub(crate) async fn get_group_detail(
 /// letting the owner walk into a 400.
 pub(crate) async fn get_group_discord_roles(
     State(db): State<UltrosDb>,
+    State(bot_admin): State<Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
 ) -> Result<Json<Vec<DiscordGuildRole>>, ApiError> {
-    let (guild_id, ctx) = owned_guild(&db, id, user.id as i64).await?;
+    let guild_id = owned_guild_id(&db, id, user.id as i64).await?;
     let imported: HashMap<i64, i32> = db
         .get_group_roles(id, user.id as i64)
         .await?
@@ -2740,19 +2846,17 @@ pub(crate) async fn get_group_discord_roles(
         .map(GroupRole::from)
         .filter_map(|role| role.discord_role_id.map(|discord| (discord, role.id)))
         .collect();
-    let roles = crate::web::api::discord_lookup::importable_guild_roles(&ctx, guild_id).await?;
+    let roles = bot_admin.importable_guild_roles(guild_id).await?;
     Ok(Json(
         roles
             .into_iter()
-            .map(
-                |(discord_role_id, name, position, color)| DiscordGuildRole {
-                    id: discord_role_id,
-                    name,
-                    position,
-                    color,
-                    existing_role_id: imported.get(&discord_role_id).copied(),
-                },
-            )
+            .map(|role| DiscordGuildRole {
+                id: role.id,
+                name: role.name,
+                position: role.position,
+                color: role.color,
+                existing_role_id: imported.get(&role.id).copied(),
+            })
             .collect(),
     ))
 }
@@ -2777,72 +2881,86 @@ pub(crate) async fn create_group_role(
 /// large server is not a request anybody would sit through.
 pub(crate) async fn import_group_discord_role(
     State(db): State<UltrosDb>,
+    State(bot_admin): State<Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
     Json(ImportDiscordRole { discord_role_id }): Json<ImportDiscordRole>,
 ) -> Result<Json<GroupRole>, ApiError> {
-    let (guild_id, ctx) = owned_guild(&db, id, user.id as i64).await?;
+    let guild_id = owned_guild_id(&db, id, user.id as i64).await?;
     // Re-read from Discord rather than trusting the picker's payload: the name
     // and position are Discord's to supply, and going through the same
     // importable filter is what refuses a managed or bot role here too.
-    let (_, name, position, _) =
-        crate::web::api::discord_lookup::importable_guild_roles(&ctx, guild_id)
-            .await?
-            .into_iter()
-            .find(|(role_id, ..)| *role_id == discord_role_id)
-            .ok_or(ApiError::BadRequest(
-                "That role no longer exists in the Discord server, or cannot be imported",
-            ))?;
+    let imported_role = bot_admin
+        .importable_guild_roles(guild_id)
+        .await?
+        .into_iter()
+        .find(|role| role.id == discord_role_id)
+        .ok_or(ApiError::BadRequest(
+            "That role no longer exists in the Discord server, or cannot be imported",
+        ))?;
     let role = db
-        .import_discord_role(id, user.id as i64, discord_role_id, name, position)
+        .import_discord_role(
+            id,
+            user.id as i64,
+            discord_role_id,
+            imported_role.name,
+            imported_role.position,
+        )
         .await?;
     // The role exists but has nobody in it until a reconcile runs, which
     // without this would be up to six hours of the feature looking broken.
-    // Recorded against the rate limiter too, so pressing "Sync now" on the
-    // page that just imported does not walk the same guild a second time.
-    // `spawn_reconcile` gives the window back if that reconcile does not
-    // actually run, so a bot that is offline does not leave the owner told
-    // "recently synced" over a `last_synced_at` that never moved.
-    crate::group_sync::sync_rate_limiter().record(guild_id, std::time::Instant::now());
-    crate::group_sync::spawn_reconcile(db, guild_id);
+    // Recorded against the bot's global rate limiter too, so pressing "Sync
+    // now" on the page that just imported does not walk the same guild a
+    // second time. If this follow-up trigger hits a transient RPC error after
+    // the DB write already committed, log and return the imported role — the
+    // periodic scheduler (or a manual sync) will reconcile it.
+    if let Err(err) = bot_admin
+        .trigger_group_sync(
+            id,
+            user.id as i64,
+            crate::bot_admin_client::GroupSyncTrigger::PostRoleImport,
+        )
+        .await
+    {
+        tracing::warn!(
+            group_id = id,
+            guild_id,
+            ?err,
+            "discord role imported, but triggering immediate group reconcile failed"
+        );
+    }
     Ok(Json(GroupRole::from(GroupRoleReturn(role, 0))))
 }
 
 /// Reconcile this group's Discord membership now.
 ///
 /// `Ran` means "started": the walk happens off the request path, and the page
-/// polls `last_synced_at` to see it finish. Rate limited per guild, because
-/// the work is a full member listing and the trigger is a button.
-///
-/// The window has to be claimed here, before the walk is spawned, so this
-/// request can answer. `spawn_reconcile` releases it again whenever the walk
-/// did not actually sync anything — the bot is offline, Discord refused, a
-/// reconcile of the guild was already running — because otherwise a failed
-/// press would answer `RecentlySynced` for five minutes over a
-/// `last_synced_at` that is null or days old.
+/// polls `last_synced_at` to see it finish. Rate limited per guild on the bot
+/// process, because the work is a full member listing and the trigger is a
+/// button.
 pub(crate) async fn sync_group(
     State(db): State<UltrosDb>,
+    State(bot_admin): State<Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
 ) -> Result<Json<GroupSyncResponse>, ApiError> {
-    // Also proves ownership, that the group is still linked to a guild, and
-    // that the bot is connected to answer for it.
-    let (guild_id, _ctx) = owned_guild(&db, id, user.id as i64).await?;
+    // Proves ownership and that the group is still linked to a live guild.
+    let _guild_id = owned_guild_id(&db, id, user.id as i64).await?;
     let last_synced_at = db
         .get_group_roles(id, user.id as i64)
         .await?
         .into_iter()
         .filter_map(|GroupRoleReturn(role, _)| role.last_synced_at)
         .max();
-    if !crate::group_sync::sync_rate_limiter().try_acquire(guild_id, std::time::Instant::now()) {
-        return Ok(Json(GroupSyncResponse {
-            status: GroupSyncStatus::RecentlySynced,
-            last_synced_at,
-        }));
-    }
-    crate::group_sync::spawn_reconcile(db, guild_id);
+    let status = bot_admin
+        .trigger_group_sync(
+            id,
+            user.id as i64,
+            crate::bot_admin_client::GroupSyncTrigger::Manual,
+        )
+        .await?;
     Ok(Json(GroupSyncResponse {
-        status: GroupSyncStatus::Ran,
+        status,
         last_synced_at,
     }))
 }
@@ -2923,6 +3041,7 @@ pub(crate) struct MemberSearchQuery {
 /// the people who have logged into Ultros.
 pub(crate) async fn search_group_member_candidates(
     State(db): State<UltrosDb>,
+    State(bot_admin): State<Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
     Query(MemberSearchQuery { q }): Query<MemberSearchQuery>,
@@ -2948,32 +3067,20 @@ pub(crate) async fn search_group_member_candidates(
                 .collect(),
         ));
     };
-    let ctx = crate::alerts::delivery::get_serenity_ctx()
-        .ok_or(ApiError::ServiceUnavailable(DISCORD_BOT_OFFLINE))?;
-    let members = crate::web::api::discord_lookup::search_guild_members(
-        &ctx,
-        guild_id,
-        query,
-        ultros_db::group_roles::MEMBER_SEARCH_LIMIT,
-    )
-    .await?;
-    let ids: Vec<i64> = members.iter().map(|m| m.user.id.get() as i64).collect();
+    let members = bot_admin
+        .search_guild_members(guild_id, query, ultros_db::group_roles::MEMBER_SEARCH_LIMIT)
+        .await?;
+    let ids: Vec<i64> = members.iter().map(|m| m.user_id).collect();
     let on_ultros = db.discord_users_present(&ids).await?;
     Ok(Json(
         members
-            .iter()
+            .into_iter()
             .map(|member| {
-                let user_id = member.user.id.get() as i64;
+                let user_id = member.user_id;
                 GroupMemberSearchResult {
                     user_id,
-                    // Discord matched on nickname *and* username, but the name
-                    // shown here is the one the picker posts back to
-                    // `add_group_member`, which upserts it into the global
-                    // `discord_user` row. A nickname must never get that far:
-                    // it would rename the person everywhere on Ultros. See
-                    // `group_sync::global_display_name`.
-                    display_name: crate::group_sync::global_display_name(&member.user),
-                    avatar_url: Some(member.face()),
+                    display_name: member.display_name,
+                    avatar_url: Some(member.avatar_url),
                     on_ultros: on_ultros.contains(&user_id),
                 }
             })
@@ -2994,6 +3101,7 @@ mod group_role_route_tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode, header};
     use tower::ServiceExt;
+    use ultros_api_types::user::GroupSyncStatus;
 
     use super::*;
 
@@ -3657,13 +3765,39 @@ async fn assign_retainer_character(
 async fn delete_user(
     user: AuthDiscordUser,
     State(cache): State<AuthUserCache>,
+    State(config): State<oauth::DiscordAuthConfig>,
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     cookie_jar: PrivateCookieJar,
 ) -> Result<(PrivateCookieJar, Json<()>), ApiError> {
     let id = user.id;
-    db.delete_discord_user(id as i64).await?;
+    let current_token = cookie_jar
+        .get(oauth::DISCORD_AUTH_COOKIE)
+        .map(|cookie| cookie.value().to_string());
+    let token_hash = current_token
+        .as_deref()
+        .map(ultros_db::auth_revocation::hash_auth_token);
+    db.delete_discord_user_and_revoke(id as i64, token_hash.as_ref())
+        .await?;
     cache.remove_user(id).await;
-    let cookie_jar = cookie_jar.remove(oauth::discord_auth_removal_cookie());
+    let _ = senders
+        .auth_revocations
+        .send(crate::event::AuthRevocationSignal::User(id));
+    if let Some(hash) = token_hash.as_ref() {
+        cache.remove_token_hash(hash).await;
+        let _ = senders
+            .auth_revocations
+            .send(crate::event::AuthRevocationSignal::TokenHash(*hash));
+    }
+    if let Some(token_value) = current_token {
+        oauth::revoke_discord_token_best_effort(&config, token_value).await;
+        if let Some(hash) = token_hash.as_ref() {
+            cache.remove_token_hash(hash).await;
+        }
+    }
+    let cookie_jar = cookie_jar
+        .remove(oauth::discord_auth_removal_cookie())
+        .remove(oauth::discord_auth_iat_removal_cookie());
     Ok((cookie_jar, Json(())))
 }
 
@@ -4040,6 +4174,18 @@ fn app_commit_header_layer() -> SetResponseHeaderLayer<HeaderValue> {
     )
 }
 
+async fn web_healthz(State(roles): State<crate::roles::Roles>) -> impl IntoResponse {
+    let mut response = Json(serde_json::json!({
+        "status": "ok",
+        "roles": roles.active_names(),
+    }))
+    .into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
 pub(crate) async fn start_web(
     state: WebState,
     prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
@@ -4056,6 +4202,7 @@ pub(crate) async fn start_web(
     );
     let ssr_api = ultros_app::ssr_api::SsrApi::new(api.clone().with_state(state.clone()));
     let app = api
+        .route("/healthz", get(web_healthz))
         .route("/alerts/websocket", get(connect_websocket))
         .route(
             "/item/refresh/{worldid}/{itemid}",
@@ -4082,6 +4229,7 @@ pub(crate) async fn start_web(
         .route("/invitebot", get(invite))
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
+        .route("/ads.txt", get(ads_txt))
         .route("/service-worker.js", get(service_worker_js))
         .route("/itemcard/{world}/{id}", get(item_card))
         .route(
@@ -4467,6 +4615,77 @@ mod pressure_route_tests {
         assert!(year / bucket <= 2000, "{bucket}");
         // 1 h → 8760 buckets (too many); 6 h → 1460 fits.
         assert_eq!(bucket, 6 * 3600);
+    }
+}
+
+#[cfg(test)]
+mod cache_header_tests {
+    use super::{cached_json, uncached_json};
+    use crate::web::error::WebError;
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode, header},
+        routing::get,
+    };
+    use std::time::Duration;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn router_emits_public_cdn_headers_for_healthy_and_no_store_for_degraded_or_errors() {
+        let app = Router::new()
+            .route(
+                "/healthy",
+                get(|| async { cached_json("{}", Duration::from_secs(30)) }),
+            )
+            .route("/degraded", get(|| async { uncached_json("{}") }))
+            .route(
+                "/missing",
+                get(|| async { Err::<&'static str, WebError>(WebError::NotFound) }),
+            );
+
+        let healthy = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/healthy")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(healthy.status(), StatusCode::OK);
+        let healthy_cc = healthy.headers()[header::CACHE_CONTROL].to_str().unwrap();
+        assert_eq!(
+            healthy_cc,
+            "public, max-age=30, stale-while-revalidate=120, stale-if-error=600"
+        );
+        assert!(!healthy_cc.contains("s-maxage"));
+
+        let degraded = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/degraded")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(degraded.status(), StatusCode::OK);
+        assert_eq!(degraded.headers()[header::CACHE_CONTROL], "no-store");
+
+        let missing = app
+            .oneshot(
+                Request::builder()
+                    .uri("/missing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(missing.headers()[header::CACHE_CONTROL], "no-store");
     }
 }
 

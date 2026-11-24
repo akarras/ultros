@@ -26,16 +26,13 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tokio::sync::Semaphore;
 use tower_http::cors::{Any, CorsLayer};
-use ultros_api_types::cheapest_listings::{
-    CheapestListingData, CheapestListingMapKey, CheapestListingsMap,
-};
+use ultros_api_types::cheapest_listings::{CheapestListings, CheapestListingsMap};
 use ultros_api_types::world_helper::{AnyResult, WorldHelper};
 use ultros_calc::recipe_planner;
 use ultros_crafting::cost::CRYSTAL_SEARCH_CATEGORY;
 use ultros_db::world_data::world_cache::AnySelector as DbAnySelector;
 use xiv_gen::{Item, ItemId, ItemUiCategoryId, Recipe};
 
-use crate::analyzer_service::AnalyzerService;
 use crate::search_service::SearchService;
 use crate::web::error::WebError;
 use crate::web::state::WebState;
@@ -485,37 +482,70 @@ pub(crate) fn db_selector(result: &AnyResult<'_>) -> DbAnySelector {
     }
 }
 
-/// Snapshot cheapest listings from `AnalyzerService` into a `CheapestListingsMap` usable by `ultros_crafting`.
+/// Load a crafting price snapshot through the configured market client.
 pub(crate) async fn snapshot_cheapest_map(
-    analyzer: &AnalyzerService,
+    state: &WebState,
     selector: &DbAnySelector,
 ) -> Result<CheapestListingsMap, WebError> {
-    let map = analyzer
-        .read_cheapest_items(selector, |listings| {
-            listings
-                .item_map
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        CheapestListingMapKey {
-                            item_id: key.item_id,
-                            hq: key.hq,
-                        },
-                        CheapestListingData {
-                            price: value.price,
-                            world_id: value.world_id,
-                        },
-                    )
-                })
-                .collect::<HashMap<_, _>>()
-        })
-        .await?;
-    Ok(CheapestListingsMap { map })
+    let scope = state.world_cache.lookup_selector(selector)?;
+    let response = state
+        .market_client
+        .cheapest(scope.get_name(), None, &Default::default())
+        .await
+        .map_err(|_| WebError::TemporarilyUnavailable)?;
+    Ok(decode_market_json::<CheapestListings>(response)
+        .await?
+        .into())
+}
+
+/// Every agent surface may cache a successful result. Propagate degraded market
+/// responses as temporary failures rather than caching warm-up or fallback data.
+async fn decode_market_json<T: serde::de::DeserializeOwned>(
+    response: axum::response::Response,
+) -> Result<T, WebError> {
+    if !response.status().is_success()
+        || response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .split(',')
+                    .any(|part| part.trim().eq_ignore_ascii_case("no-store"))
+            })
+    {
+        return Err(WebError::TemporarilyUnavailable);
+    }
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024 * 1024)
+        .await
+        .map_err(|_| WebError::TemporarilyUnavailable)?;
+    serde_json::from_slice(&bytes).map_err(|_| WebError::TemporarilyUnavailable)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn market_warmup_is_not_a_cacheable_empty_result() {
+        use axum::{Json, response::IntoResponse};
+        let mut warming = Json(Vec::<i32>::new()).into_response();
+        warming.headers_mut().insert(
+            header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
+        );
+        assert!(matches!(
+            decode_market_json::<Vec<i32>>(warming).await,
+            Err(WebError::TemporarilyUnavailable)
+        ));
+        let ready = Json(Vec::<i32>::new()).into_response();
+        assert!(
+            decode_market_json::<Vec<i32>>(ready)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     #[test]
     fn canonical_urls_encode_world_and_query_params() {
