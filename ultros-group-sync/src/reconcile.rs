@@ -659,6 +659,11 @@ where
                                 ?error,
                                 "failed to mark post-import sync completed in Postgres"
                             );
+                            if queue.finish_or_continue(guild_id) {
+                                wait = Duration::from_secs(1);
+                                continue;
+                            }
+                            guard.released_cleanly = true;
                             return synced_runs;
                         }
                         // Loop immediately: if a newer import bumped
@@ -666,7 +671,19 @@ where
                         // see `NotYetDue(remaining)` and schedule it cleanly.
                     }
                     ReconcileOutcome::NoDiscordRoles => {
-                        let _ = complete(due_token).await;
+                        if let Err(error) = complete(due_token).await {
+                            warn!(
+                                guild_id,
+                                ?error,
+                                "failed to clear post-import sync marker for guild with no Discord roles"
+                            );
+                            if queue.finish_or_continue(guild_id) {
+                                wait = Duration::from_secs(1);
+                                continue;
+                            }
+                            guard.released_cleanly = true;
+                            return synced_runs;
+                        }
                     }
                     ReconcileOutcome::AlreadyInFlight => {
                         // Another path grabbed IN_FLIGHT between `wait_ready`
@@ -676,7 +693,15 @@ where
                     }
                     ReconcileOutcome::Failed => {
                         // Keep `follow_up_due_at` durable in Postgres for
-                        // recovery instead of spinning tightly on Discord 403/5xx.
+                        // recovery instead of spinning tightly on Discord
+                        // 403/5xx, UNLESS a newer import arrived while this
+                        // attempt was running (which relied on our active
+                        // queue reservation to pick up its follow-up).
+                        if queue.finish_or_continue(guild_id) {
+                            wait = Duration::from_millis(250);
+                            continue;
+                        }
+                        guard.released_cleanly = true;
                         return synced_runs;
                     }
                 }
@@ -688,6 +713,12 @@ where
                         guild_id,
                         "post-import follow-up claim remained NotYetDue after retries"
                     );
+                    if queue.finish_or_continue(guild_id) {
+                        not_yet_due_retries = 0;
+                        wait = Duration::from_secs(1);
+                        continue;
+                    }
+                    guard.released_cleanly = true;
                     return synced_runs;
                 }
                 wait = remaining + Duration::from_millis(25);
@@ -707,6 +738,11 @@ where
                     ?error,
                     "failed to inspect durable post-import follow-up state"
                 );
+                if queue.finish_or_continue(guild_id) {
+                    wait = Duration::from_secs(1);
+                    continue;
+                }
+                guard.released_cleanly = true;
                 return synced_runs;
             }
         }
@@ -1300,5 +1336,141 @@ mod tests {
             !cleared.load(Ordering::SeqCst),
             "failed reconcile must leave durable row intact for recovery"
         );
+    }
+
+    /// If a reconcile attempt fails while a newer role import arrived and
+    /// relied on the active runner's reservation, the runner MUST consume the
+    /// dirty flag and schedule the newer import instead of dropping it until
+    /// restart.
+    #[tokio::test]
+    async fn failed_reconcile_still_runs_follow_up_for_mid_run_import() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+
+        let pending: Arc<Mutex<Option<(Instant, PostImportDueToken)>>> = Arc::new(Mutex::new(
+            Some((Instant::now(), PostImportDueToken::from_unix_micros(1))),
+        ));
+        let next_token = Arc::new(AtomicI64::new(10));
+        let queue = Arc::new(FollowUpQueue::new());
+        let guild_id = 88;
+        assert!(queue.enqueue(guild_id));
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let pending_begin = pending.clone();
+        let next_begin = next_token.clone();
+        let pending_sync = pending.clone();
+        let next_sync = next_token.clone();
+        let queue_sync = queue.clone();
+        let attempts_sync = attempts.clone();
+        let pending_complete = pending.clone();
+
+        let synced = run_follow_up_with(
+            &queue,
+            guild_id,
+            Duration::ZERO,
+            CancellationToken::new(),
+            || async { true },
+            move || {
+                let pending = pending_begin.clone();
+                let next_token = next_begin.clone();
+                async move {
+                    let mut guard = pending.lock().unwrap();
+                    let Some((due_at, _)) = *guard else {
+                        return Ok(FollowUpLease::NonePending);
+                    };
+                    let now = Instant::now();
+                    if due_at > now {
+                        return Ok(FollowUpLease::NotYetDue(due_at - now));
+                    }
+                    let token = PostImportDueToken::from_unix_micros(
+                        next_token.fetch_add(1, Ordering::SeqCst),
+                    );
+                    *guard = Some((now, token));
+                    Ok(FollowUpLease::Ready { due_token: token })
+                }
+            },
+            move || {
+                let n = attempts_sync.fetch_add(1, Ordering::SeqCst);
+                let pending = pending_sync.clone();
+                let next_token = next_sync.clone();
+                let queue = queue_sync.clone();
+                async move {
+                    if n == 0 {
+                        // Mid-run import arrives before run 0 fails.
+                        let newer = PostImportDueToken::from_unix_micros(
+                            next_token.fetch_add(1, Ordering::SeqCst),
+                        );
+                        *pending.lock().unwrap() =
+                            Some((Instant::now() + Duration::from_millis(20), newer));
+                        assert!(!queue.enqueue(guild_id));
+                        ReconcileOutcome::Failed
+                    } else {
+                        ReconcileOutcome::Synced
+                    }
+                }
+            },
+            move |due_token| {
+                let pending = pending_complete.clone();
+                async move {
+                    let mut guard = pending.lock().unwrap();
+                    if let Some((_, current)) = *guard
+                        && current == due_token
+                    {
+                        *guard = None;
+                        return Ok(true);
+                    }
+                    Ok(false)
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(synced, 1);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert!(pending.lock().unwrap().is_none());
+        assert!(queue.enqueue(guild_id));
+        queue.force_release(guild_id);
+    }
+
+    /// If `complete` fails after `NoDiscordRoles`, the runner must log and exit
+    /// cleanly instead of tight-looping on lease + reconcile.
+    #[tokio::test]
+    async fn no_discord_roles_completion_error_exits_without_spinning() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let queue = Arc::new(FollowUpQueue::new());
+        let guild_id = 91;
+        assert!(queue.enqueue(guild_id));
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let attempts_sync = attempts.clone();
+
+        let synced = run_follow_up_with(
+            &queue,
+            guild_id,
+            Duration::ZERO,
+            CancellationToken::new(),
+            || async { true },
+            || async {
+                Ok(FollowUpLease::Ready {
+                    due_token: PostImportDueToken::from_unix_micros(5),
+                })
+            },
+            move || {
+                attempts_sync.fetch_add(1, Ordering::SeqCst);
+                async { ReconcileOutcome::NoDiscordRoles }
+            },
+            |_| async { Err(anyhow::anyhow!("simulated Postgres failure")) },
+        )
+        .await;
+
+        assert_eq!(synced, 0);
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            1,
+            "must not tight-loop when NoDiscordRoles completion write fails"
+        );
+        assert!(queue.enqueue(guild_id));
+        queue.force_release(guild_id);
     }
 }
