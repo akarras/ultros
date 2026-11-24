@@ -69,7 +69,7 @@ use ultros_api_types::{
     ActiveListing, CompactSale, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter, Retainer,
     WorldItemLastUpdated,
 };
-use ultros_app::{LocalWorldData, shell};
+use ultros_app::{LocalWorldData, shell_with_ads};
 use ultros_charts::data::buckets::{
     bucket_seconds_for_span, narrow_bucket_for_actual_span, snap_bucket_seconds, widen_bucket,
 };
@@ -4255,7 +4255,7 @@ pub(crate) async fn start_web(
                 },
                 // The file/404 fallback doesn't have per-request bootstrap data; an
                 // empty script tag is harmless and the client falls back to HTTP.
-                |options| shell(options, String::new(), false),
+                |options| shell_with_ads(options, String::new(), false, false),
             ),
         ))
         .with_state(state)

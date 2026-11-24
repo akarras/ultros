@@ -18,11 +18,24 @@ use crate::components::sales_cadence_badge::SalesCadenceBadge;
 use crate::components::undercut_pressure::UndercutPressureCards;
 use crate::components::world_name::WorldName;
 use crate::components::{
-    ad::Ad, add_to_list::AddToList, alert_drawer::AlertDrawer, clipboard::*, item_icon::*,
-    item_tooltip::ItemTooltip, listing_quality::ListingQuality, listings_panel::ListingsPanel,
-    meta::*, realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
-    sale_history_table::*, section_nav::SectionNav, skeleton::BoxSkeleton, stats_display::*,
-    toggle::Toggle, tooltip::Tooltip,
+    ad::{Ad, slots as ad_slots},
+    add_to_list::AddToList,
+    alert_drawer::AlertDrawer,
+    clipboard::*,
+    item_icon::*,
+    item_tooltip::ItemTooltip,
+    listing_quality::ListingQuality,
+    listings_panel::ListingsPanel,
+    meta::*,
+    realtime_status::RealtimeStatus,
+    recently_viewed::RecentItems,
+    related_items::*,
+    sale_history_table::*,
+    section_nav::SectionNav,
+    skeleton::BoxSkeleton,
+    stats_display::*,
+    toggle::Toggle,
+    tooltip::Tooltip,
 };
 use crate::error::AppError;
 use crate::global_state::cheapest_prices::CheapestPrices;
@@ -1606,8 +1619,8 @@ fn ListingsContent(
                 <WorldMarketShare listing_resource filtered_listings world />
             </div>
 
-            <div class="mt-6 mx-auto">
-                <Ad class="h-[336px] w-[280px] rounded-xl overflow-hidden" />
+            <div class="mt-6 flex justify-center">
+                <Ad class="ad-rect-ins" ad_slot=ad_slots::ITEM_BOTTOM />
             </div>
         </div>
     }

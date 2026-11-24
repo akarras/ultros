@@ -38,6 +38,24 @@ enum StreamMode {
     InOrder,
 }
 
+/// Returns `true` when the incoming request carries `HIDE_ADS=true`.
+///
+/// Used only to skip `<link rel="preload">` / `<link rel="preconnect">` hints
+/// for visitors who have explicitly disabled ads in Settings.
+fn request_hides_ads(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|header_str| header_str.split(';'))
+        .any(|pair| {
+            let Some((name, value)) = pair.split_once('=') else {
+                return false;
+            };
+            name.trim() == "HIDE_ADS" && value.trim().eq_ignore_ascii_case("true")
+        })
+}
+
 async fn render_leptos(
     worlds: Arc<WorldHelper>,
     options: LeptosOptions,
@@ -94,7 +112,15 @@ async fn render_leptos(
         provide_context(ListsReadonly(lists_readonly));
         provide_context(api.clone());
     };
-    let app_fn = move || shell(options.clone(), bootstrap_script.clone(), plugin_page);
+    let preload_ads = !plugin_page && !request_hides_ads(req.headers());
+    let app_fn = move || {
+        shell_with_ads(
+            options.clone(),
+            bootstrap_script.clone(),
+            plugin_page,
+            preload_ads,
+        )
+    };
     let mut response = match mode {
         StreamMode::OutOfOrder => {
             let handler = leptos_axum::render_app_to_stream_with_context_and_replace_blocks(
@@ -307,10 +333,10 @@ pub(crate) async fn create_leptos_app(
 
 #[cfg(test)]
 mod tests {
-    use super::{escape_for_script_tag, mount_pkg_routes};
+    use super::{escape_for_script_tag, mount_pkg_routes, request_hides_ads};
     use axum::Router;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode, header};
+    use axum::http::{HeaderValue, Request, StatusCode, header};
     use http_body_util::BodyExt;
     use std::sync::Arc;
     use tower::ServiceExt;
@@ -568,5 +594,23 @@ mod tests {
         assert!(escaped.contains("\\u0026"));
         assert!(escaped.contains("\\u2028"));
         assert!(escaped.contains("\\u2029"));
+    }
+
+    #[test]
+    fn request_hides_ads_honors_cookie_header() {
+        let mut headers = axum::http::HeaderMap::new();
+        assert!(!request_hides_ads(&headers));
+
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("theme=dark; HIDE_ADS=false"),
+        );
+        assert!(!request_hides_ads(&headers));
+
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("theme=dark; HIDE_ADS=true; lang=en"),
+        );
+        assert!(request_hides_ads(&headers));
     }
 }

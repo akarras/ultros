@@ -1,4 +1,3 @@
-use crate::components::app_link::AppLink;
 use std::ops::Deref;
 
 use crate::Cookies;
@@ -7,7 +6,27 @@ use leptos::{html::Ins, prelude::*};
 use leptos_use::{UseMutationObserverOptions, use_mutation_observer_with_options};
 use log::info;
 
-const AD_CLIENT: &str = "ca-pub-8789160460804755";
+pub const AD_CLIENT: &str = "ca-pub-8789160460804755";
+/// Full AdSense loader URL shared between the SSR `<link rel="preload">` hint
+/// and the post-hydration `<script>` injector so both always match.
+pub const ADSENSE_LOADER_URL: &str =
+    "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8789160460804755";
+
+/// Named AdSense slot IDs per placement.
+///
+/// All placements start on the existing unit ID so current inventory keeps
+/// filling immediately; creating dedicated AdSense display units and updating
+/// these constants unlocks per-placement RPM/viewability reporting and auction
+/// optimization.
+pub mod slots {
+    pub const DEFAULT: &str = "1163555858";
+    pub const DESKTOP_RAIL: &str = "1163555858";
+    pub const HOME_BANNER: &str = "1163555858";
+    pub const HOME_SIDEBAR: &str = "1163555858";
+    pub const ITEM_BOTTOM: &str = "1163555858";
+    pub const CURRENCY_INLINE: &str = "1163555858";
+    pub const SETTINGS_PREVIEW: &str = "1163555858";
+}
 
 /// Client-side AdSense glue.
 ///
@@ -20,7 +39,7 @@ const AD_CLIENT: &str = "ca-pub-8789160460804755";
 /// client.
 #[cfg(feature = "hydrate")]
 mod adsense {
-    use super::AD_CLIENT;
+    use super::ADSENSE_LOADER_URL;
     use leptos::prelude::*;
     use wasm_bindgen::{JsCast, JsValue, prelude::Closure};
 
@@ -51,12 +70,7 @@ mod adsense {
             script.set_id(LOADER_ID);
             let _ = script.set_attribute("async", "");
             let _ = script.set_attribute("crossorigin", "anonymous");
-            let _ = script.set_attribute(
-                "src",
-                &format!(
-                    "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={AD_CLIENT}"
-                ),
-            );
+            let _ = script.set_attribute("src", ADSENSE_LOADER_URL);
             let on_error = Closure::<dyn FnMut()>::new({
                 let script = script.clone();
                 move || {
@@ -131,9 +145,16 @@ mod adsense {
 }
 
 #[component]
-pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
+pub fn Ad(
+    #[prop(optional)] class: Option<&'static str>,
+    #[prop(optional)] ad_slot: Option<&'static str>,
+    #[prop(optional)] format: Option<&'static str>,
+    #[prop(optional)] full_width_responsive: Option<bool>,
+) -> impl IntoView {
     let i18n = use_i18n();
-    let ad_class = class.unwrap_or("h-64");
+    let ad_class = class.unwrap_or("ad-banner-ins");
+    let ad_slot = ad_slot.unwrap_or(slots::DEFAULT);
+    let responsive_attr = full_width_responsive.map(|v| if v { "true" } else { "false" });
     let node = NodeRef::<Ins>::new();
     let cookies = use_context::<Cookies>().unwrap();
     let (hide_ads, _) = cookies.use_cookie_typed::<_, bool>("HIDE_ADS");
@@ -172,27 +193,23 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
     view! {
         <Show when=ads_visible>
             <div class:hidden=unfilled class="ad">
-                <div class="flex flex-col h-full">
-                    <span class="text-sm px-2 py-0.5 rounded-md border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)] text-[color:var(--color-text-muted)] shrink max-w-fit">
+                <div class="flex flex-col items-start gap-1 h-full">
+                    <span class="text-[11px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_10%,_transparent)] text-[color:var(--color-text-muted)] shrink max-w-fit leading-tight">
                         {t!(i18n, ads_label)}
                     </span>
-                    // <!-- Ultros-Ad-Main -->
                     <ins
                         class=["adsbygoogle block ", ad_class].concat()
-
                         data-ad-client=AD_CLIENT
-                        data-ad-slot="1163555858"
-                        // data-adtest="on"
+                        data-ad-slot=ad_slot
+                        data-ad-format=format
+                        data-full-width-responsive=responsive_attr
                         node_ref=node
                     ></ins>
-                    <span class="text-neutral-500 italic text-sm">
-                        {t!(i18n, ads_optional_prefix)}
-                        <AppLink href="/settings">{t!(i18n, ad_settings_link)}</AppLink>
-                    </span>
                 </div>
             </div>
         </Show>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[component]
@@ -205,10 +222,10 @@ pub fn DesktopAdRail() -> impl IntoView {
     view! {
         <Show when=ads_visible>
             <aside class="app-ad-rail" aria-label=t_string!(i18n, ad_aria_label)>
-                <div class="ad-rail-slot sticky top-24">
+                <div class="ad-rail-slot sticky top-4">
                     // Sized in tailwind.css (.ad-rail-ins): 300x600, or
                     // 300x1050 on viewports tall enough to fit it.
-                    <Ad class="ad-rail-ins" />
+                    <Ad class="ad-rail-ins" ad_slot=slots::DESKTOP_RAIL />
                 </div>
             </aside>
         </Show>

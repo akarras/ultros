@@ -266,8 +266,13 @@ fn AdChoice() -> impl IntoView {
                 </div>
             </div>
 
-            <div class="mt-6">
-                <Ad />
+            <div class="mt-6 flex justify-center">
+                <Ad
+                    class="ad-banner-ins"
+                    ad_slot=slots::SETTINGS_PREVIEW
+                    format="horizontal"
+                    full_width_responsive=true
+                />
             </div>
         </div>
     }.into_any()
