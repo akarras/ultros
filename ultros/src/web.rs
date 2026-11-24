@@ -106,7 +106,9 @@ use crate::web::api::{
     get_market_heat, get_market_pulse, get_movers, get_sale_stats, get_trends, post_resale_quality,
     post_sparklines, recent_sales,
 };
-use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, npc_sitemap, sitemap_index};
+use crate::web::sitemap::{
+    generic_pages_sitemap, item_sitemap, jobset_sitemap, npc_sitemap, recipe_sitemap, sitemap_index,
+};
 use crate::web::{
     alerts_websocket::connect_websocket,
     item_card::item_card,
@@ -4237,6 +4239,8 @@ pub(crate) async fn start_web(
             get(social_card::social_card),
         )
         .route("/sitemap/items.xml", get(item_sitemap))
+        .route("/sitemap/recipes.xml", get(recipe_sitemap))
+        .route("/sitemap/jobsets.xml", get(jobset_sitemap))
         .route("/sitemap/npcs.xml", get(npc_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))

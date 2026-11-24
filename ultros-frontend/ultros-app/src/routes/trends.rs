@@ -58,7 +58,7 @@ use crate::{
         gil::Gil,
         item_icon::ItemIcon,
         market_heat::MarketHeat,
-        meta::{MetaDescription, MetaTitle},
+        meta::{MetaCanonical, MetaDescription, MetaTitle, canonical_tool_href},
         skeleton::{SkeletonCell, SkeletonColumn, TableSkeleton},
         sparkline::Sparkline,
         tool_help::*,
@@ -498,7 +498,11 @@ pub fn Trends() -> impl IntoView {
         ]
     });
 
+    let canonical_href =
+        move || params.with(|p| canonical_tool_href("/trends", p.get_str("world")));
+
     view! {
+        <MetaCanonical href=canonical_href />
         <MetaTitle title=t_string!(i18n, trends_meta_title).to_string() />
         <MetaDescription text=t_string!(i18n, trends_meta_desc).to_string() />
 

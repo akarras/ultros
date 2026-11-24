@@ -1,4 +1,4 @@
-use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::meta::{MetaCanonical, MetaDescription, MetaTitle};
 use crate::i18n::*;
 use leptos::prelude::*;
 
@@ -7,6 +7,7 @@ pub fn CookiePolicy() -> impl IntoView {
     let i18n = use_i18n();
     view! {
         <div class="main-content container mx-auto max-w-3xl space-y-4 p-2 sm:p-6">
+            <MetaCanonical href="https://ultros.app/cookie-policy" />
             <MetaTitle title=move || t_string!(i18n, cookie_policy_title).to_string() />
             <MetaDescription text=move || {
                 t_string!(i18n, cookie_policy_meta_description).to_string()

@@ -1,4 +1,4 @@
-use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::meta::{MetaCanonical, MetaDescription, MetaTitle};
 use crate::i18n::*;
 use leptos::prelude::*;
 
@@ -6,6 +6,7 @@ use leptos::prelude::*;
 pub fn BotGuide() -> impl IntoView {
     let i18n = use_i18n();
     view! {
+        <MetaCanonical href="https://ultros.app/bot" />
         <MetaTitle title=t_string!(i18n, bot_meta_title).to_string() />
         <MetaDescription text=t_string!(i18n, bot_meta_desc).to_string() />
         <div class="main-content container mx-auto max-w-4xl p-2 sm:p-6 flex flex-col gap-12">
