@@ -73,6 +73,14 @@ pub fn localized_alternate_url(base: &str, lang: &str) -> String {
     format!("{base}{sep}lang={lang}")
 }
 
+fn canonical_for_language(base: &str, language: Option<&str>) -> String {
+    use leptos_i18n::Locale as _;
+    match language.and_then(crate::social_card::parse_locale) {
+        Some(locale) => localized_alternate_url(base, locale.as_str()),
+        None => base.to_owned(),
+    }
+}
+
 /// Build the canonical URL for a tool route that optionally carries a `:world`
 /// path segment (e.g. `/recipe-analyzer` or `/recipe-analyzer/Gilgamesh`).
 pub fn canonical_tool_href(base_path: &str, world: Option<&str>) -> String {
@@ -99,9 +107,11 @@ pub fn canonical_tool_href(base_path: &str, world: Option<&str>) -> String {
 /// ever emitting the value captured at first render.
 #[component]
 pub fn MetaCanonical(#[prop(into)] href: TextProp) -> impl IntoView {
+    let query = crate::components::app_link::use_query_map_or_default();
     view! {
         {move || {
             let base = href.get().to_string();
+            let canonical = query.with(|params| canonical_for_language(&base, params.get_str("lang")));
             let alternates = HREFLANG_LOCALES
                 .iter()
                 .map(|&(bcp47, code)| {
@@ -110,7 +120,7 @@ pub fn MetaCanonical(#[prop(into)] href: TextProp) -> impl IntoView {
                 })
                 .collect_view();
             view! {
-                <Link rel="canonical" href=base.clone() />
+                <Link rel="canonical" href=canonical />
                 <Link rel="alternate" hreflang="x-default" href=base />
                 {alternates}
             }
@@ -152,6 +162,19 @@ mod tests {
         let title = page_title(&owner, false);
         owner.cleanup();
         let _ = title.get();
+    }
+
+    #[test]
+    fn explicit_supported_language_is_self_canonical() {
+        let help = "https://ultros.app/help";
+        for &(_, code) in HREFLANG_LOCALES {
+            assert_eq!(
+                canonical_for_language(help, Some(code)),
+                localized_alternate_url(help, code)
+            );
+        }
+        assert_eq!(canonical_for_language(help, None), help);
+        assert_eq!(canonical_for_language(help, Some("invalid")), help);
     }
 
     #[test]

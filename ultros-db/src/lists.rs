@@ -81,6 +81,53 @@ impl TryFrom<&list::Model> for AnySelector {
 
 impl UltrosDb {
     /// Creates a list for the given Discord user with the given name
+    /// Create a list only if `owner_id` still exists in `discord_user`,
+    /// serialized under the per-user transaction advisory lock shared with
+    /// [`Self::delete_discord_user_and_revoke`].
+    ///
+    /// Because `list.owner` has no foreign key to `discord_user`, checking
+    /// existence and inserting in separate statements could leave an orphan
+    /// list if account deletion committed in between.
+    #[instrument(skip(self))]
+    pub async fn create_list_for_existing_user(
+        &self,
+        owner_id: u64,
+        name: String,
+        selector: Option<AnySelector>,
+    ) -> Result<Option<list::Model>> {
+        let txn = self.db.begin().await?;
+        let owner_i64 = owner_id as i64;
+        crate::auth_revocation::lock_auth_user_in_txn(&txn, owner_i64).await?;
+        let Some(discord_user) = discord_user::Entity::find_by_id(owner_i64)
+            .one(&txn)
+            .await?
+        else {
+            txn.rollback().await?;
+            return Ok(None);
+        };
+        let list = list::ActiveModel {
+            id: Default::default(),
+            owner: ActiveValue::Set(discord_user.id),
+            name: ActiveValue::Set(name),
+            world_id: match selector {
+                Some(AnySelector::World(w)) => ActiveValue::Set(Some(w)),
+                _ => Default::default(),
+            },
+            datacenter_id: match selector {
+                Some(AnySelector::Datacenter(d)) => ActiveValue::Set(Some(d)),
+                _ => Default::default(),
+            },
+            region_id: match selector {
+                Some(AnySelector::Region(r)) => ActiveValue::Set(Some(r)),
+                _ => Default::default(),
+            },
+        }
+        .insert(&txn)
+        .await?;
+        txn.commit().await?;
+        Ok(Some(list))
+    }
+
     #[instrument(skip(self))]
     pub async fn create_list(
         &self,
@@ -330,6 +377,10 @@ impl UltrosDb {
         .await?)
     }
 
+    pub async fn get_list_activity_by_id(&self, id: i64) -> Result<Option<list_activity::Model>> {
+        Ok(list_activity::Entity::find_by_id(id).one(&self.db).await?)
+    }
+
     pub async fn get_list_activity(
         &self,
         list_id: i32,
@@ -527,7 +578,12 @@ impl UltrosDb {
         if group.owner_id != owner_id {
             return Err(ListError::Forbidden("Only the owner can add members").into());
         }
-        if let Some(name) = display_name {
+        // Never upsert the authenticated caller's own `discord_user` row: if a
+        // cached request races with account deletion, upserting `owner_id`
+        // would recreate the deleted user row before the membership insert fails.
+        if user_id != owner_id
+            && let Some(name) = display_name
+        {
             self.get_or_create_discord_user(user_id as u64, name)
                 .await?;
         }

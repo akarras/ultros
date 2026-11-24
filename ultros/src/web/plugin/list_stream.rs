@@ -30,10 +30,11 @@ pub(super) async fn stream(
     // either in that HTTP sync or still waiting on this receiver.
     let docs = state.event_receivers.list_docs.resubscribe();
     let lists = state.event_receivers.lists.resubscribe();
+    let resync = state.event_receivers.wakeup_resync.resubscribe();
     Ok(ws
         .max_message_size(512)
         .max_frame_size(512)
-        .on_upgrade(move |socket| listen(socket, state, user, id, docs, lists)))
+        .on_upgrade(move |socket| listen(socket, state, user, id, docs, lists, resync)))
 }
 
 async fn listen(
@@ -43,6 +44,7 @@ async fn listen(
     id: i32,
     mut docs: crate::event::EventBus<crate::event::ListDocEvent>,
     mut lists: crate::event::EventBus<ListEventData>,
+    mut resync: tokio::sync::broadcast::Receiver<()>,
 ) {
     if state.db.plugin_list_readable(&user, id).await.is_err() {
         return;
@@ -75,6 +77,10 @@ async fn listen(
                 Ok(event)=>dirty|=matches!(event.as_ref().as_ref(),ListEventData::List(list) if list.id==id),
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>dirty=true,
                 Err(tokio::sync::broadcast::error::RecvError::Closed)=>break,
+            },
+            event=resync.recv()=>match event {
+                Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>dirty=true,
+                Err(tokio::sync::broadcast::error::RecvError::Closed)=>{},
             },
             _=flush.tick(),if dirty=>{
                 // Membership and the bearer grant are checked before every

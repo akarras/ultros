@@ -19,12 +19,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-use axum::{body::Bytes, response::IntoResponse};
+use axum::{
+    body::Bytes,
+    http::{HeaderMap, HeaderName, HeaderValue},
+};
 use futures::FutureExt;
 use tokio::sync::{Mutex as AsyncMutex, Notify, Semaphore};
 use ultros_db::world_data::world_cache::AnySelector;
 
-use super::error::{ClickHouseQueryError, WebError};
+use super::{
+    encoded_body::EncodedBody,
+    error::{ClickHouseQueryError, WebError},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CacheKey {
@@ -54,37 +60,61 @@ impl CacheDisposition {
 }
 
 pub(crate) struct CacheValue {
-    pub body: Bytes,
+    pub body: Arc<EncodedBody>,
     pub disposition: CacheDisposition,
+    /// Origin timestamp when this cached generation was stored.
+    pub stored_at: Instant,
+    /// Origin deadline after which this generation becomes stale.
+    pub fresh_until: Instant,
+    /// Origin deadline after which this generation is no longer servable stale.
+    pub stale_until: Instant,
 }
 
-/// The response every cached bulk-stat endpoint returns: JSON, shared-cacheable
-/// for as long as a value is fresh here, `stale-while-revalidate` matching the
-/// stale window, and the disposition exposed for debugging.
-pub(crate) fn cached_response(body: Bytes, disposition: &'static str) -> axum::response::Response {
-    (
-        [
-            (
-                axum::http::header::CONTENT_TYPE,
-                "application/json".to_string(),
-            ),
-            (
-                axum::http::header::CACHE_CONTROL,
-                "public, max-age=300, s-maxage=300, stale-while-revalidate=1800".to_string(),
-            ),
-            (
-                axum::http::header::HeaderName::from_static("x-ultros-cache"),
-                disposition.to_string(),
-            ),
-        ],
-        body,
-    )
-        .into_response()
+/// The response every cached bulk-stat endpoint returns: pre-compressed JSON
+/// negotiated from `headers`, age-adjusted `Cache-Control` computed *after*
+/// encoding finishes (so compression wait time never extends downstream SWR),
+/// and the disposition exposed for debugging.
+pub(crate) async fn cached_response(
+    cached: &CacheValue,
+    headers: &HeaderMap,
+) -> axum::response::Response {
+    let stored_at = cached.stored_at;
+    let fresh_until = cached.fresh_until;
+    let stale_until = cached.stale_until;
+    cached
+        .body
+        .into_json_response_with_cache_control(
+            headers,
+            move || {
+                super::api::public_cache_control_for_deadlines(
+                    Duration::from_secs(5 * 60),
+                    Duration::from_secs(30 * 60),
+                    super::api::PUBLIC_STALE_IF_ERROR_SECS,
+                    stored_at,
+                    fresh_until,
+                    stale_until,
+                    Instant::now(),
+                )
+            },
+            &[(
+                HeaderName::from_static("x-ultros-cache"),
+                HeaderValue::from_static(cached.disposition.as_str()),
+            )],
+        )
+        .await
+}
+
+struct RefreshedBody {
+    body: Arc<EncodedBody>,
+    stored_at: Instant,
+    fresh_until: Instant,
+    stale_until: Instant,
 }
 
 #[derive(Default)]
 struct SlotState {
-    body: Option<Bytes>,
+    body: Option<Arc<EncodedBody>>,
+    stored_at: Option<Instant>,
     fresh_until: Option<Instant>,
     stale_until: Option<Instant>,
     failed_until: Option<Instant>,
@@ -96,6 +126,7 @@ struct Slot {
     state: AsyncMutex<SlotState>,
     changed: Notify,
     cached: AtomicBool,
+    generation: AtomicU64,
     body_bytes: AtomicUsize,
     last_access: AtomicU64,
 }
@@ -223,25 +254,30 @@ impl<K: CacheKind> StatsCache<K> {
         slot
     }
 
-    fn subtract_retained(&self, bytes: usize) {
-        let _ =
-            self.inner
-                .retained_bytes
-                .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                    Some(current.saturating_sub(bytes))
-                });
+    fn subtract_retained_inner(inner: &Inner, bytes: usize) {
+        let _ = inner
+            .retained_bytes
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                Some(current.saturating_sub(bytes))
+            });
     }
 
-    /// Evict least-recently-used slots until cached response bodies are back
-    /// under the hard per-process byte budget. `Bytes` lets active responses
-    /// share the allocation while their cache entry is being evicted.
-    fn prune_to_byte_budget(&self, protected: &Arc<Slot>) {
-        if self.inner.retained_bytes.load(Ordering::Acquire) <= self.inner.max_bytes {
+    fn subtract_retained(&self, bytes: usize) {
+        Self::subtract_retained_inner(&self.inner, bytes);
+    }
+
+    /// Evict least-recently-used slots until cached response bodies (raw plus
+    /// installed compressed variants) are back under the hard per-process byte
+    /// budget. `Bytes` lets active responses share the allocation while their
+    /// cache entry is being evicted.
+    fn prune_locked(
+        inner: &Inner,
+        slots: &mut HashMap<CacheKey, Arc<Slot>>,
+        protected: &Arc<Slot>,
+    ) {
+        if inner.retained_bytes.load(Ordering::Acquire) <= inner.max_bytes {
             return;
         }
-        let Ok(mut slots) = self.inner.slots.lock() else {
-            return;
-        };
         let mut victims = slots
             .iter()
             .filter(|(_, slot)| !Arc::ptr_eq(slot, protected))
@@ -256,12 +292,27 @@ impl<K: CacheKind> StatsCache<K> {
             .collect::<Vec<_>>();
         victims.sort_unstable_by_key(|(_, access, _)| *access);
         for (key, _, _) in victims {
-            if self.inner.retained_bytes.load(Ordering::Acquire) <= self.inner.max_bytes {
+            if inner.retained_bytes.load(Ordering::Acquire) <= inner.max_bytes {
                 break;
             }
             if let Some(slot) = slots.remove(&key) {
                 slot.cached.store(false, Ordering::Release);
-                self.subtract_retained(slot.body_bytes.swap(0, Ordering::AcqRel));
+                Self::subtract_retained_inner(inner, slot.body_bytes.swap(0, Ordering::AcqRel));
+            }
+        }
+        // If even the protected slot alone grew past `max_bytes` (e.g. after
+        // installing multiple compressed variants), evict it too so retained
+        // bytes never exceed the configured cap.
+        if inner.retained_bytes.load(Ordering::Acquire) > inner.max_bytes {
+            let protected_key = slots
+                .iter()
+                .find(|(_, slot)| Arc::ptr_eq(slot, protected))
+                .map(|(key, _)| *key);
+            if let Some(key) = protected_key
+                && let Some(slot) = slots.remove(&key)
+            {
+                slot.cached.store(false, Ordering::Release);
+                Self::subtract_retained_inner(inner, slot.body_bytes.swap(0, Ordering::AcqRel));
             }
         }
     }
@@ -286,15 +337,24 @@ impl<K: CacheKind> StatsCache<K> {
             if state.fresh_until.is_some_and(|until| until > now)
                 && let Some(body) = &state.body
             {
+                let stored_at = state.stored_at.unwrap_or(now);
+                let fresh_until = state.fresh_until.unwrap_or(now);
+                let stale_until = state.stale_until.unwrap_or(now);
                 return Ok(CacheValue {
                     body: body.clone(),
                     disposition: CacheDisposition::Fresh,
+                    stored_at,
+                    fresh_until,
+                    stale_until,
                 });
             }
 
             if state.stale_until.is_some_and(|until| until > now)
                 && let Some(body) = state.body.clone()
             {
+                let stored_at = state.stored_at.unwrap_or(now);
+                let fresh_until = state.fresh_until.unwrap_or(now);
+                let stale_until = state.stale_until.unwrap_or(now);
                 if !state.refreshing {
                     state.refreshing = true;
                     drop(state);
@@ -303,6 +363,9 @@ impl<K: CacheKind> StatsCache<K> {
                 return Ok(CacheValue {
                     body,
                     disposition: CacheDisposition::Stale,
+                    stored_at,
+                    fresh_until,
+                    stale_until,
                 });
             }
 
@@ -329,9 +392,12 @@ impl<K: CacheKind> StatsCache<K> {
                 .spawn_refresh(slot.clone(), loader.take().expect("loader used once"))
                 .await
                 .map_err(|error| anyhow::anyhow!("{} refresh task failed: {error}", K::LABEL))?;
-            return result.map(|body| CacheValue {
-                body,
+            return result.map(|refreshed| CacheValue {
+                body: refreshed.body,
                 disposition: CacheDisposition::Loaded,
+                stored_at: refreshed.stored_at,
+                fresh_until: refreshed.fresh_until,
+                stale_until: refreshed.stale_until,
             });
         }
     }
@@ -340,7 +406,7 @@ impl<K: CacheKind> StatsCache<K> {
         &self,
         slot: Arc<Slot>,
         loader: F,
-    ) -> tokio::task::JoinHandle<Result<Bytes, WebError>>
+    ) -> tokio::task::JoinHandle<Result<RefreshedBody, WebError>>
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = Result<Bytes, WebError>> + Send + 'static,
@@ -355,12 +421,19 @@ impl<K: CacheKind> StatsCache<K> {
                 .unwrap_or_else(|_| {
                     tracing::error!(cache = K::LABEL, "stats loader panicked");
                     Err(WebError::TemporarilyUnavailable)
-                });
+                })
+                .map(EncodedBody::new);
             if let Err(error) = &result {
                 tracing::warn!(?error, cache = K::LABEL, "stats refresh failed");
             }
-            cache.finish_refresh(&slot, result.as_ref().ok()).await;
-            result
+            let (stored_at, fresh_until, stale_until) =
+                cache.finish_refresh(&slot, result.as_ref().ok()).await;
+            result.map(|body| RefreshedBody {
+                body,
+                stored_at,
+                fresh_until,
+                stale_until,
+            })
         })
     }
 
@@ -388,32 +461,75 @@ impl<K: CacheKind> StatsCache<K> {
         }
     }
 
-    async fn finish_refresh(&self, slot: &Arc<Slot>, body: Option<&Bytes>) {
+    async fn finish_refresh(
+        &self,
+        slot: &Arc<Slot>,
+        body: Option<&Arc<EncodedBody>>,
+    ) -> (Instant, Instant, Instant) {
         let mut state = slot.state.lock().await;
         state.refreshing = false;
+        let now = Instant::now();
+        let fresh_until = now + self.inner.fresh_ttl;
+        let stale_until = now + self.inner.stale_ttl;
+        let mut admitted = false;
         if let Some(body) = body
-            && body.len() <= self.inner.max_bytes
+            && body.raw_len() <= self.inner.max_bytes
+            && let Ok(mut slots) = self.inner.slots.lock()
             && slot.cached.load(Ordering::Acquire)
         {
-            let now = Instant::now();
-            state.body = Some(body.clone());
-            state.fresh_until = Some(now + self.inner.fresh_ttl);
-            state.stale_until = Some(now + self.inner.stale_ttl);
-            state.failed_until = None;
-            let old_len = slot.body_bytes.swap(body.len(), Ordering::AcqRel);
-            if body.len() >= old_len {
+            // Charge raw bytes and attach the compressed-variant accountant
+            // BEFORE publishing `state.body` so no concurrent reader can
+            // finish compressing a variant before accounting is wired up.
+            let len = body.raw_len();
+            let old_len = slot.body_bytes.swap(len, Ordering::AcqRel);
+            if len >= old_len {
                 self.inner
                     .retained_bytes
-                    .fetch_add(body.len() - old_len, Ordering::AcqRel);
+                    .fetch_add(len - old_len, Ordering::AcqRel);
             } else {
-                self.subtract_retained(old_len - body.len());
+                Self::subtract_retained_inner(&self.inner, old_len - len);
             }
-        } else {
+            let generation = slot.generation.fetch_add(1, Ordering::AcqRel) + 1;
+            let weak_inner = Arc::downgrade(&self.inner);
+            let weak_slot = Arc::downgrade(slot);
+            body.attach_accountant(Arc::new(move |delta| {
+                if delta == 0 {
+                    return;
+                }
+                let Some(inner) = weak_inner.upgrade() else {
+                    return;
+                };
+                let Some(slot) = weak_slot.upgrade() else {
+                    return;
+                };
+                let Ok(mut slots) = inner.slots.lock() else {
+                    return;
+                };
+                if !slot.cached.load(Ordering::Acquire)
+                    || slot.generation.load(Ordering::Acquire) != generation
+                {
+                    return;
+                }
+                slot.body_bytes.fetch_add(delta, Ordering::AcqRel);
+                inner.retained_bytes.fetch_add(delta, Ordering::AcqRel);
+                Self::prune_locked(&inner, &mut slots, &slot);
+            }));
+            Self::prune_locked(&self.inner, &mut slots, slot);
+            drop(slots);
+
+            state.body = Some(body.clone());
+            state.stored_at = Some(now);
+            state.fresh_until = Some(fresh_until);
+            state.stale_until = Some(stale_until);
+            state.failed_until = None;
+            admitted = true;
+        }
+        if !admitted {
             state.failed_until = Some(Instant::now() + Duration::from_secs(2));
         }
         drop(state);
         slot.changed.notify_waiters();
-        self.prune_to_byte_budget(slot);
+        (now, fresh_until, stale_until)
     }
 }
 
@@ -461,7 +577,7 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(value.disposition, expected);
-            assert_eq!(value.body, "body");
+            assert_eq!(value.body.raw(), "body");
         }
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
@@ -487,6 +603,8 @@ mod tests {
                 .await
                 .unwrap()
                 .body
+                .raw()
+                .clone()
         };
         let (a, b) = tokio::join!(
             load(cache.clone(), calls.clone()),
@@ -525,7 +643,7 @@ mod tests {
         .await
         .expect("a cancelled caller must not strand its followers")
         .unwrap();
-        assert_eq!(value.body, "shared body");
+        assert_eq!(value.body.raw(), "shared body");
         assert_eq!(value.disposition, CacheDisposition::Fresh);
     }
 
@@ -547,7 +665,7 @@ mod tests {
             .get_or_load(key(1), || async { Ok(Bytes::from_static(b"retry")) })
             .await
             .unwrap();
-        assert_eq!(value.body, "retry");
+        assert_eq!(value.body.raw(), "retry");
         assert_eq!(value.disposition, CacheDisposition::Loaded);
     }
 
@@ -570,7 +688,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(value.disposition, CacheDisposition::Stale);
-        assert_eq!(value.body, "body");
+        assert_eq!(value.body.raw(), "body");
     }
 
     #[tokio::test]
@@ -648,12 +766,12 @@ mod tests {
                     .get_or_load(key, || async { panic!("wrong cache slot") })
                     .await
                     .unwrap();
-                assert_eq!(hit.body, expected);
+                assert_eq!(hit.body.raw(), &expected);
                 let sale = sales
                     .get_or_load(key, || async { Ok(Bytes::from_static(b"sale")) })
                     .await
                     .unwrap();
-                assert_eq!(sale.body, Bytes::from_static(b"sale"));
+                assert_eq!(sale.body.raw(), &Bytes::from_static(b"sale"));
             }
         }
     }
@@ -686,6 +804,92 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(value.disposition, CacheDisposition::Loaded);
-        assert_eq!(&value.body[..], b"columnar");
+        assert_eq!(&value.body.raw()[..], b"columnar");
+    }
+
+    #[tokio::test]
+    async fn compressed_variants_charge_stats_cache_byte_budget_and_trigger_eviction() {
+        let payload_a = serde_json::json!({
+            "k": "a",
+            "rows": (0..200).map(|i| format!("stats-row-{i:04}")).collect::<Vec<_>>()
+        })
+        .to_string();
+        let payload_b = serde_json::json!({
+            "k": "b",
+            "rows": (0..200).map(|i| format!("stats-row-{i:04}")).collect::<Vec<_>>()
+        })
+        .to_string();
+        let raw_len = payload_a.len();
+        assert_eq!(raw_len, payload_b.len());
+        let budget = raw_len * 2 + 128;
+        let cache = SaleStatsCache::with_config(
+            8,
+            2,
+            Duration::from_secs(60),
+            Duration::from_secs(120),
+            Duration::from_secs(2),
+            budget,
+        );
+
+        let a = cache
+            .get_or_load(key(1), {
+                let p = payload_a.clone();
+                move || async move { Ok(Bytes::from(p)) }
+            })
+            .await
+            .unwrap();
+        let _b = cache
+            .get_or_load(key(2), {
+                let p = payload_b.clone();
+                move || async move { Ok(Bytes::from(p)) }
+            })
+            .await
+            .unwrap();
+        assert_eq!(cache.inner.slots.lock().unwrap().len(), 2);
+
+        for enc in ["zstd", "br", "gzip"] {
+            let mut h = HeaderMap::new();
+            h.insert(
+                axum::http::header::ACCEPT_ENCODING,
+                HeaderValue::from_static(enc),
+            );
+            let _ = a.body.select(&h).await.unwrap();
+        }
+        assert!(a.body.retained_bytes() > raw_len);
+
+        let retained = cache.inner.retained_bytes.load(Ordering::Acquire);
+        assert!(
+            retained <= budget,
+            "retained bytes {retained} exceeded budget {budget} after warming variants"
+        );
+        assert_eq!(
+            cache.inner.slots.lock().unwrap().len(),
+            1,
+            "warming variants must evict LRU sibling slot when over budget"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_cached_response_emits_zero_max_age() {
+        let now = Instant::now();
+        let val = CacheValue {
+            body: EncodedBody::new(b"{}".as_slice()),
+            disposition: CacheDisposition::Stale,
+            stored_at: now - Duration::from_secs(1750),
+            fresh_until: now - Duration::from_secs(1450),
+            stale_until: now + Duration::from_millis(50_500),
+        };
+        let resp = cached_response(&val, &HeaderMap::new()).await;
+        let cc = resp
+            .headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(
+            cc,
+            "public, max-age=0, stale-while-revalidate=50, stale-if-error=600"
+        );
+        assert_eq!(resp.headers().get("x-ultros-cache").unwrap(), "stale");
     }
 }

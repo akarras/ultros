@@ -1454,6 +1454,12 @@ pub fn ListViewSync() -> impl IntoView {
                         }
                         recovery.notice(None);
                     }
+                    // Lag, PgListener reconnect, or periodic reconciliation:
+                    // refetch durable activity rows and recheck list access.
+                    ServerClient::Stale { .. } => {
+                        set_activity_update_version.update(|v| *v += 1);
+                        recovery.notice(None);
+                    }
                     ServerClient::Error { message }
                         if crate::list_doc::sync::is_relay_authorization_error(&message, id) =>
                     {

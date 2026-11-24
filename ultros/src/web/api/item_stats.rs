@@ -11,14 +11,13 @@
 //! launder suspicion for the user.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::{
     Json,
     extract::{Path, State},
+    http::header,
     response::IntoResponse,
 };
-use axum_extra::headers::{CacheControl, HeaderMapExt};
 use ultros_api_types::{
     item_stats::ItemStatsResponse,
     world_helper::{AnySelector, WorldHelper},
@@ -71,8 +70,9 @@ pub(crate) async fn get_item_stats(
     .into_response();
     // Rollup refreshes every ~5 min worst case (1d window); a 60s browser
     // cache is comfortable and matches the cadence the user sees.
-    response
-        .headers_mut()
-        .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(60)));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        super::public_cache_control(60, 300, super::PUBLIC_STALE_IF_ERROR_SECS),
+    );
     Ok(response)
 }

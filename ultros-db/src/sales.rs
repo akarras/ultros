@@ -195,12 +195,12 @@ impl UltrosDb {
             return Ok(vec![]);
         }
         // Insert with RETURNING so the rows we hand back carry their real
-        // Postgres ids. The ClickHouse dual-write uses `sale_history.id` as the
-        // discriminator in the `sales` ORDER BY key, so returning `id: 0` here
-        // would (a) collapse distinct same-second sales of the same
-        // item/hq/world into one ClickHouse row and (b) make the backfill --
-        // which reads real ids straight out of Postgres -- write a *second*,
-        // never-merging copy of every sale the live path already wrote.
+        // Postgres ids. `clickhouse_sale_outbox` and ClickHouse `sales` use
+        // `sale_history.id` as the discriminator in the `sales` ORDER BY key,
+        // so returning `id: 0` here would (a) collapse distinct same-second
+        // sales of the same item/hq/world into one ClickHouse row and (b) make
+        // the backfill -- which reads real ids straight out of Postgres --
+        // write a *second*, never-merging copy of every sale the outbox wrote.
         let inserted = Entity::insert_many(sales.into_iter().map(|sale| {
             let buyer = buyers
                 .get(&sale.buyer_name)
@@ -226,7 +226,9 @@ impl UltrosDb {
         .await?;
         crate::recent_sales::project_sales(transaction, &inserted, world_id, item_id).await?;
         let buyers_by_id: HashMap<i32, _> = buyers.into_values().map(|b| (b.id, b)).collect();
-        Ok(attach_buyers(inserted, &buyers_by_id))
+        let recorded = attach_buyers(inserted, &buyers_by_id);
+        crate::clickhouse_outbox::enqueue_sales(transaction, &recorded).await?;
+        Ok(recorded)
     }
 
     pub async fn get_sale_history_from_multiple_worlds(
@@ -364,6 +366,28 @@ impl UltrosDb {
             .await
     }
 
+    /// Stream up to `n_sales` recent sales per `(world, item, hq)` including
+    /// each row's Postgres `pg_id` (from `recent_sale_history` when the
+    /// backfill projection is complete, or from `sale_history` otherwise) so
+    /// startup can deduplicate buffered live broadcast events on every boot
+    /// path.
+    pub async fn last_n_sales_with_ids(
+        &self,
+        n_sales: i32,
+    ) -> Result<
+        (
+            bool,
+            impl Stream<Item = Result<RecentProjectionSale, DbErr>> + '_,
+        ),
+        DbErr,
+    > {
+        let (complete, stmt) = self.recent_sales_with_ids_statement(n_sales).await?;
+        let stream = RecentProjectionSale::find_by_statement(stmt)
+            .stream(&self.db)
+            .await?;
+        Ok((complete, stream))
+    }
+
     #[instrument(skip(self))]
     pub async fn stream_sales_within_days(
         &self,
@@ -430,6 +454,16 @@ fn attach_buyers(
 
 #[derive(Debug, FromQueryResult)]
 pub struct AbbreviatedSaleData {
+    pub sold_item_id: i32,
+    pub hq: bool,
+    pub price_per_item: i32,
+    pub sold_date: NaiveDateTime,
+    pub world_id: i32,
+}
+
+#[derive(Debug, Clone, FromQueryResult)]
+pub struct RecentProjectionSale {
+    pub pg_id: i32,
     pub sold_item_id: i32,
     pub hq: bool,
     pub price_per_item: i32,

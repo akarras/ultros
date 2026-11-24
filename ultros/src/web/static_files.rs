@@ -1,5 +1,5 @@
 //! Static-file serving for the web binary: the embedded/disk file lookup, plus the
-//! `/favicon.ico`, `/robots.txt`, `/static/*` and `/item-icon/{id}` handlers.
+//! `/favicon.ico`, `/robots.txt`, `/ads.txt`, `/static/*` and `/item-icon/{id}` handlers.
 
 use axum::body::{self, Body};
 use axum::extract::{Path, Query};
@@ -29,7 +29,9 @@ pub(crate) fn get_static_file(path: &str) -> Option<&'static [u8]> {
 pub(crate) fn get_static_file(path: &str) -> Option<Vec<u8>> {
     use std::{io::Read, path::PathBuf};
 
-    let file = PathBuf::from("./ultros/static").join(path);
+    let file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("static")
+        .join(path);
     let mut file = std::fs::File::open(file).ok()?;
     let mut vec = Vec::new();
     file.read_to_end(&mut vec).ok()?;
@@ -70,6 +72,10 @@ pub(crate) async fn favicon() -> impl IntoResponse {
 
 pub(crate) async fn robots() -> impl IntoResponse {
     get_file("robots.txt").await
+}
+
+pub(crate) async fn ads_txt() -> impl IntoResponse {
+    get_file("ads.txt").await
 }
 
 pub(crate) async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
@@ -155,5 +161,32 @@ pub(crate) async fn get_item_icon(
             )
             .header(header::CONTENT_TYPE, "image/png")
             .body(body::Body::new(http_body_util::Full::from(fallback)))?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_body_util::BodyExt;
+
+    #[tokio::test]
+    async fn ads_txt_serves_authorized_google_seller_record() {
+        let response = ads_txt().await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert!(
+            content_type.starts_with("text/plain"),
+            "expected text/plain Content-Type, got {content_type:?}"
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert!(
+            text.contains("google.com, pub-8789160460804755, DIRECT, f08c47fec0942fa0"),
+            "unexpected ads.txt body: {text:?}"
+        );
     }
 }

@@ -559,6 +559,117 @@ pub async fn market_pulse(
     Ok(row)
 }
 
+/// Maximum allowed age of the newest `listing_alive` refresh before
+/// [`active_listing_count`] reports [`ActiveListingCount::NotReady`].
+/// Three times the 15-minute refresh cadence (45 minutes) tolerates one
+/// transient refresh failure while rejecting a stalled rollup.
+pub const LISTING_ALIVE_MAX_STALENESS_SECS: i64 =
+    (crate::rollups::LISTING_ALIVE_REFRESH_SECS * 3) as i64;
+
+/// Result of [`active_listing_count`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveListingCount {
+    /// `_listing_events_seed` is present and `listing_alive` has completed a
+    /// post-seed refresh within [`LISTING_ALIVE_MAX_STALENESS_SECS`]. A `0`
+    /// here is a genuine zero for the requested scope.
+    Ready(u64),
+    /// The rollup is unseeded, has not completed a refresh since seeding, or
+    /// has missed its expected refresh window. Callers may still render the
+    /// placeholder `count` but must not cache it publicly.
+    NotReady { count: u64 },
+}
+
+#[derive(Debug, Clone, Row, Deserialize)]
+struct ActiveListingCountRow {
+    total: u64,
+    is_seeded: u8,
+    seeded_at_unix: i64,
+    last_refresh_unix: i64,
+    now_unix: i64,
+}
+
+fn evaluate_active_listing_count(row: ActiveListingCountRow) -> ActiveListingCount {
+    if row.is_seeded == 0 {
+        return ActiveListingCount::NotReady { count: row.total };
+    }
+    if row.last_refresh_unix <= 0 || row.last_refresh_unix < row.seeded_at_unix {
+        return ActiveListingCount::NotReady { count: row.total };
+    }
+    if row.now_unix.saturating_sub(row.last_refresh_unix) > LISTING_ALIVE_MAX_STALENESS_SECS {
+        return ActiveListingCount::NotReady { count: row.total };
+    }
+    ActiveListingCount::Ready(row.total)
+}
+
+/// Total alive listings across `world_ids` from the scheduled `listing_alive`
+/// rollup (`ReplacingMergeTree(computed_at)` keyed starting with `world_id`),
+/// gated on `_listing_events_seed` completion and refresh freshness.
+///
+/// Replaces `market_pulse`'s live Postgres `COUNT(*)` over `active_listing`
+/// (which scanned millions of churning rows and drove a ~9.75s p95 tail).
+pub async fn active_listing_count(
+    ch: &ClickHouseClient,
+    world_ids: &[i32],
+) -> Result<ActiveListingCount, ClickHouseError> {
+    if world_ids.is_empty() {
+        return Ok(ActiveListingCount::Ready(0));
+    }
+    let worlds = id_list(world_ids);
+    let seed_table = crate::schema::LISTING_EVENTS_SEED_MARKER_TABLE;
+    let refresh_table = crate::schema::LISTING_ALIVE_REFRESH_MARKER_TABLE;
+    let query_with_marker = format!(
+        "SELECT
+             toUInt64(sum(alive_count)) AS total,
+             toUInt8((SELECT count() > 0 FROM {seed_table})) AS is_seeded,
+             toInt64(toUnixTimestamp((SELECT max(seeded_at) FROM {seed_table}))) AS seeded_at_unix,
+             greatest(
+                 toInt64(toUnixTimestamp((SELECT max(refreshed_at) FROM {refresh_table}))),
+                 toInt64(toUnixTimestamp((SELECT max(computed_at) FROM listing_alive)))
+             ) AS last_refresh_unix,
+             toInt64(toUnixTimestamp(now())) AS now_unix
+         FROM listing_alive FINAL
+         WHERE world_id IN ({worlds})"
+    );
+    let row = match ch
+        .client()
+        .query(&query_with_marker)
+        .fetch_one::<ActiveListingCountRow>()
+        .await
+    {
+        Ok(row) => row,
+        Err(err) if is_missing_refresh_marker_error(&err.to_string(), refresh_table) => {
+            // During rollout before the async startup migration creates
+            // `_listing_alive_refresh`, fall back to `listing_alive`'s own
+            // `computed_at` so existing populated clusters do not briefly
+            // lose valid listing counts.
+            let fallback_query = format!(
+                "SELECT
+                     toUInt64(sum(alive_count)) AS total,
+                     toUInt8((SELECT count() > 0 FROM {seed_table})) AS is_seeded,
+                     toInt64(toUnixTimestamp((SELECT max(seeded_at) FROM {seed_table}))) AS seeded_at_unix,
+                     toInt64(toUnixTimestamp((SELECT max(computed_at) FROM listing_alive))) AS last_refresh_unix,
+                     toInt64(toUnixTimestamp(now())) AS now_unix
+                 FROM listing_alive FINAL
+                 WHERE world_id IN ({worlds})"
+            );
+            ch.client()
+                .query(&fallback_query)
+                .fetch_one::<ActiveListingCountRow>()
+                .await?
+        }
+        Err(err) => return Err(err.into()),
+    };
+    Ok(evaluate_active_listing_count(row))
+}
+
+fn is_missing_refresh_marker_error(msg: &str, refresh_table: &str) -> bool {
+    msg.contains(refresh_table)
+        && (msg.contains("UNKNOWN_TABLE")
+            || msg.contains("Code: 60")
+            || msg.contains("doesn't exist")
+            || msg.contains("does not exist"))
+}
+
 /// One row of deep-scan data for a single (item_id, hq, world_id) tuple at
 /// a given window. Maps the analyzer's enrichment fields directly to the
 /// rollup table columns.
@@ -1680,5 +1791,161 @@ mod tests {
         assert_eq!(d.confidence_band(), ConfidenceBand::Unusable);
         d.confidence_band_raw = "garbage".to_string();
         assert_eq!(d.confidence_band(), ConfidenceBand::Unknown);
+    }
+
+    #[test]
+    fn active_listing_count_readiness_distinguishes_unseeded_unrefreshed_stale_and_genuine_zero() {
+        let now = 1_800_000_000;
+        let seeded = now - 600;
+        let fresh_refresh = now - 60;
+
+        // Unseeded table -> NotReady even if rows exist.
+        assert_eq!(
+            evaluate_active_listing_count(ActiveListingCountRow {
+                total: 100,
+                is_seeded: 0,
+                seeded_at_unix: 0,
+                last_refresh_unix: fresh_refresh,
+                now_unix: now,
+            }),
+            ActiveListingCount::NotReady { count: 100 }
+        );
+
+        // Seeded but never refreshed (empty or truncated `listing_alive`).
+        assert_eq!(
+            evaluate_active_listing_count(ActiveListingCountRow {
+                total: 0,
+                is_seeded: 1,
+                seeded_at_unix: seeded,
+                last_refresh_unix: 0,
+                now_unix: now,
+            }),
+            ActiveListingCount::NotReady { count: 0 }
+        );
+
+        // Seeded, but latest refresh ran BEFORE seed finished (partial snapshot).
+        assert_eq!(
+            evaluate_active_listing_count(ActiveListingCountRow {
+                total: 50,
+                is_seeded: 1,
+                seeded_at_unix: seeded,
+                last_refresh_unix: seeded - 5,
+                now_unix: now,
+            }),
+            ActiveListingCount::NotReady { count: 50 }
+        );
+
+        // Stale generation past `LISTING_ALIVE_MAX_STALENESS_SECS`.
+        assert_eq!(
+            evaluate_active_listing_count(ActiveListingCountRow {
+                total: 500,
+                is_seeded: 1,
+                seeded_at_unix: now - 10_000,
+                last_refresh_unix: now - LISTING_ALIVE_MAX_STALENESS_SECS - 1,
+                now_unix: now,
+            }),
+            ActiveListingCount::NotReady { count: 500 }
+        );
+
+        // Genuine zero: seeded, post-seed refresh completed and fresh.
+        assert_eq!(
+            evaluate_active_listing_count(ActiveListingCountRow {
+                total: 0,
+                is_seeded: 1,
+                seeded_at_unix: seeded,
+                last_refresh_unix: fresh_refresh,
+                now_unix: now,
+            }),
+            ActiveListingCount::Ready(0)
+        );
+
+        // Healthy positive count.
+        assert_eq!(
+            evaluate_active_listing_count(ActiveListingCountRow {
+                total: 12_345,
+                is_seeded: 1,
+                seeded_at_unix: seeded,
+                last_refresh_unix: fresh_refresh,
+                now_unix: now,
+            }),
+            ActiveListingCount::Ready(12_345)
+        );
+    }
+
+    #[tokio::test]
+    async fn active_listing_count_falls_back_when_refresh_marker_table_not_yet_created() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let now = 1_800_000_000i64;
+        let server = tokio::spawn(async move {
+            for attempt in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 1024];
+                let header_end = loop {
+                    let n = socket.read(&mut chunk).await.unwrap();
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break pos + 4;
+                    }
+                };
+                let headers = String::from_utf8_lossy(&buf[..header_end]);
+                let content_len = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (k, v) = line.split_once(':')?;
+                        k.eq_ignore_ascii_case("content-length")
+                            .then(|| v.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or(0);
+                while buf.len() < header_end + content_len {
+                    let n = socket.read(&mut chunk).await.unwrap();
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                let req = String::from_utf8_lossy(&buf);
+                let (status, body) = if attempt == 0 {
+                    assert!(req.contains("_listing_alive_refresh"));
+                    (
+                        404,
+                        b"Code: 60. DB::Exception: Table default._listing_alive_refresh does not exist. (UNKNOWN_TABLE)"
+                            .to_vec(),
+                    )
+                } else {
+                    assert!(!req.contains("_listing_alive_refresh"));
+                    assert!(req.contains("listing_alive FINAL"));
+                    let mut out = Vec::with_capacity(33);
+                    out.extend_from_slice(&7_777u64.to_le_bytes());
+                    out.push(1u8);
+                    out.extend_from_slice(&(now - 600).to_le_bytes());
+                    out.extend_from_slice(&(now - 60).to_le_bytes());
+                    out.extend_from_slice(&now.to_le_bytes());
+                    (200, out)
+                };
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let head = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(head.as_bytes()).await.unwrap();
+                socket.write_all(&body).await.unwrap();
+                let _ = socket.shutdown().await;
+            }
+        });
+
+        let ch = ClickHouseClient::from_client(
+            clickhouse::Client::default()
+                .with_url(url)
+                .with_compression(clickhouse::Compression::None)
+                .with_validation(false),
+        );
+        let result = active_listing_count(&ch, &[54]).await.unwrap();
+        assert_eq!(result, ActiveListingCount::Ready(7_777));
+        server.await.unwrap();
     }
 }

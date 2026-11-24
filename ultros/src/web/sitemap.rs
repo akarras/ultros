@@ -1,5 +1,8 @@
 use super::error::WebError;
-use crate::analyzer_service::AnalyzerService;
+use crate::{
+    analyzer_service::AnalyzerService,
+    market_client::{MarketClient, SitemapItemSaleSummary},
+};
 use anyhow::anyhow;
 use axum::{
     extract::State,
@@ -236,12 +239,13 @@ pub(crate) async fn generic_pages_sitemap(
     Ok(Xml(url_xml))
 }
 
-pub(crate) async fn item_sitemap(
-    State(world_cache): State<Arc<WorldHelper>>,
-    State(analyzer_service): State<AnalyzerService>,
-) -> Result<Xml, WebError> {
-    let mut item_id_map: HashMap<_, Vec<_>> = HashMap::new();
-    let a = &analyzer_service;
+/// Collect compact per-item `(first_sale_unix, median_sale_unix)` summaries
+/// from the in-process [`AnalyzerService`] for `/sitemap/items.xml`.
+pub(crate) async fn collect_sitemap_item_sales(
+    world_cache: &WorldHelper,
+    analyzer_service: &AnalyzerService,
+) -> Result<Vec<SitemapItemSaleSummary>, WebError> {
+    let mut item_id_map: HashMap<i32, Vec<i64>> = HashMap::new();
     let sales = try_join_all(
         world_cache
             .get_inner_data()
@@ -250,7 +254,8 @@ pub(crate) async fn item_sitemap(
             .flat_map(move |region| {
                 region.datacenters.iter().flat_map(move |datacenter| {
                     datacenter.worlds.iter().map(move |world| async move {
-                        a.read_sale_history(&AnySelector::World(world.id), |w| w.clone())
+                        analyzer_service
+                            .read_sale_history(&AnySelector::World(world.id), |w| w.clone())
                             .await
                     })
                 })
@@ -260,41 +265,48 @@ pub(crate) async fn item_sitemap(
     for (item, sales) in sales.into_iter().flat_map(|sale| sale.item_map.into_iter()) {
         let entry = item_id_map.entry(item.item_id).or_default();
         for sale in sales {
-            entry.push(sale);
+            entry.push(sale.sale_date.and_utc().timestamp());
         }
     }
-    let frequency_map: HashMap<_, _> = item_id_map
+    Ok(item_id_map
         .into_iter()
-        .map(|(key, mut value)| {
-            value.sort_by_key(|f| f.sale_date);
-            let first = value.first().map(|f| f.sale_date);
-            let median = {
-                let len = value.len();
-                if len < 2 { None } else { value.get(len / 2) }
-            };
-            if let Some(median) = median {
-                (
-                    key,
-                    (
-                        first,
-                        match (Utc::now()
-                            .naive_utc()
-                            .signed_duration_since(median.sale_date))
-                        .num_days()
-                        .abs()
-                        {
-                            0 => ChangeFrequency::Always,
-                            1 => ChangeFrequency::Daily,
-                            2..=6 => ChangeFrequency::Weekly,
-                            7..=30 => ChangeFrequency::Monthly,
-                            31..=360 => ChangeFrequency::Yearly,
-                            _ => ChangeFrequency::Never,
-                        },
-                    ),
-                )
+        .map(|(item_id, mut timestamps)| {
+            timestamps.sort_unstable();
+            let first_sale_unix = timestamps.first().copied();
+            let median_sale_unix = if timestamps.len() < 2 {
+                None
             } else {
-                (key, (first, ChangeFrequency::Never))
+                timestamps.get(timestamps.len() / 2).copied()
+            };
+            SitemapItemSaleSummary {
+                item_id,
+                first_sale_unix,
+                median_sale_unix,
             }
+        })
+        .collect())
+}
+
+pub(crate) async fn item_sitemap(
+    State(market): State<Arc<dyn MarketClient>>,
+) -> Result<Xml, WebError> {
+    let summaries = market.sitemap_item_sales().await?;
+    let now_unix = Utc::now().timestamp();
+    let frequency_map: HashMap<i32, (Option<i64>, ChangeFrequency)> = summaries
+        .into_iter()
+        .map(|summary| {
+            let change = match summary.median_sale_unix {
+                Some(median_unix) => match ((now_unix - median_unix) / 86_400).abs() {
+                    0 => ChangeFrequency::Always,
+                    1 => ChangeFrequency::Daily,
+                    2..=6 => ChangeFrequency::Weekly,
+                    7..=30 => ChangeFrequency::Monthly,
+                    31..=360 => ChangeFrequency::Yearly,
+                    _ => ChangeFrequency::Never,
+                },
+                None => ChangeFrequency::Never,
+            };
+            (summary.item_id, (summary.first_sale_unix, change))
         })
         .collect();
     let items = UrlSet::new(
@@ -312,13 +324,11 @@ pub(crate) async fn item_sitemap(
                 // (no sales seen) stay at low priority so we don't waste
                 // crawl budget on never-traded gear.
                 if let Some((last_modified, change)) = frequency_map.get(&id) {
-                    if let Some(modified) = last_modified {
-                        // Sale dates are naive UTC out of the database; jiff
-                        // rejects timestamps outside its range, so a bad row
-                        // just drops <lastmod> instead of failing the sitemap.
-                        if let Ok(timestamp) =
-                            Timestamp::from_second(modified.and_utc().timestamp())
-                        {
+                    if let Some(modified_unix) = last_modified {
+                        // jiff rejects timestamps outside its range, so a bad
+                        // row just drops <lastmod> instead of failing the
+                        // sitemap.
+                        if let Ok(timestamp) = Timestamp::from_second(*modified_unix) {
                             builder.last_modified(timestamp.to_zoned(TimeZone::UTC));
                         }
                     }

@@ -521,6 +521,21 @@ pub fn Footer() -> impl IntoView {
                             {git_hash}
                         </a>
                     </p>
+                    <p class="flex flex-wrap justify-center items-center gap-x-4 gap-y-1">
+                        <AppLink
+                            href="/privacy"
+                            attr:class="text-brand-300 hover:text-[color:var(--brand-fg)] transition-colors underline decoration-dotted underline-offset-4"
+                        >
+                            {t!(i18n, privacy_policy_title)}
+                        </AppLink>
+                        <span aria-hidden="true">"·"</span>
+                        <AppLink
+                            href="/cookie-policy"
+                            attr:class="text-brand-300 hover:text-[color:var(--brand-fg)] transition-colors underline decoration-dotted underline-offset-4"
+                        >
+                            {t!(i18n, privacy_policy_cookie_link)}
+                        </AppLink>
+                    </p>
                     <p class="text-xs pt-4 opacity-50">
                         {t!(i18n, final_fantasy_copyright)}
                     </p>
@@ -916,6 +931,21 @@ mod translation_boundary_tests {
             );
         });
     }
+
+    #[test]
+    fn footer_links_privacy_and_cookie_policies() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let context = leptos_i18n::context::init_i18n_context::<ultros_i18n::i18n::Locale>();
+            provide_context(context);
+            let html = view! { <super::Footer /> }.to_html();
+            assert!(html.contains("href=\"/privacy\""), "{html}");
+            assert!(html.contains("href=\"/cookie-policy\""), "{html}");
+            assert!(html.contains("Privacy Policy"), "{html}");
+            assert!(html.contains("Cookie Policy"), "{html}");
+        });
+    }
 }
 
 #[cfg(test)]
@@ -1003,6 +1033,9 @@ mod error_filter_wiring {
         // (#8165-#8169).
         assert!(FILTER_JS.contains("isStubbedBundleModule"));
         assert!(FILTER_JS.contains("mod.default is not a function"));
+        // Category 12: a frameless AbortError rejection nobody observed
+        // (third-party teardown on client-side navigation, #8170/#8171).
+        assert!(FILTER_JS.contains("isUnobservedAbortRejection"));
     }
 
     /// Same contract for the wasm symbolicator: beforeSend calls
