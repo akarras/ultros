@@ -61,7 +61,9 @@ pub(super) fn write(
     sales: &BTreeMap<i32, RwLock<SaleHistory>>,
 ) -> Result<Stats> {
     let file = BufWriter::with_capacity(IO_BUFFER, File::create(path)?);
-    let gzip = GzEncoder::new(file, Compression::default());
+    // Level 1 (`fast`) cuts snapshot write time ~3-4x compared to level 6
+    // while keeping standard gzip wire compatibility with `GzDecoder`.
+    let gzip = GzEncoder::new(file, Compression::fast());
     let mut writer = Counted {
         inner: BufWriter::with_capacity(IO_BUFFER, gzip),
         bytes: 0,

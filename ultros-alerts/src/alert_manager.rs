@@ -35,6 +35,9 @@ pub struct AlertManagerServices {
     pub notifications: EventProducer<NotificationEvent>,
     /// Source of the 30-day medians below-median alerts compare against.
     pub ch_client: ClickHouseClient,
+    /// Fires when the Postgres `LISTEN/NOTIFY` bridge reconnects so the manager
+    /// reconciles its retainer undercut listeners against Postgres.
+    pub wakeup_resync: tokio::sync::broadcast::Receiver<()>,
 }
 
 /// The alerts whose undercut rules get a listener when the manager starts.
@@ -78,6 +81,7 @@ impl AlertManager {
             world_helper,
             notifications,
             ch_client,
+            mut wakeup_resync,
         } = services;
         // start all alerts we know about from the db, then use the alert busses to monitor for new alerts being spawned
         let mut manager = AlertManager {
@@ -174,10 +178,20 @@ impl AlertManager {
                 _ = token.cancelled() => {
                     break;
                 }
+                resync = wakeup_resync.recv() => {
+                    match resync {
+                        Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            manager
+                                .reconcile_retainer_alerts(&ultros_db, &listings, &retainers)
+                                .await;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
+                    }
+                }
                 either = future::select(Box::pin(alerts.recv()), Box::pin(undercuts.recv())) => {
                     match either {
-                        Either::Left((alert_event, _)) => {
-                            if let Ok(EventType::Update(alert)) = alert_event {
+                        Either::Left((alert_event, _)) => match alert_event {
+                            Ok(EventType::Update(alert)) => {
                                 match ultros_db
                                     .get_retainer_alerts_for_related_alert_id(alert.id)
                                     .await
@@ -207,31 +221,110 @@ impl AlertManager {
                                     Err(e) => error!("Error refreshing retainer alert state {e:?}"),
                                 }
                             }
-                        }
-                        Either::Right((retainer_alert_create, _)) => {
-                            if let Ok(retainer) = &retainer_alert_create {
-                                match retainer {
-                                    EventType::Remove(removed) => {
-                                        manager.remove_retainer_alert(removed).await;
-                                    }
-                                    EventType::Add(retainer_alert) => {
-                                        manager
-                                            .create_retainer_alert_listener(
-                                                retainer_alert,
-                                                &ultros_db,
-                                                listings.resubscribe(),
-                                                retainers.resubscribe(),
-                                            )
-                                            .await;
-                                    }
-                                    EventType::Update(m) => {
-                                        manager.update_alert(m, m.margin_percent).await;
-                                    }
-                                }
+                            Ok(_) => {}
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                manager
+                                    .reconcile_retainer_alerts(&ultros_db, &listings, &retainers)
+                                    .await;
                             }
-                        }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        },
+                        Either::Right((retainer_alert_create, _)) => match retainer_alert_create {
+                            Ok(EventType::Remove(removed)) => {
+                                manager.remove_retainer_alert(&removed).await;
+                            }
+                            Ok(EventType::Add(retainer_alert)) => {
+                                manager
+                                    .create_retainer_alert_listener(
+                                        &retainer_alert,
+                                        &ultros_db,
+                                        listings.resubscribe(),
+                                        retainers.resubscribe(),
+                                    )
+                                    .await;
+                            }
+                            Ok(EventType::Update(m)) => {
+                                manager.update_alert(&m, m.margin_percent).await;
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                manager
+                                    .reconcile_retainer_alerts(&ultros_db, &listings, &retainers)
+                                    .await;
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        },
                     }
                 }
+            }
+        }
+    }
+
+    async fn reconcile_retainer_alerts(
+        &mut self,
+        ultros_db: &UltrosDb,
+        listings: &EventBus<ListingEventData>,
+        retainers: &EventBus<OwnedRetainer>,
+    ) {
+        let all_alerts = match ultros_db.get_all_alerts().await {
+            Ok(alerts) => alerts,
+            Err(e) => {
+                error!("Error reconciling retainer alerts from Postgres: {e:?}");
+                return;
+            }
+        };
+        let mut desired: HashMap<i32, (alert_retainer_undercut::Model, i32)> = HashMap::new();
+        for alert in alerts_to_start(all_alerts) {
+            match ultros_db
+                .get_retainer_alerts_for_related_alert_id(alert.id)
+                .await
+            {
+                Ok(retainer_alerts) => {
+                    for retainer_alert in retainer_alerts {
+                        desired.insert(retainer_alert.id, (retainer_alert, alert.cooldown_seconds));
+                    }
+                }
+                Err(e) => error!(
+                    alert_id = alert.id,
+                    "Error loading retainer alerts during reconcile: {e:?}"
+                ),
+            }
+        }
+        let stale_ids: Vec<i32> = self
+            .current_retainer_alerts
+            .keys()
+            .copied()
+            .filter(|id| !desired.contains_key(id))
+            .collect();
+        for id in stale_ids {
+            if let Some(listener) = self.current_retainer_alerts.remove(&id) {
+                let _ = listener
+                    .cancellation_sender
+                    .send(RetainerAlertTx::Stop)
+                    .await;
+            }
+        }
+        for (id, (retainer_alert, cooldown_seconds)) in desired {
+            if let Some(listener) = self.current_retainer_alerts.get(&id) {
+                let _ = listener
+                    .cancellation_sender
+                    .send(RetainerAlertTx::UpdateMargin(retainer_alert.margin_percent))
+                    .await;
+                let _ = listener
+                    .cancellation_sender
+                    .send(RetainerAlertTx::UpdateCooldown(cooldown_seconds))
+                    .await;
+                let _ = listener
+                    .cancellation_sender
+                    .send(RetainerAlertTx::RefreshRetainers)
+                    .await;
+            } else {
+                self.create_retainer_alert_listener(
+                    &retainer_alert,
+                    ultros_db,
+                    listings.resubscribe(),
+                    retainers.resubscribe(),
+                )
+                .await;
             }
         }
     }

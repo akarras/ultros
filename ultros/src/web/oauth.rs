@@ -139,6 +139,12 @@ const LOGIN_NEXT_COOKIE: &str = "login_next";
 /// The cookie the Discord OAuth access token is stored in.
 pub(crate) const DISCORD_AUTH_COOKIE: &str = "discord_auth";
 
+/// Companion cookie storing the Unix-millisecond issuance timestamp of the
+/// current `discord_auth` session cookie. Kept separate from `discord_auth` so
+/// N-1 replicas during rolling deploys continue reading `discord_auth` as a
+/// bare OAuth access token without breaking.
+pub(crate) const DISCORD_AUTH_IAT_COOKIE: &str = "discord_auth_iat";
+
 /// Whether `discord_auth` is written with `Secure`.
 ///
 /// Production is https-only, so the cookie is `Secure` there. The `test-auth`
@@ -194,6 +200,61 @@ pub(crate) fn discord_auth_removal_cookie() -> Cookie<'static> {
     set_discord_auth_attributes(&mut cookie);
     cookie.make_removal();
     cookie
+}
+
+/// Companion issuance-timestamp cookie paired with `discord_auth`.
+///
+/// The value binds `<issued_at_millis>:<sha256_hex(token)>` inside the AEAD
+/// `PrivateCookieJar` so a timestamp cookie from a fresh post-deletion login
+/// cannot be replayed alongside an older, pre-deletion `discord_auth` token.
+pub(crate) fn discord_auth_iat_cookie(
+    issued_at_millis: i64,
+    token_hash: &[u8; 32],
+) -> Cookie<'static> {
+    let hash_hex = ultros_db::auth_revocation::auth_token_hash_hex(token_hash);
+    let mut cookie = Cookie::new(
+        DISCORD_AUTH_IAT_COOKIE,
+        format!("{issued_at_millis}:{hash_hex}"),
+    );
+    set_discord_auth_attributes(&mut cookie);
+    cookie.make_permanent();
+    cookie
+}
+
+/// Removal cookie matching [`discord_auth_iat_cookie`].
+pub(crate) fn discord_auth_iat_removal_cookie() -> Cookie<'static> {
+    let mut cookie = Cookie::new(DISCORD_AUTH_IAT_COOKIE, "");
+    set_discord_auth_attributes(&mut cookie);
+    cookie.make_removal();
+    cookie
+}
+
+/// Extract the verified session issuance timestamp bound to
+/// `expected_token_hash`. Missing, malformed, or mismatched-token cookies
+/// fall back to the Unix epoch so they never bypass account-deletion checks.
+pub(crate) fn cookie_issued_at(
+    cookie_jar: &PrivateCookieJar,
+    expected_token_hash: &[u8; 32],
+) -> chrono::DateTime<chrono::Utc> {
+    let epoch =
+        || chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).expect("unix epoch is valid");
+    let Some(raw) = cookie_jar.get(DISCORD_AUTH_IAT_COOKIE) else {
+        return epoch();
+    };
+    let Some((millis_str, hash_hex)) = raw.value().split_once(':') else {
+        return epoch();
+    };
+    let Some(bound_hash) = ultros_db::auth_revocation::parse_auth_token_hash_hex(hash_hex) else {
+        return epoch();
+    };
+    if bound_hash != *expected_token_hash {
+        return epoch();
+    }
+    millis_str
+        .parse::<i64>()
+        .ok()
+        .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
+        .unwrap_or_else(epoch)
 }
 
 #[derive(Deserialize, Default)]
@@ -320,14 +381,17 @@ pub async fn redirect(
     request = request.set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier));
     let response = request.request_async(&config.inner.http_client).await?;
     let token = response.access_token().secret().clone();
+    let token_hash = ultros_db::auth_revocation::hash_auth_token(&token);
+    let issued_at_ms = chrono::Utc::now().timestamp_millis();
     // store the token into a cookie
     let mut cookie = discord_auth_cookie(token);
+    let mut iat_cookie = discord_auth_iat_cookie(issued_at_ms, &token_hash);
     if let Some(expires_in) = response.expires_in() {
-        cookie.set_max_age(Duration::seconds(
-            expires_in.as_secs().min(i64::MAX as u64) as i64
-        ));
+        let max_age = Duration::seconds(expires_in.as_secs().min(i64::MAX as u64) as i64);
+        cookie.set_max_age(max_age);
+        iat_cookie.set_max_age(max_age);
     }
-    cookies = cookies.add(cookie);
+    cookies = cookies.add(cookie).add(iat_cookie);
     Ok((cookies, Redirect::to(&redirect_to)))
 }
 
@@ -336,31 +400,54 @@ pub async fn logout(
     cookie_jar: PrivateCookieJar,
     State(config): State<DiscordAuthConfig>,
     State(cache): State<AuthUserCache>,
+    State(db): State<UltrosDb>,
+    State(senders): State<crate::event::EventSenders>,
 ) -> Result<(PrivateCookieJar, Redirect), WebError> {
     let cookie = cookie_jar
         .get("discord_auth")
         .ok_or(WebError::NotAuthenticated)?;
 
     let token_value = cookie.value().to_string();
+    let token_hash = ultros_db::auth_revocation::hash_auth_token(&token_value);
+    let durable_result = db
+        .revoke_auth_token(
+            &token_hash,
+            ultros_db::auth_revocation::DEFAULT_AUTH_TOKEN_REVOCATION_TTL_SECS,
+        )
+        .await;
+    let _ = senders
+        .auth_revocations
+        .send(crate::event::AuthRevocationSignal::TokenHash(token_hash));
     invalidate_session_on_logout(&cache, &token_value, async {
-        let token = AccessToken::new(token_value.clone());
-        if let Ok(revocable_token) = config
-            .inner
-            .client
-            .revoke_token(StandardRevocableToken::AccessToken(token))
-        {
-            if let Err(e) = revocable_token
-                .request_async(&config.inner.http_client)
-                .await
-            {
-                tracing::warn!("Failed to revoke discord token on logout: {}", e);
-            }
-        }
+        revoke_discord_token_best_effort(&config, token_value.clone()).await;
     })
     .await;
+    // Require the durable Postgres revocation record to commit before reporting
+    // logout success, so a DB outage cannot silently leave remote replicas
+    // accepting the session.
+    durable_result?;
 
-    let cookie_jar = cookie_jar.remove(discord_auth_removal_cookie());
+    let cookie_jar = cookie_jar
+        .remove(discord_auth_removal_cookie())
+        .remove(discord_auth_iat_removal_cookie());
     Ok((cookie_jar, Redirect::to("/")))
+}
+
+pub(crate) async fn revoke_discord_token_best_effort(
+    config: &DiscordAuthConfig,
+    token_value: String,
+) {
+    let token = AccessToken::new(token_value);
+    if let Ok(revocable_token) = config
+        .inner
+        .client
+        .revoke_token(StandardRevocableToken::AccessToken(token))
+        && let Err(e) = revocable_token
+            .request_async(&config.inner.http_client)
+            .await
+    {
+        tracing::warn!("Failed to revoke discord token: {}", e);
+    }
 }
 
 async fn invalidate_session_on_logout(
@@ -376,14 +463,16 @@ async fn invalidate_session_on_logout(
     cache.remove_token(token).await;
 }
 
-/// Positive authentication results are valid for at most five minutes. Reads
-/// never extend this deadline, so active sessions also revalidate with Discord.
-const AUTH_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+/// Positive authentication results are valid for at most 60 seconds. Reads
+/// never extend this deadline, so active sessions revalidate frequently and
+/// worst-case staleness stays tightly bounded even if a cross-replica wake-up
+/// is delayed.
+const AUTH_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 const AUTH_CACHE_CAPACITY: usize = 10_000;
 
 #[derive(Clone)]
 pub struct AuthUserCache {
-    users: Arc<RwLock<HashMap<String, CachedAuthUser>>>,
+    users: Arc<RwLock<HashMap<[u8; 32], CachedAuthUser>>>,
     invalidation: Arc<AtomicU64>,
 }
 
@@ -392,7 +481,7 @@ struct CachedAuthUser {
     expires_at: Instant,
 }
 
-// Cache keys are bearer credentials; never include them in diagnostic output.
+// Cache keys are hashes of bearer credentials; never include them in diagnostic output.
 impl fmt::Debug for AuthUserCache {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("AuthUserCache").finish_non_exhaustive()
@@ -425,6 +514,7 @@ impl AuthUserCache {
         capacity: usize,
         validation_generation: u64,
     ) {
+        let token_hash = ultros_db::auth_revocation::hash_auth_token(token);
         let mut users = self.users.write().await;
         // A validation that started before logout/account deletion must not
         // repopulate the cache after invalidation. An unrelated logout may
@@ -437,17 +527,17 @@ impl AuthUserCache {
         if capacity == 0 {
             return;
         }
-        if users.len() >= capacity && !users.contains_key(token) {
+        if users.len() >= capacity && !users.contains_key(&token_hash) {
             let oldest = users
                 .iter()
                 .min_by_key(|(_, entry)| entry.expires_at)
-                .map(|(token, _)| token.clone());
+                .map(|(hash, _)| *hash);
             if let Some(oldest) = oldest {
                 users.remove(&oldest);
             }
         }
         users.insert(
-            token.to_string(),
+            token_hash,
             CachedAuthUser {
                 user,
                 expires_at: now + AUTH_CACHE_TTL,
@@ -456,22 +546,37 @@ impl AuthUserCache {
     }
 
     pub(crate) async fn get_user(&self, token: &str) -> Option<AuthDiscordUser> {
+        let token_hash = ultros_db::auth_revocation::hash_auth_token(token);
         let users = self.users.read().await;
         users
-            .get(token)
+            .get(&token_hash)
             .filter(|entry| entry.expires_at > Instant::now())
             .map(|entry| entry.user.clone())
     }
 
     pub(crate) async fn remove_token(&self, token: &str) {
+        let token_hash = ultros_db::auth_revocation::hash_auth_token(token);
+        self.remove_token_hash(&token_hash).await;
+    }
+
+    pub(crate) async fn remove_token_hash(&self, token_hash: &[u8; 32]) {
         let mut users = self.users.write().await;
-        users.remove(token);
+        users.remove(token_hash);
         self.invalidation.fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) async fn remove_user(&self, user_id: u64) {
         let mut users = self.users.write().await;
         users.retain(|_, entry| entry.user.id != user_id);
+        self.invalidation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Flush every cached session and advance the invalidation generation so
+    /// in-flight Discord validations cannot repopulate entries that may have
+    /// been revoked while the cross-replica `PgListener` was disconnected.
+    pub(crate) async fn clear(&self) {
+        let mut users = self.users.write().await;
+        users.clear();
         self.invalidation.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -524,6 +629,12 @@ where
             return Ok(user);
         }
 
+        let token_hash = ultros_db::auth_revocation::hash_auth_token(discord_auth.value());
+        if ultros.is_auth_token_revoked(&token_hash).await? {
+            user_cache.remove_token_hash(&token_hash).await;
+            return Err(ApiError::DiscordTokenInvalid(Box::new(cookie_jar)));
+        }
+
         let http = Http::new(&format!("Bearer {}", discord_auth.value()));
         let user =
             match tokio::time::timeout(std::time::Duration::from_secs(10), http.get_current_user())
@@ -531,7 +642,7 @@ where
             {
                 Ok(Ok(user)) => user,
                 Ok(Err(error)) if invalid_discord_credentials(&error) => {
-                    user_cache.remove_token(discord_auth.value()).await;
+                    user_cache.remove_token_hash(&token_hash).await;
                     return Err(ApiError::DiscordTokenInvalid(Box::new(cookie_jar)));
                 }
                 // Fail closed, but preserve the browser's cookie on a Discord
@@ -539,6 +650,7 @@ where
                 Ok(Err(error)) => return Err(anyhow::anyhow!(error).into()),
                 Err(_) => return Err(anyhow::anyhow!("Discord authentication timed out").into()),
             };
+        let issued_at = cookie_issued_at(&cookie_jar, &token_hash);
         let avatar_url = user
             .static_avatar_url()
             .unwrap_or_else(|| user.default_avatar_url());
@@ -547,9 +659,18 @@ where
             name: user.name.clone(),
             avatar_url,
         };
-        ultros
-            .get_or_create_discord_user(user.id, user.name.clone())
-            .await?;
+        if !ultros
+            .verify_session_and_upsert_discord_user(
+                &token_hash,
+                user.id,
+                user.name.clone(),
+                issued_at,
+            )
+            .await?
+        {
+            user_cache.remove_token_hash(&token_hash).await;
+            return Err(ApiError::DiscordTokenInvalid(Box::new(cookie_jar)));
+        }
         user_cache
             .store_user_with_capacity(
                 discord_auth.value(),
@@ -684,6 +805,8 @@ pub mod test_auth {
             .await?;
 
         let token = format!("test-token-{}", params.user_id);
+        let token_hash = ultros_db::auth_revocation::hash_auth_token(&token);
+        db.clear_auth_token_revocation(&token_hash).await?;
         let user = AuthDiscordUser {
             id: params.user_id,
             name: params.username,
@@ -698,13 +821,15 @@ pub mod test_auth {
         // feature so local E2E works over plain http — see
         // `DISCORD_AUTH_SECURE` — and the removal follows it there.
         let cookie = super::discord_auth_cookie(token);
+        let iat_cookie =
+            super::discord_auth_iat_cookie(chrono::Utc::now().timestamp_millis(), &token_hash);
 
         let redirect = if params.redirect.starts_with('/') {
             params.redirect.as_str()
         } else {
             "/"
         };
-        Ok((cookies.add(cookie), Redirect::to(redirect)))
+        Ok((cookies.add(cookie).add(iat_cookie), Redirect::to(redirect)))
     }
 }
 
@@ -920,6 +1045,72 @@ mod tests {
         let removal = jar.delta().next().expect("a removal must be emitted");
         assert_eq!(removal.path(), Some("/"));
         assert_eq!(removal.value(), "");
+    }
+
+    #[tokio::test]
+    async fn clear_evicts_all_sessions_and_blocks_in_flight_validations() {
+        let cache = AuthUserCache::new();
+        cache.store_user("first", cached_user(1)).await;
+        cache.store_user("second", cached_user(2)).await;
+        let generation = cache.invalidation.load(Ordering::Relaxed);
+
+        cache.clear().await;
+        assert!(cache.get_user("first").await.is_none());
+        assert!(cache.get_user("second").await.is_none());
+
+        cache
+            .store_user_with_capacity("first", cached_user(1), 4, generation)
+            .await;
+        assert!(
+            cache.get_user("first").await.is_none(),
+            "in-flight validations started before PgListener reconnect flush must not repopulate"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_token_hash_evicts_matching_session_without_raw_token() {
+        let cache = AuthUserCache::new();
+        cache.store_user("secret-1", cached_user(1)).await;
+        cache.store_user("secret-2", cached_user(2)).await;
+        let hash = ultros_db::auth_revocation::hash_auth_token("secret-1");
+        cache.remove_token_hash(&hash).await;
+        assert!(cache.get_user("secret-1").await.is_none());
+        assert!(cache.get_user("secret-2").await.is_some());
+    }
+
+    #[test]
+    fn discord_auth_iat_removal_matches_the_writes_attributes() {
+        let token_hash = ultros_db::auth_revocation::hash_auth_token("a-token");
+        let write = discord_auth_iat_cookie(1_700_000_000_000, &token_hash);
+        let removal = discord_auth_iat_removal_cookie();
+
+        assert_eq!(removal.name(), write.name());
+        assert_eq!(removal.path(), write.path());
+        assert_eq!(removal.domain(), write.domain());
+        assert_eq!(removal.secure(), write.secure());
+        assert_eq!(removal.http_only(), write.http_only());
+        assert_eq!(removal.same_site(), write.same_site());
+        assert_eq!(removal.value(), "");
+        assert_eq!(removal.max_age(), Some(Duration::seconds(0)));
+    }
+
+    #[test]
+    fn cookie_issued_at_rejects_timestamp_bound_to_different_token() {
+        let key = Key::generate();
+        let token_a_hash = ultros_db::auth_revocation::hash_auth_token("token-a");
+        let token_b_hash = ultros_db::auth_revocation::hash_auth_token("token-b");
+        let issued_ms = 1_750_000_000_123_i64;
+        let jar = PrivateCookieJar::new(key).add(discord_auth_iat_cookie(issued_ms, &token_b_hash));
+
+        assert_eq!(
+            cookie_issued_at(&jar, &token_b_hash).timestamp_millis(),
+            issued_ms
+        );
+        assert_eq!(
+            cookie_issued_at(&jar, &token_a_hash).timestamp_millis(),
+            0,
+            "an iat cookie issued for token-b must not validate token-a"
+        );
     }
 
     #[test]

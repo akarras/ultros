@@ -18,7 +18,8 @@ use std::{collections::HashMap, sync::Arc};
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
-    response::IntoResponse,
+    http::HeaderMap,
+    response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use ultros_api_types::sale_stats::{BulkSaleStats, BulkSaleStatsColumnar, ItemSaleStats};
@@ -27,9 +28,12 @@ use ultros_clickhouse::ClickHouseClient;
 use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
 use super::is_columnar;
-use crate::web::{
-    error::{ClickHouseQueryError, WebError},
-    stats_cache::{CacheKey, SaleStatsCache, cached_response},
+use crate::{
+    market_client::MarketClient,
+    web::{
+        error::{ClickHouseQueryError, WebError},
+        stats_cache::{CacheKey, SaleStatsCache, cached_response},
+    },
 };
 
 const DEFAULT_WINDOW_DAYS: u16 = 7;
@@ -43,23 +47,26 @@ pub(crate) struct SaleStatsQuery {
     format: Option<String>,
 }
 
-pub(crate) async fn get_sale_stats(
-    State(ch): State<ClickHouseClient>,
-    State(world_cache): State<Arc<WorldCache>>,
-    State(cache): State<SaleStatsCache>,
-    Path(world): Path<String>,
-    Query(query): Query<SaleStatsQuery>,
-) -> Result<impl IntoResponse, WebError> {
-    let value = world_cache.lookup_value_by_name(&world)?;
+pub(crate) async fn serve_sale_stats(
+    ch: &ClickHouseClient,
+    world_cache: &WorldCache,
+    cache: &SaleStatsCache,
+    headers: &HeaderMap,
+    world: &str,
+    window: Option<u16>,
+    format: Option<&str>,
+) -> Result<Response, WebError> {
+    let value = world_cache.lookup_value_by_name(world)?;
     let selector = AnySelector::from(&value);
     let world_ids = world_cache
         .get_all_worlds_in(&value)
         .ok_or(WebError::NotFound)?;
-    let window_days = query.window.unwrap_or(DEFAULT_WINDOW_DAYS);
+    let window_days = window.unwrap_or(DEFAULT_WINDOW_DAYS);
     if !SUPPORTED_WINDOWS.contains(&window_days) {
         return Err(WebError::BadRequest);
     }
-    let columnar = is_columnar(query.format.as_deref());
+    let columnar = is_columnar(format);
+    let ch = ch.clone();
 
     let cached = cache
         .get_or_load(
@@ -77,7 +84,18 @@ pub(crate) async fn get_sale_stats(
         "disposition" => disposition
     )
     .increment(1);
-    Ok(cached_response(cached.body, disposition))
+    Ok(cached_response(&cached, headers).await.into_response())
+}
+
+pub(crate) async fn get_sale_stats(
+    State(market): State<Arc<dyn MarketClient>>,
+    headers: HeaderMap,
+    Path(world): Path<String>,
+    Query(query): Query<SaleStatsQuery>,
+) -> Result<Response, WebError> {
+    market
+        .sale_stats(&world, query.window, query.format.as_deref(), &headers)
+        .await
 }
 
 async fn load_sale_stats(
