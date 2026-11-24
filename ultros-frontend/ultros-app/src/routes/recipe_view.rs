@@ -15,7 +15,7 @@ use crate::components::{
     clipboard::Clipboard,
     crafting_cost::{CRYSTAL_SEARCH_CATEGORY, IngredientsIter, vendor_price_map},
     item_icon::{IconSize, ItemIcon},
-    meta::{MetaDescription, MetaTitle},
+    meta::{MetaCanonical, MetaDescription, MetaTitle},
 };
 use crate::global_state::craft_options::MAX_HOP_GIL;
 use crate::global_state::{
@@ -807,7 +807,9 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
         }
         text
     });
+    let canonical_href = format!("https://ultros.app/recipe/{}", recipe.key_id.0);
     view! {
+        <MetaCanonical href=canonical_href />
         <MetaTitle title=title.clone() />
         <MetaDescription text="Plan a recipe without signing in. Compare full-stack ingredient costs, craft intermediates, and see what each extra world visit saves." />
         <div class="space-y-5 pb-12" data-testid="recipe-planner">

@@ -17,7 +17,7 @@ use crate::components::app_link::AppLink;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::item_icon::{IconSize, ItemIcon};
-use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::meta::{MetaCanonical, MetaDescription, MetaTitle};
 use crate::components::related_items::VendorGateBadge;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -386,6 +386,7 @@ pub fn NpcView() -> impl IntoView {
     );
 
     view! {
+        <MetaCanonical href=move || format!("https://ultros.app/npc/{}", npc_id.get()) />
         <Suspense fallback=move || view! { <div role="status">{t!(i18n, loading)}</div> }>
         {move || {
             let data = tracked_data();

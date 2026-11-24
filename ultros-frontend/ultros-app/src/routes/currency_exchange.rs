@@ -18,6 +18,7 @@ use crate::components::control_bar::ControlBar;
 use crate::components::icon::Icon;
 use crate::components::item_actions::ItemActions;
 use crate::components::item_icon::ItemIcon;
+use crate::components::meta::MetaCanonical;
 use crate::components::meta::MetaDescription;
 use crate::components::meta::MetaTitle;
 use crate::components::skeleton::{SkeletonCell, SkeletonColumn, TableSkeleton};
@@ -608,6 +609,7 @@ fn ExchangeItemContent() -> impl IntoView {
     });
     view! {
         <div class="flex flex-col gap-4">
+            <MetaCanonical href=move || format!("https://ultros.app/currency-exchange/{}", item_id().0) />
             <MetaTitle title=move || t_string!(i18n, currency_exchange_meta_title).replace("%item%", item_name()) />
             <MetaDescription text=move || {
                 t_string!(i18n, currency_exchange_meta_desc).replace("%item%", item_name())
@@ -847,6 +849,7 @@ pub fn CurrencySelection() -> impl IntoView {
 
     view! {
         <div class="space-y-4">
+            <MetaCanonical href="https://ultros.app/currency-exchange" />
             <MetaTitle title=t_string!(i18n, currency_exchange_meta_title_ultros) />
             <MetaDescription text=t_string!(i18n, currency_exchange_meta_desc_default) />
 

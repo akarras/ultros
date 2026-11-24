@@ -2763,6 +2763,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
 
     view! {
         <div class="main-content p-2 sm:p-6">
+            <crate::components::meta::MetaCanonical href=move || crate::components::meta::canonical_tool_href("/flip-finder", Some(&world())) />
             <MetaTitle title=move || t_string!(i18n, analyzer_meta_title).to_string().replace("%world%", &world()) />
             <MetaDescription text=move || {
                 t_string!(i18n, analyzer_meta_desc).to_string().replace("%world%", &world())
@@ -2913,6 +2914,7 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
 pub fn Analyzer() -> impl IntoView {
     let i18n = use_i18n();
     view! {
+        <crate::components::meta::MetaCanonical href="https://ultros.app/flip-finder" />
         <MetaTitle title=t_string!(i18n, analyzer_index_meta_title).to_string() />
         <MetaDescription text=t_string!(i18n, analyzer_index_meta_desc).to_string() />
 

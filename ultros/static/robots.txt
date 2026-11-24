@@ -1,5 +1,6 @@
 User-agent: *
 Allow: /
+Allow: /api/v1/public/
 # Login-gated or per-user pages: noindex via <meta> as well, but blocking
 # at the crawler level saves crawl budget on routes that have no organic
 # value and never link out to indexable content.

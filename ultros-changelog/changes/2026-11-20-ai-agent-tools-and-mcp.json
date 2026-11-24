@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Connect AI assistants directly to Ultros",
+  "blurb": "Ask Claude, ChatGPT, or any MCP client to search items, find flips, analyze crafting profits, or plan shopping lists using live Ultros data at https://ultros.app/mcp, with direct links back to pre-filtered Ultros views.",
+  "link": "/help/ai-agents"
+}

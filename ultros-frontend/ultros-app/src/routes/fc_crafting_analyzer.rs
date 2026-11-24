@@ -937,8 +937,18 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
 
     let recent_sales_clone = recent_sales.clone();
 
+    let canonical_href = move || {
+        params.with(|p| {
+            crate::components::meta::canonical_tool_href(
+                "/fc-crafting-analyzer",
+                p.get_str("world"),
+            )
+        })
+    };
+
     view! {
         <div class="flex flex-col gap-4 h-full">
+            <crate::components::meta::MetaCanonical href=canonical_href />
             <Title text=t_string!(i18n, fc_crafting_analyzer_meta_title).to_string() />
             <Meta name="description" content=t_string!(i18n, fc_crafting_analyzer_meta_desc).to_string() />
 

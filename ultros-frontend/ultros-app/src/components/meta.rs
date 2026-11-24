@@ -56,19 +56,76 @@ pub fn MetaRobotsNoIndex() -> impl IntoView {
     view! { <Meta name="robots" content="noindex, follow" /> }
 }
 
-/// Sets a canonical URL for the current page. Use on routes that may be
-/// reachable via multiple URLs (e.g. /item/{world}/{id} and /item/{id})
-/// or that accept query params that don't change page content.
+/// `(BCP-47 hreflang, Ultros `?lang=` code)` pairs for every shipped locale.
+pub const HREFLANG_LOCALES: &[(&str, &str)] = &[
+    ("en", "en"),
+    ("ja", "ja"),
+    ("de", "de"),
+    ("fr", "fr"),
+    ("ko", "ko"),
+    ("zh-Hans", "cn"),
+    ("zh-Hant", "tc"),
+];
+
+/// Build the localized alternate URL for a canonical base URL.
+pub fn localized_alternate_url(base: &str, lang: &str) -> String {
+    let sep = if base.contains('?') { '&' } else { '?' };
+    format!("{base}{sep}lang={lang}")
+}
+
+fn canonical_for_language(base: &str, language: Option<&str>) -> String {
+    use leptos_i18n::Locale as _;
+    match language.and_then(crate::social_card::parse_locale) {
+        Some(locale) => localized_alternate_url(base, locale.as_str()),
+        None => base.to_owned(),
+    }
+}
+
+/// Build the canonical URL for a tool route that optionally carries a `:world`
+/// path segment (e.g. `/recipe-analyzer` or `/recipe-analyzer/Gilgamesh`).
+pub fn canonical_tool_href(base_path: &str, world: Option<&str>) -> String {
+    let base_path = base_path.trim_end_matches('/');
+    match world.map(str::trim).filter(|w| !w.is_empty()) {
+        Some(world) => {
+            let encoded = leptos_router::location::Url::escape(world);
+            format!("https://ultros.app{base_path}/{encoded}")
+        }
+        None => format!("https://ultros.app{base_path}"),
+    }
+}
+
+/// Sets a canonical URL and 7-locale `hreflang` alternates for the current
+/// indexable page. Use on routes that may be reachable via multiple URLs
+/// (e.g. `/item/{world}/{id}` and `/item/{id}`) or that accept query params
+/// that don't change the core entity (filters, sorts, `?lang=`).
 ///
 /// `href` is a `TextProp` rather than a plain string because
 /// `leptos_meta::Link`'s own `href` prop only accepts a static
-/// `Oco<'static, str>` (no reactive closure support). Wrapping the `<Link>`
+/// `Oco<'static, str>` (no reactive closure support). Wrapping the `<Link>`s
 /// in a reactive block here means a `move || ...` closure passed as `href`
-/// re-registers the tag (with the new value) whenever its dependencies
-/// change, instead of only ever emitting the value captured at first render.
+/// re-registers the tags whenever its dependencies change, instead of only
+/// ever emitting the value captured at first render.
 #[component]
 pub fn MetaCanonical(#[prop(into)] href: TextProp) -> impl IntoView {
-    view! { {move || view! { <Link rel="canonical" href=href.get() /> }} }
+    let query = crate::components::app_link::use_query_map_or_default();
+    view! {
+        {move || {
+            let base = href.get().to_string();
+            let canonical = query.with(|params| canonical_for_language(&base, params.get_str("lang")));
+            let alternates = HREFLANG_LOCALES
+                .iter()
+                .map(|&(bcp47, code)| {
+                    let localized = localized_alternate_url(&base, code);
+                    view! { <Link rel="alternate" hreflang=bcp47 href=localized /> }
+                })
+                .collect_view();
+            view! {
+                <Link rel="canonical" href=canonical />
+                <Link rel="alternate" hreflang="x-default" href=base />
+                {alternates}
+            }
+        }}
+    }
 }
 
 #[cfg(test)]
@@ -105,5 +162,43 @@ mod tests {
         let title = page_title(&owner, false);
         owner.cleanup();
         let _ = title.get();
+    }
+
+    #[test]
+    fn explicit_supported_language_is_self_canonical() {
+        let help = "https://ultros.app/help";
+        for &(_, code) in HREFLANG_LOCALES {
+            assert_eq!(
+                canonical_for_language(help, Some(code)),
+                localized_alternate_url(help, code)
+            );
+        }
+        assert_eq!(canonical_for_language(help, None), help);
+        assert_eq!(canonical_for_language(help, Some("invalid")), help);
+    }
+
+    #[test]
+    fn canonical_helpers_build_clean_urls_and_hreflang_alternates() {
+        assert_eq!(
+            canonical_tool_href("/recipe-analyzer", None),
+            "https://ultros.app/recipe-analyzer"
+        );
+        assert_eq!(
+            canonical_tool_href("/recipe-analyzer", Some("  ")),
+            "https://ultros.app/recipe-analyzer"
+        );
+        assert_eq!(
+            canonical_tool_href("/recipe-analyzer", Some("Gilgamesh")),
+            "https://ultros.app/recipe-analyzer/Gilgamesh"
+        );
+        assert_eq!(
+            localized_alternate_url("https://ultros.app/item/123", "ja"),
+            "https://ultros.app/item/123?lang=ja"
+        );
+        assert_eq!(
+            localized_alternate_url("https://ultros.app/item/123?foo=bar", "cn"),
+            "https://ultros.app/item/123?foo=bar&lang=cn"
+        );
+        assert_eq!(HREFLANG_LOCALES.len(), 7);
     }
 }

@@ -1,3 +1,4 @@
+pub(crate) mod agent;
 mod alerts_websocket;
 pub(crate) mod api;
 pub(crate) mod country_code_decoder;
@@ -105,7 +106,9 @@ use crate::web::api::{
     get_market_heat, get_market_pulse, get_movers, get_sale_stats, get_trends, post_resale_quality,
     post_sparklines, recent_sales,
 };
-use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, npc_sitemap, sitemap_index};
+use crate::web::sitemap::{
+    generic_pages_sitemap, item_sitemap, jobset_sitemap, npc_sitemap, recipe_sitemap, sitemap_index,
+};
 use crate::web::{
     alerts_websocket::connect_websocket,
     item_card::item_card,
@@ -4192,6 +4195,9 @@ pub(crate) async fn start_web(
     // build our application with a route
     let worlds = state.world_helper.clone();
     let token = state.token.clone();
+    // Share one public agent rate limiter across REST (`/api/v1/public/*`), `/mcp`, and
+    // `Accept: text/markdown` / `?format=md` content-negotiated routes.
+    let agent_limiter = agent::rate_limit::AgentRateLimiter::default_public();
     let api = api_router().merge(
         plugin::router(&state.key, state.db.clone(), state.token.clone())
             .expect("valid plugin configuration"),
@@ -4233,10 +4239,14 @@ pub(crate) async fn start_web(
             get(social_card::social_card),
         )
         .route("/sitemap/items.xml", get(item_sitemap))
+        .route("/sitemap/recipes.xml", get(recipe_sitemap))
+        .route("/sitemap/jobsets.xml", get(jobset_sitemap))
         .route("/sitemap/npcs.xml", get(npc_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))
         .route("/listings/{world}/{item}", get(listings_redirect))
+        .merge(agent::discovery_router())
+        .merge(agent::agent_router(agent_limiter.clone()))
         .merge(test_auth_routes())
         .merge(
             create_leptos_app(state.world_helper.clone(), ssr_api.clone())
@@ -4258,10 +4268,16 @@ pub(crate) async fn start_web(
                 |options| shell_with_ads(options, String::new(), false, false),
             ),
         ))
-        .with_state(state)
+        .with_state(state.clone())
         .route_layer(middleware::from_fn(track_metrics))
         .layer(middleware::from_fn(redirect_legacy_book_host))
         .layer(middleware::from_fn(restore_analyzer_view))
+        // Mounted outer to `restore_analyzer_view` so saved-view cookie redirects never
+        // intercept explicit `Accept: text/markdown` or `?format=md` requests.
+        .layer(middleware::from_fn_with_state(
+            (state, agent_limiter),
+            agent::markdown::markdown_negotiation,
+        ))
         // tower-http's default `on_failure` logs every 5xx via `tracing::error!`,
         // which the `sentry_tracing` layer turns into a GlitchTip issue.
         // See `failure_report_level` for which failures still warrant one.

@@ -11,14 +11,14 @@ mod market_heat;
 mod market_pulse;
 mod movers;
 pub(crate) mod push;
-mod query;
+pub(crate) mod query;
 pub(crate) mod real_time_data;
 mod recent_sales;
 mod resale_quality;
 mod sale_stats;
 mod trends;
 
-pub(crate) use best_deals::{BestDealsQuery, get_best_deals, serve_best_deals};
+pub(crate) use best_deals::{BestDealsQuery, ResaleStatsDto, get_best_deals, serve_best_deals};
 pub(crate) use changelog::get_changelog;
 pub(crate) use cheapest_per_world::{
     CheapestCache, cheapest_per_world, new_cheapest_cache, serve_cheapest_per_world,

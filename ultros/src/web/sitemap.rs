@@ -47,6 +47,8 @@ pub(crate) async fn sitemap_index() -> Result<Xml, WebError> {
     let sitemap_list = vec![
         Sitemap::new("https://ultros.app/sitemap/pages.xml".to_string(), None),
         Sitemap::new("https://ultros.app/sitemap/items.xml".to_string(), None),
+        Sitemap::new("https://ultros.app/sitemap/recipes.xml".to_string(), None),
+        Sitemap::new("https://ultros.app/sitemap/jobsets.xml".to_string(), None),
         Sitemap::new("https://ultros.app/sitemap/npcs.xml".to_string(), None),
     ];
 
@@ -186,6 +188,7 @@ pub(crate) async fn generic_pages_sitemap(
         "venture-analyzer",
         "market-trends",
         "lists-alerts-retainers",
+        "ai-agents",
     ];
     for slug in HELP_SLUGS {
         let mut builder = Url::builder(format!("https://ultros.app/help/{slug}"));
@@ -391,4 +394,77 @@ pub(crate) async fn npc_sitemap() -> Result<Xml, WebError> {
     urls.write(&mut url_xml)
         .map_err(|_| anyhow!("Error creating npc site map"))?;
     Ok(Xml(url_xml))
+}
+
+/// `/recipe/<id>` for every craftable recipe whose output item can be listed
+/// on the market board, ascending.
+pub(crate) fn recipe_page_ids(data: &xiv_gen::Data) -> Vec<i32> {
+    let mut ids: Vec<i32> = data
+        .recipes
+        .values()
+        .filter(|recipe| {
+            data.items
+                .get(&xiv_gen::ItemId(recipe.item_result))
+                .is_some_and(|item| item.item_search_category > 0)
+        })
+        .map(|recipe| recipe.key_id.0)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+pub(crate) async fn recipe_sitemap() -> Result<Xml, WebError> {
+    let urls = UrlSet::new(
+        recipe_page_ids(xiv_gen_db::data())
+            .into_iter()
+            .map(|id| {
+                Url::builder(format!("https://ultros.app/recipe/{id}"))
+                    .change_frequency(ChangeFrequency::Weekly)
+                    .priority(0.5)
+                    .build()
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow!("Error generating recipe sitemap: {e}"))?,
+    )?;
+    let mut url_xml = Vec::new();
+    urls.write(&mut url_xml)
+        .map_err(|_| anyhow!("Error creating recipe site map"))?;
+    Ok(Xml(url_xml))
+}
+
+pub(crate) async fn jobset_sitemap() -> Result<Xml, WebError> {
+    let urls = UrlSet::new(
+        ultros_app::job_set_sitemap_paths(xiv_gen_db::data())
+            .into_iter()
+            .map(|path| {
+                Url::builder(format!("https://ultros.app{path}"))
+                    .change_frequency(ChangeFrequency::Weekly)
+                    .priority(0.5)
+                    .build()
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow!("Error generating jobset sitemap: {e}"))?,
+    )?;
+    let mut url_xml = Vec::new();
+    urls.write(&mut url_xml)
+        .map_err(|_| anyhow!("Error creating jobset site map"))?;
+    Ok(Xml(url_xml))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recipe_and_jobset_sitemaps_return_sorted_unique_entries() {
+        let data = xiv_gen_db::data();
+        let recipes = recipe_page_ids(data);
+        assert!(!recipes.is_empty());
+        assert!(recipes.windows(2).all(|w| w[0] < w[1]));
+
+        let jobsets = ultros_app::job_set_sitemap_paths(data);
+        assert!(!jobsets.is_empty());
+        assert!(jobsets.iter().all(|p| p.starts_with("/items/jobset/")));
+    }
 }

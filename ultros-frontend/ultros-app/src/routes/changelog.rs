@@ -12,7 +12,7 @@ use crate::api::get_changelog;
 use crate::components::ad::{Ad, slots as ad_slots};
 use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
-use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::meta::{MetaCanonical, MetaDescription, MetaTitle};
 use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::changelog::use_mark_changelog_seen;
 use crate::i18n::*;
@@ -58,6 +58,7 @@ pub fn Changelog() -> impl IntoView {
     let changelog = Resource::new_blocking(|| (), |()| get_changelog());
 
     view! {
+        <MetaCanonical href="https://ultros.app/changelog" />
         <MetaTitle title=t_string!(i18n, changelog_meta_title).to_string() />
         <MetaDescription text=t_string!(i18n, changelog_meta_desc).to_string() />
         <div class="main-content p-2 sm:p-6">

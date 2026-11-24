@@ -106,6 +106,7 @@ const HELP_TOPICS: &[&str] = &[
     "venture-analyzer",
     "market-trends",
     "lists-alerts-retainers",
+    "ai-agents",
 ];
 
 fn positive_id(value: &str) -> Option<i32> {
@@ -420,6 +421,10 @@ pub(crate) fn social_card_content_with_npc(
                     "lists-alerts-retainers" => (
                         td_string!(locale, social_card_saved_tools).to_string(),
                         td_string!(locale, social_card_saved_tools_subtitle).to_string(),
+                    ),
+                    "ai-agents" => (
+                        td_string!(locale, social_card_ai_agents).to_string(),
+                        td_string!(locale, social_card_ai_agents_subtitle).to_string(),
                     ),
                     "fc-crafting" => tool_copy(locale, "fc-crafting-analyzer")?,
                     "market-trends" => tool_copy(locale, "trends")?,

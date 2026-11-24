@@ -1995,13 +1995,19 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     .app-shell > .app-bottom-anchor-ad:has(.ad.hidden) {
         display: none;
     }
-    /* Reserve bottom clearance only while the anchor bar is actually shown so
-       the last VirtualGrid row and page footer are never covered. */
-    .app-shell:not(.app-shell-plugin):has(> .app-bottom-anchor-ad:not(:has(.ad.hidden))) > .app-shell-content {
-        padding-bottom: 8.25rem;
+    /* The footer lives outside the shell, so share the visible anchor's
+       clearance with it and with route content through their common parent. */
+    body:has(:where(.app-shell:not(.app-shell-plugin) > .app-bottom-anchor-ad .ad:not(.hidden))) {
+        --laptop-anchor-clearance: 7.75rem;
     }
-    .app-shell:not(.app-shell-plugin):has(> .app-bottom-anchor-ad:not(:has(.ad.hidden))) .app-shell-content .virtual-grid {
-        --grid-bottom-clearance: 7.75rem;
+    .app-shell:not(.app-shell-plugin) > .app-shell-content {
+        padding-bottom: calc(1rem + var(--laptop-anchor-clearance, 0px));
+    }
+    .app-shell-content .virtual-grid {
+        --grid-bottom-clearance: var(--laptop-anchor-clearance, 0px);
+    }
+    .site-footer {
+        padding-bottom: var(--laptop-anchor-clearance, 0px);
     }
 }
 
@@ -2025,11 +2031,8 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     .app-shell.app-shell-collapsed:not(.app-shell-plugin) > .app-bottom-anchor-ad {
         display: none;
     }
-    .app-shell.app-shell-collapsed:not(.app-shell-plugin):has(> .app-bottom-anchor-ad) > .app-shell-content {
-        padding-bottom: 1rem;
-    }
-    .app-shell.app-shell-collapsed:not(.app-shell-plugin):has(> .app-bottom-anchor-ad) .app-shell-content .virtual-grid {
-        --grid-bottom-clearance: 0px;
+    body:has(.app-shell.app-shell-collapsed > .app-bottom-anchor-ad) {
+        --laptop-anchor-clearance: 0px;
     }
     .app-shell.app-shell-collapsed:not(.app-shell-plugin) .app-ad-rail {
         display: block;

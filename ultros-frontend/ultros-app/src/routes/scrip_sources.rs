@@ -10,7 +10,7 @@ use crate::analyzer_kit::{
     market::{MarketGrid, MarketSubject, resolve_price, use_market_data},
 };
 use crate::columnar_wire::columnar_resource;
-use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::meta::{MetaCanonical, MetaDescription, MetaTitle, canonical_tool_href};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::saved_views::{
     GridPresetView, GridSavedViews, provide_grid_saved_views,
@@ -843,8 +843,13 @@ pub fn ScripSources() -> impl IntoView {
     });
     let connected_listings = scope.connected_listings();
 
+    let route_params = leptos_router::hooks::use_params_map();
+    let canonical_href =
+        move || route_params.with(|p| canonical_tool_href("/scrip-sources", p.get_str("world")));
+
     view! {
         <div class="flex flex-col gap-4 h-full">
+            <MetaCanonical href=canonical_href />
             <MetaTitle title=t_string!(i18n, scrip_sources_meta_title).to_string() />
             <MetaDescription text=t_string!(i18n, scrip_sources_meta_desc).to_string() />
 

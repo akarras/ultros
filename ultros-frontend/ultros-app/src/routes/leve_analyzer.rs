@@ -11,7 +11,7 @@ use crate::analyzer_kit::{
 };
 use crate::columnar_wire::columnar_resource;
 use crate::components::item_actions::ItemActions;
-use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::meta::{MetaCanonical, MetaDescription, MetaTitle, canonical_tool_href};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_grid::metrics::FilterOp;
 use crate::components::virtual_grid::metrics::{GridMetric, GridValue};
@@ -817,8 +817,12 @@ pub fn LeveAnalyzer() -> impl IntoView {
     });
 
     let recent_sales_clone = recent_sales.clone();
+    let route_params = leptos_router::hooks::use_params_map();
+    let canonical_href =
+        move || route_params.with(|p| canonical_tool_href("/leve-analyzer", p.get_str("world")));
     view! {
         <div class="flex flex-col gap-4 h-full">
+            <MetaCanonical href=canonical_href />
             <MetaTitle title=move || t_string!(i18n, leve_analyzer_meta_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, leve_analyzer_meta_desc).to_string() />
 
