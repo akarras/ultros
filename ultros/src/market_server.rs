@@ -19,7 +19,7 @@ use std::time::Duration;
 use axum::{
     Json, Router,
     body::{Body, Bytes},
-    extract::{Path, Request, State},
+    extract::{DefaultBodyLimit, Path, Query, Request, State},
     http::{HeaderValue, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -33,6 +33,11 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    bot_admin_client::{
+        BotAdminClient, BotAdminError, BotDeliveryError, DeliverDiscordNotificationRequest,
+        GuildDiscoveryRequest, RequireManageableGuildRequest, ResolveChannelRequest,
+        SearchGuildMembersQuery, TriggerGroupSyncRequest, TriggerGroupSyncResponse,
+    },
     event::{EventReceivers, EventType},
     market_client::{MarketClient, MarketStreamEvent, RefreshOutcome, SitemapItemSaleSummary},
     roles::Roles,
@@ -50,6 +55,7 @@ use crate::{
 #[derive(Clone)]
 struct MarketServerState {
     market: Arc<dyn MarketClient>,
+    bot_admin: Arc<dyn BotAdminClient>,
     event_receivers: EventReceivers,
     roles: Roles,
     shutdown: CancellationToken,
@@ -59,6 +65,12 @@ struct MarketServerState {
 impl axum::extract::FromRef<MarketServerState> for Arc<dyn MarketClient> {
     fn from_ref(input: &MarketServerState) -> Self {
         input.market.clone()
+    }
+}
+
+impl axum::extract::FromRef<MarketServerState> for Arc<dyn BotAdminClient> {
+    fn from_ref(input: &MarketServerState) -> Self {
+        input.bot_admin.clone()
     }
 }
 
@@ -268,10 +280,169 @@ async fn require_internal_bearer(
     }
 }
 
+/// Fail-closed bearer middleware for `/internal/bot/*`: unlike read-only
+/// `/internal/market/*`, bot-admin routes MUST NEVER accept unauthenticated
+/// requests when `ULTROS_MARKET_TOKEN` is unset or blank.
+async fn require_bot_admin_bearer(
+    State(expected): State<Option<Arc<str>>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let Some(expected) = expected else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::CACHE_CONTROL, "no-store")],
+            "Unauthorized",
+        )
+            .into_response();
+    };
+    let provided = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    match provided {
+        Some(token) if bearer_token_matches(token, &expected) => next.run(request).await,
+        _ => (
+            StatusCode::UNAUTHORIZED,
+            [(header::CACHE_CONTROL, "no-store")],
+            "Unauthorized",
+        )
+            .into_response(),
+    }
+}
+
+/// Ensures every `/internal/bot/*` response — including Axum extractor
+/// rejections (`400`/`422`), `DefaultBodyLimit` (`413`), and auth rejections
+/// (`401`) — carries `Cache-Control: no-store`.
+async fn set_no_store_header(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+fn no_store_json<T: Serialize>(value: T) -> Response {
+    let mut response = Json(value).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+async fn internal_bot_guilds(
+    State(bot_admin): State<Arc<dyn BotAdminClient>>,
+) -> Result<Response, BotAdminError> {
+    let ids = bot_admin
+        .bot_guild_ids()
+        .await
+        .map_err(BotAdminError::from_api_error)?;
+    Ok(no_store_json(ids))
+}
+
+async fn internal_bot_manageable_guilds(
+    State(bot_admin): State<Arc<dyn BotAdminClient>>,
+    Json(req): Json<GuildDiscoveryRequest>,
+) -> Result<Response, BotAdminError> {
+    let guilds = bot_admin
+        .manageable_guilds(req.user_id, req.candidate_guild_ids)
+        .await
+        .map_err(BotAdminError::from_api_error)?;
+    Ok(no_store_json(guilds))
+}
+
+async fn internal_bot_writable_guilds(
+    State(bot_admin): State<Arc<dyn BotAdminClient>>,
+    Json(req): Json<GuildDiscoveryRequest>,
+) -> Result<Response, BotAdminError> {
+    let guilds = bot_admin
+        .writable_guilds(req.user_id, req.candidate_guild_ids)
+        .await
+        .map_err(BotAdminError::from_api_error)?;
+    Ok(no_store_json(guilds))
+}
+
+async fn internal_bot_require_manageable_guild(
+    State(bot_admin): State<Arc<dyn BotAdminClient>>,
+    Json(req): Json<RequireManageableGuildRequest>,
+) -> Result<Response, BotAdminError> {
+    let guild = bot_admin
+        .require_manageable_guild(req.guild_id, req.user_id)
+        .await
+        .map_err(BotAdminError::from_api_error)?;
+    Ok(no_store_json(guild))
+}
+
+async fn internal_bot_resolve_channel(
+    State(bot_admin): State<Arc<dyn BotAdminClient>>,
+    Json(req): Json<ResolveChannelRequest>,
+) -> Result<Response, BotAdminError> {
+    let resolved = bot_admin
+        .resolve_and_verify_channel(req.channel_id, req.user_id)
+        .await
+        .map_err(BotAdminError::from_api_error)?;
+    Ok(no_store_json(resolved))
+}
+
+async fn internal_bot_guild_roles(
+    State(bot_admin): State<Arc<dyn BotAdminClient>>,
+    Path(guild_id): Path<i64>,
+) -> Result<Response, BotAdminError> {
+    let roles = bot_admin
+        .importable_guild_roles(guild_id)
+        .await
+        .map_err(BotAdminError::from_api_error)?;
+    Ok(no_store_json(roles))
+}
+
+async fn internal_bot_search_members(
+    State(bot_admin): State<Arc<dyn BotAdminClient>>,
+    Path(guild_id): Path<i64>,
+    Query(query): Query<SearchGuildMembersQuery>,
+) -> Result<Response, BotAdminError> {
+    let members = bot_admin
+        .search_guild_members(guild_id, &query.q, query.limit)
+        .await
+        .map_err(BotAdminError::from_api_error)?;
+    Ok(no_store_json(members))
+}
+
+async fn internal_bot_trigger_group_sync(
+    State(bot_admin): State<Arc<dyn BotAdminClient>>,
+    Path(group_id): Path<i32>,
+    Json(req): Json<TriggerGroupSyncRequest>,
+) -> Result<Response, BotAdminError> {
+    let status = bot_admin
+        .trigger_group_sync(group_id, req.owner_id, req.trigger)
+        .await
+        .map_err(BotAdminError::from_api_error)?;
+    Ok(no_store_json(TriggerGroupSyncResponse { status }))
+}
+
+async fn internal_bot_deliver_notification(
+    State(bot_admin): State<Arc<dyn BotAdminClient>>,
+    Json(req): Json<DeliverDiscordNotificationRequest>,
+) -> Result<Response, BotAdminError> {
+    bot_admin
+        .deliver_discord_notification(req.endpoint_id, req.owner_id, &req.title, &req.body)
+        .await
+        .map_err(|err| match err {
+            BotDeliveryError::BotOffline => BotAdminError::BotOffline,
+            BotDeliveryError::Failed(message) => BotAdminError::Internal { message },
+        })?;
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
 /// Build the market-only HTTP/2 router (public market reads + authenticated
-/// internal RPC/stream endpoints + `/healthz`).
+/// internal market/bot RPC and stream endpoints + `/healthz`).
 pub(crate) fn router(
     market: Arc<dyn MarketClient>,
+    bot_admin: Arc<dyn BotAdminClient>,
     event_receivers: EventReceivers,
     roles: Roles,
     internal_token: Option<String>,
@@ -279,6 +450,7 @@ pub(crate) fn router(
 ) -> Router {
     router_with_stream_counter(
         market,
+        bot_admin,
         event_receivers,
         roles,
         internal_token,
@@ -287,8 +459,11 @@ pub(crate) fn router(
     )
 }
 
+const INTERNAL_BOT_MAX_BODY_BYTES: usize = 64 * 1024;
+
 fn router_with_stream_counter(
     market: Arc<dyn MarketClient>,
+    bot_admin: Arc<dyn BotAdminClient>,
     event_receivers: EventReceivers,
     roles: Roles,
     internal_token: Option<String>,
@@ -297,6 +472,7 @@ fn router_with_stream_counter(
 ) -> Router {
     let state = MarketServerState {
         market,
+        bot_admin,
         event_receivers,
         roles,
         shutdown,
@@ -307,7 +483,48 @@ fn router_with_stream_counter(
         .filter(|s| !s.is_empty())
         .map(Arc::from);
 
-    let internal = Router::new()
+    let internal_bot = Router::new()
+        .route("/internal/bot/guilds", get(internal_bot_guilds))
+        .route(
+            "/internal/bot/manageable-guilds",
+            post(internal_bot_manageable_guilds),
+        )
+        .route(
+            "/internal/bot/writable-guilds",
+            post(internal_bot_writable_guilds),
+        )
+        .route(
+            "/internal/bot/require-manageable-guild",
+            post(internal_bot_require_manageable_guild),
+        )
+        .route(
+            "/internal/bot/resolve-channel",
+            post(internal_bot_resolve_channel),
+        )
+        .route(
+            "/internal/bot/guilds/{guild_id}/roles",
+            get(internal_bot_guild_roles),
+        )
+        .route(
+            "/internal/bot/guilds/{guild_id}/members/search",
+            get(internal_bot_search_members),
+        )
+        .route(
+            "/internal/bot/groups/{group_id}/sync",
+            post(internal_bot_trigger_group_sync),
+        )
+        .route(
+            "/internal/bot/deliver-notification",
+            post(internal_bot_deliver_notification),
+        )
+        .layer(DefaultBodyLimit::max(INTERNAL_BOT_MAX_BODY_BYTES))
+        .layer(middleware::from_fn_with_state(
+            expected_token.clone(),
+            require_bot_admin_bearer,
+        ))
+        .layer(middleware::from_fn(set_no_store_header));
+
+    let internal_market = Router::new()
         .route(
             "/internal/market/sitemap_sales",
             get(internal_sitemap_sales),
@@ -333,7 +550,8 @@ fn router_with_stream_counter(
         .route("/api/v1/price_series/{world}/{itemid}", get(price_series))
         .route("/api/v1/market_pulse/{world}", get(get_market_pulse))
         .route("/api/v1/movers/{world}", get(get_movers))
-        .merge(internal)
+        .merge(internal_market)
+        .merge(internal_bot)
         .with_state(state)
 }
 
@@ -343,6 +561,7 @@ pub(crate) const DEFAULT_MARKET_PORT: u16 = 8081;
 
 pub(crate) async fn start_market_server(
     market: Arc<dyn MarketClient>,
+    bot_admin: Arc<dyn BotAdminClient>,
     event_receivers: EventReceivers,
     roles: Roles,
     internal_token: Option<String>,
@@ -351,11 +570,12 @@ pub(crate) async fn start_market_server(
 ) {
     if internal_token.is_none() {
         tracing::info!(
-            "ULTROS_MARKET_TOKEN unset; /internal/market/* endpoints rely on private network isolation"
+            "ULTROS_MARKET_TOKEN unset; /internal/market/* relies on private network isolation and /internal/bot/* fails closed (401)"
         );
     }
     let app = router(
         market,
+        bot_admin,
         event_receivers,
         roles,
         internal_token,
@@ -389,6 +609,10 @@ pub(crate) async fn start_market_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bot_admin_client::{
+        BotGuildMember, BotGuildRole, BotManageableGuild, BotResolvedChannel, GroupSyncTrigger,
+        HttpBotAdminClient, InProcessBotAdminClient,
+    };
     use crate::event::{EventSenders, create_event_busses};
     use crate::market_client::HttpMarketClient;
     use crate::roles::parse_market_url;
@@ -396,13 +620,17 @@ mod tests {
         PriceSeriesQuery,
         api::{BestDealsQuery, TrendsQuery},
         encoded_body::EncodedBody,
-        error::SharedWebError,
+        error::{ApiError, DiscordFailure, SharedWebError},
     };
     use axum::body::Body;
     use futures::future::BoxFuture;
     use http_body_util::BodyExt;
     use std::sync::Mutex;
-    use ultros_api_types::websocket::{ListingEventData, SaleEventData};
+    use ultros_api_types::{
+        alert::{DiscordWritableChannel, DiscordWritableGuild},
+        user::GroupSyncStatus,
+        websocket::{ListingEventData, SaleEventData},
+    };
 
     #[derive(Default)]
     struct StubMarketClient {
@@ -637,6 +865,224 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, Default)]
+    enum StubBotMode {
+        #[default]
+        Ok,
+        Offline,
+        BadRequest,
+        Forbidden,
+        NotFound,
+        Misconfigured,
+        Transient,
+        DeliveryFailed,
+    }
+
+    #[derive(Default)]
+    struct StubBotAdminClient {
+        mode: Mutex<StubBotMode>,
+        recorded: Mutex<Vec<String>>,
+    }
+
+    impl StubBotAdminClient {
+        fn set_mode(&self, mode: StubBotMode) {
+            *self.mode.lock().unwrap() = mode;
+        }
+
+        fn mode(&self) -> StubBotMode {
+            *self.mode.lock().unwrap()
+        }
+
+        fn record(&self, entry: String) {
+            self.recorded.lock().unwrap().push(entry);
+        }
+
+        fn maybe_error(&self) -> Result<(), ApiError> {
+            match self.mode() {
+                StubBotMode::Ok | StubBotMode::DeliveryFailed => Ok(()),
+                StubBotMode::Offline => Err(ApiError::ServiceUnavailable(
+                    crate::bot_admin_client::DISCORD_BOT_OFFLINE,
+                )),
+                StubBotMode::BadRequest => {
+                    Err(ApiError::BadRequest("invalid guild_id or reauth required"))
+                }
+                StubBotMode::Forbidden => Err(ApiError::Forbidden("not allowed")),
+                StubBotMode::NotFound => Err(ApiError::from(anyhow::Error::from(
+                    ultros_db::group_roles::GroupError::NotFound,
+                ))),
+                StubBotMode::Misconfigured => Err(ApiError::Discord {
+                    message: "Discord refused the member search (403). The Ultros bot needs the Server Members intent enabled in the Discord developer portal.".into(),
+                    kind: DiscordFailure::Misconfigured,
+                }),
+                StubBotMode::Transient => Err(ApiError::Discord {
+                    message: "Discord member search failed: 429 Too Many Requests".into(),
+                    kind: DiscordFailure::Transient,
+                }),
+            }
+        }
+    }
+
+    impl BotAdminClient for StubBotAdminClient {
+        fn bot_guild_ids<'a>(&'a self) -> BoxFuture<'a, Result<Vec<i64>, ApiError>> {
+            Box::pin(async move {
+                self.record("bot_guild_ids".into());
+                self.maybe_error()?;
+                Ok(vec![100, 200, 300])
+            })
+        }
+
+        fn manageable_guilds<'a>(
+            &'a self,
+            user_id: i64,
+            candidate_guild_ids: Option<Vec<i64>>,
+        ) -> BoxFuture<'a, Result<Vec<BotManageableGuild>, ApiError>> {
+            Box::pin(async move {
+                self.record(format!(
+                    "manageable_guilds:{user_id}:{candidate_guild_ids:?}"
+                ));
+                self.maybe_error()?;
+                Ok(vec![BotManageableGuild {
+                    id: 100,
+                    name: "Alpha Guild".into(),
+                    icon_url: Some("https://cdn.discordapp.com/icons/100/abc.png".into()),
+                }])
+            })
+        }
+
+        fn writable_guilds<'a>(
+            &'a self,
+            user_id: i64,
+            candidate_guild_ids: Option<Vec<i64>>,
+        ) -> BoxFuture<'a, Result<Vec<DiscordWritableGuild>, ApiError>> {
+            Box::pin(async move {
+                self.record(format!("writable_guilds:{user_id}:{candidate_guild_ids:?}"));
+                self.maybe_error()?;
+                Ok(vec![DiscordWritableGuild {
+                    id: 100,
+                    name: "Alpha Guild".into(),
+                    icon_url: None,
+                    channels: vec![DiscordWritableChannel {
+                        id: 555,
+                        name: "market-alerts".into(),
+                    }],
+                }])
+            })
+        }
+
+        fn require_manageable_guild<'a>(
+            &'a self,
+            guild_id: i64,
+            user_id: i64,
+        ) -> BoxFuture<'a, Result<BotManageableGuild, ApiError>> {
+            Box::pin(async move {
+                self.record(format!("require_manageable_guild:{guild_id}:{user_id}"));
+                self.maybe_error()?;
+                Ok(BotManageableGuild {
+                    id: guild_id,
+                    name: "Verified Guild".into(),
+                    icon_url: None,
+                })
+            })
+        }
+
+        fn resolve_and_verify_channel<'a>(
+            &'a self,
+            channel_id: i64,
+            user_id: i64,
+        ) -> BoxFuture<'a, Result<BotResolvedChannel, ApiError>> {
+            Box::pin(async move {
+                self.record(format!("resolve_channel:{channel_id}:{user_id}"));
+                self.maybe_error()?;
+                Ok(BotResolvedChannel {
+                    channel_name: "alerts".into(),
+                    guild_id: 100,
+                    guild_name: "Alpha Guild".into(),
+                })
+            })
+        }
+
+        fn importable_guild_roles<'a>(
+            &'a self,
+            guild_id: i64,
+        ) -> BoxFuture<'a, Result<Vec<BotGuildRole>, ApiError>> {
+            Box::pin(async move {
+                self.record(format!("importable_guild_roles:{guild_id}"));
+                self.maybe_error()?;
+                Ok(vec![BotGuildRole {
+                    id: 777,
+                    name: "Raiders".into(),
+                    position: 5,
+                    color: Some("#5865f2".into()),
+                }])
+            })
+        }
+
+        fn search_guild_members<'a>(
+            &'a self,
+            guild_id: i64,
+            query: &'a str,
+            limit: u64,
+        ) -> BoxFuture<'a, Result<Vec<BotGuildMember>, ApiError>> {
+            Box::pin(async move {
+                self.record(format!("search_guild_members:{guild_id}:{query}:{limit}"));
+                self.maybe_error()?;
+                Ok(vec![BotGuildMember {
+                    user_id: 42,
+                    display_name: "Y'shtola Rhul".into(),
+                    avatar_url: "https://cdn.discordapp.com/avatars/42/face.png".into(),
+                }])
+            })
+        }
+
+        fn trigger_group_sync<'a>(
+            &'a self,
+            group_id: i32,
+            owner_id: i64,
+            trigger: GroupSyncTrigger,
+        ) -> BoxFuture<'a, Result<GroupSyncStatus, ApiError>> {
+            Box::pin(async move {
+                self.record(format!(
+                    "trigger_group_sync:{group_id}:{owner_id}:{trigger:?}"
+                ));
+                self.maybe_error()?;
+                match trigger {
+                    GroupSyncTrigger::Manual => Ok(GroupSyncStatus::RecentlySynced),
+                    GroupSyncTrigger::PostRoleImport => Ok(GroupSyncStatus::Ran),
+                }
+            })
+        }
+
+        fn deliver_discord_notification<'a>(
+            &'a self,
+            endpoint_id: i32,
+            owner_id: i64,
+            title: &'a str,
+            body: &'a str,
+        ) -> BoxFuture<'a, Result<(), BotDeliveryError>> {
+            Box::pin(async move {
+                self.record(format!(
+                    "deliver_discord_notification:{endpoint_id}:{owner_id}:{title}:{body}"
+                ));
+                match self.mode() {
+                    StubBotMode::Ok => Ok(()),
+                    StubBotMode::Offline => Err(BotDeliveryError::BotOffline),
+                    StubBotMode::DeliveryFailed => Err(BotDeliveryError::Failed(
+                        "Cannot send messages to this user".into(),
+                    )),
+                    StubBotMode::BadRequest | StubBotMode::Forbidden | StubBotMode::NotFound => {
+                        Err(BotDeliveryError::Failed("endpoint rejected".into()))
+                    }
+                    StubBotMode::Misconfigured => {
+                        Err(BotDeliveryError::Failed("Missing Permissions".into()))
+                    }
+                    StubBotMode::Transient => {
+                        Err(BotDeliveryError::Failed("429 Too Many Requests".into()))
+                    }
+                }
+            })
+        }
+    }
+
     struct TestMarketServer {
         addr: SocketAddr,
         url: url::Url,
@@ -646,9 +1092,10 @@ mod tests {
         handle: tokio::task::JoinHandle<()>,
     }
 
-    async fn spawn_test_market_server_on(
+    async fn spawn_test_market_server_with_bot_on(
         bind_addr: SocketAddr,
         stub: Arc<StubMarketClient>,
+        bot_stub: Arc<StubBotAdminClient>,
         token: Option<String>,
     ) -> TestMarketServer {
         let listener = TcpListener::bind(bind_addr).await.unwrap();
@@ -659,6 +1106,7 @@ mod tests {
         let shutdown = CancellationToken::new();
         let app = router_with_stream_counter(
             stub,
+            bot_stub,
             receivers,
             roles,
             token,
@@ -683,6 +1131,20 @@ mod tests {
             shutdown,
             handle,
         }
+    }
+
+    async fn spawn_test_market_server_on(
+        bind_addr: SocketAddr,
+        stub: Arc<StubMarketClient>,
+        token: Option<String>,
+    ) -> TestMarketServer {
+        spawn_test_market_server_with_bot_on(
+            bind_addr,
+            stub,
+            Arc::new(StubBotAdminClient::default()),
+            token,
+        )
+        .await
     }
 
     async fn spawn_test_market_server(
@@ -1083,6 +1545,600 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), srv2.handle)
             .await
             .expect("second market server should shut down cleanly")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn http2_bot_admin_client_round_trips_all_endpoints_and_preserves_errors() {
+        let market_stub = Arc::new(StubMarketClient::default());
+        let bot_stub = Arc::new(StubBotAdminClient::default());
+        let srv = spawn_test_market_server_with_bot_on(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            market_stub,
+            bot_stub.clone(),
+            Some("bot-secret".into()),
+        )
+        .await;
+
+        let client = HttpBotAdminClient::new(srv.url.clone(), Some("bot-secret")).unwrap();
+
+        // 1. All 9 endpoints succeed over HTTP/2.
+        assert_eq!(client.bot_guild_ids().await.unwrap(), vec![100, 200, 300]);
+
+        let manageable = client
+            .manageable_guilds(99, Some(vec![100, 200]))
+            .await
+            .unwrap();
+        assert_eq!(manageable.len(), 1);
+        assert_eq!(manageable[0].name, "Alpha Guild");
+
+        // Legacy fallback (`None`) also round-trips cleanly.
+        let legacy_manageable = client.manageable_guilds(99, None).await.unwrap();
+        assert_eq!(legacy_manageable.len(), 1);
+
+        let writable = client.writable_guilds(99, Some(vec![100])).await.unwrap();
+        assert_eq!(writable.len(), 1);
+        assert_eq!(writable[0].channels[0].name, "market-alerts");
+
+        let verified = client.require_manageable_guild(100, 99).await.unwrap();
+        assert_eq!(verified.name, "Verified Guild");
+
+        let resolved = client.resolve_and_verify_channel(555, 99).await.unwrap();
+        assert_eq!(resolved.channel_name, "alerts");
+        assert_eq!(resolved.guild_id, 100);
+
+        let roles = client.importable_guild_roles(100).await.unwrap();
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].name, "Raiders");
+        assert_eq!(roles[0].color.as_deref(), Some("#5865f2"));
+
+        // Special characters and Unicode survive query encoding cleanly.
+        let members = client
+            .search_guild_members(100, "Y'shtola & アルフィノ #1", 10)
+            .await
+            .unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].user_id, 42);
+        assert_eq!(members[0].display_name, "Y'shtola Rhul");
+
+        // Whitespace-only query short-circuits without hitting the server.
+        let empty = client.search_guild_members(100, "   ", 10).await.unwrap();
+        assert!(empty.is_empty());
+
+        assert_eq!(
+            client
+                .trigger_group_sync(7, 99, GroupSyncTrigger::PostRoleImport)
+                .await
+                .unwrap(),
+            GroupSyncStatus::Ran
+        );
+        assert_eq!(
+            client
+                .trigger_group_sync(7, 99, GroupSyncTrigger::Manual)
+                .await
+                .unwrap(),
+            GroupSyncStatus::RecentlySynced
+        );
+
+        client
+            .deliver_discord_notification(7, 99, "Test title", "Test body")
+            .await
+            .unwrap();
+
+        // 2. Structured error fidelity across HTTP/2:
+        //    BadRequest -> 400 with exact client message intact.
+        bot_stub.set_mode(StubBotMode::BadRequest);
+        let bad_req_err = client.bot_guild_ids().await.unwrap_err();
+        let bad_req_resp = bad_req_err.into_response();
+        assert_eq!(bad_req_resp.status(), StatusCode::BAD_REQUEST);
+        let bad_req_body = bad_req_resp.into_body().collect().await.unwrap().to_bytes();
+        assert!(
+            std::str::from_utf8(&bad_req_body)
+                .unwrap()
+                .contains("invalid guild_id or reauth required")
+        );
+
+        //    Forbidden -> 403.
+        bot_stub.set_mode(StubBotMode::Forbidden);
+        let forbidden_err = client
+            .trigger_group_sync(7, 99, GroupSyncTrigger::Manual)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            forbidden_err.into_response().status(),
+            StatusCode::FORBIDDEN
+        );
+
+        //    NotFound -> 404.
+        bot_stub.set_mode(StubBotMode::NotFound);
+        let not_found_err = client
+            .trigger_group_sync(7, 99, GroupSyncTrigger::Manual)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            not_found_err.into_response().status(),
+            StatusCode::NOT_FOUND
+        );
+
+        //    BotOffline -> 503 ServiceUnavailable + BotDeliveryError::BotOffline.
+        bot_stub.set_mode(StubBotMode::Offline);
+        let offline_err = client.bot_guild_ids().await.unwrap_err();
+        assert!(matches!(offline_err, ApiError::ServiceUnavailable(_)));
+        assert_eq!(
+            offline_err.into_response().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            client
+                .deliver_discord_notification(7, 99, "Test", "Body")
+                .await
+                .unwrap_err(),
+            BotDeliveryError::BotOffline
+        );
+
+        //    DiscordFailure::Misconfigured -> 502 Bad Gateway with Server Members wording intact.
+        bot_stub.set_mode(StubBotMode::Misconfigured);
+        let misconfig_err = client
+            .search_guild_members(100, "ali", 10)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            misconfig_err,
+            ApiError::Discord {
+                kind: DiscordFailure::Misconfigured,
+                ..
+            }
+        ));
+        let misconfig_resp = misconfig_err.into_response();
+        assert_eq!(misconfig_resp.status(), StatusCode::BAD_GATEWAY);
+        let misconfig_body = misconfig_resp
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        assert!(
+            std::str::from_utf8(&misconfig_body)
+                .unwrap()
+                .contains("Server Members intent")
+        );
+
+        //    DiscordFailure::Transient -> 503 Service Unavailable with message intact.
+        bot_stub.set_mode(StubBotMode::Transient);
+        let transient_err = client
+            .search_guild_members(100, "ali", 10)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            transient_err,
+            ApiError::Discord {
+                kind: DiscordFailure::Transient,
+                ..
+            }
+        ));
+        assert_eq!(
+            transient_err.into_response().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+
+        //    Delivery failure preserves exact error string.
+        bot_stub.set_mode(StubBotMode::DeliveryFailed);
+        assert_eq!(
+            client
+                .deliver_discord_notification(7, 99, "Test", "Body")
+                .await
+                .unwrap_err(),
+            BotDeliveryError::Failed("Cannot send messages to this user".into())
+        );
+
+        // 3. Wrong bearer token rejected with 401 and surfaced as internal error (500).
+        bot_stub.set_mode(StubBotMode::Ok);
+        let bad_client = HttpBotAdminClient::new(srv.url.clone(), Some("wrong-secret")).unwrap();
+        let auth_err = bad_client.bot_guild_ids().await.unwrap_err();
+        assert_eq!(
+            auth_err.into_response().status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        let delivery_auth_err = bad_client
+            .deliver_discord_notification(7, 99, "Test", "Body")
+            .await
+            .unwrap_err();
+        assert!(matches!(delivery_auth_err, BotDeliveryError::Failed(_)));
+
+        // 4. Raw HTTP checks: Cache-Control: no-store on 200, 401, 413, and malformed JSON.
+        let raw_client = reqwest::Client::builder()
+            .no_proxy()
+            .http2_prior_knowledge()
+            .build()
+            .unwrap();
+        let raw_ok = raw_client
+            .get(format!("{}internal/bot/guilds", srv.url))
+            .header(header::AUTHORIZATION, "Bearer bot-secret")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(raw_ok.status(), StatusCode::OK);
+        assert_eq!(
+            raw_ok
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store")
+        );
+
+        let raw_unauth = raw_client
+            .get(format!("{}internal/bot/guilds", srv.url))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(raw_unauth.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            raw_unauth
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store")
+        );
+
+        let oversized = vec![b'a'; INTERNAL_BOT_MAX_BODY_BYTES + 1024];
+        let raw_big = raw_client
+            .post(format!("{}internal/bot/deliver-notification", srv.url))
+            .header(header::AUTHORIZATION, "Bearer bot-secret")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(oversized)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(raw_big.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(
+            raw_big
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store")
+        );
+
+        let raw_bad_json = raw_client
+            .post(format!("{}internal/bot/deliver-notification", srv.url))
+            .header(header::AUTHORIZATION, "Bearer bot-secret")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body("{not valid json")
+            .send()
+            .await
+            .unwrap();
+        assert!(raw_bad_json.status().is_client_error());
+        assert_eq!(
+            raw_bad_json
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store")
+        );
+
+        let recorded = bot_stub.recorded.lock().unwrap().clone();
+        assert!(
+            recorded
+                .iter()
+                .any(|e| e == "manageable_guilds:99:Some([100, 200])")
+        );
+        assert!(recorded.iter().any(|e| e == "manageable_guilds:99:None"));
+        assert!(
+            recorded
+                .iter()
+                .any(|e| e == "search_guild_members:100:Y'shtola & アルフィノ #1:10")
+        );
+        assert!(
+            recorded
+                .iter()
+                .any(|e| e == "trigger_group_sync:7:99:PostRoleImport")
+        );
+        assert!(
+            recorded
+                .iter()
+                .any(|e| e == "trigger_group_sync:7:99:Manual")
+        );
+        assert!(
+            recorded
+                .iter()
+                .any(|e| e == "deliver_discord_notification:7:99:Test title:Test body")
+        );
+
+        srv.shutdown.cancel();
+        tokio::time::timeout(Duration::from_secs(5), srv.handle)
+            .await
+            .expect("market server should shut down cleanly")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn bot_admin_endpoints_fail_closed_when_token_is_unset_or_blank() {
+        for token in [None, Some("   ".to_string())] {
+            let market_stub = Arc::new(StubMarketClient::default());
+            let bot_stub = Arc::new(StubBotAdminClient::default());
+            let srv = spawn_test_market_server_with_bot_on(
+                SocketAddr::from(([127, 0, 0, 1], 0)),
+                market_stub,
+                bot_stub,
+                token.clone(),
+            )
+            .await;
+
+            // HttpBotAdminClient also refuses construction without a non-blank token.
+            assert!(HttpBotAdminClient::new(srv.url.clone(), token.as_deref()).is_err());
+
+            let raw_client = reqwest::Client::builder()
+                .no_proxy()
+                .http2_prior_knowledge()
+                .build()
+                .unwrap();
+            let resp = raw_client
+                .get(format!("{}internal/bot/guilds", srv.url))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(
+                resp.headers()
+                    .get(header::CACHE_CONTROL)
+                    .and_then(|v| v.to_str().ok()),
+                Some("no-store")
+            );
+
+            // Presenting an arbitrary Bearer header still fails closed.
+            let resp_with_bearer = raw_client
+                .get(format!("{}internal/bot/guilds", srv.url))
+                .header(header::AUTHORIZATION, "Bearer anything")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp_with_bearer.status(), StatusCode::UNAUTHORIZED);
+
+            srv.shutdown.cancel();
+            tokio::time::timeout(Duration::from_secs(5), srv.handle)
+                .await
+                .expect("market server should shut down cleanly")
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn deliver_discord_notification_rejects_unexpected_200_ok() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shutdown = CancellationToken::new();
+        let app = Router::new().route(
+            "/internal/bot/deliver-notification",
+            post(|| async { (StatusCode::OK, "misrouted upstream html") }),
+        );
+        let server_shutdown = shutdown.clone();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    server_shutdown.cancelled().await;
+                })
+                .await
+                .unwrap();
+        });
+
+        let url = parse_market_url(&format!("http://{addr}")).unwrap();
+        let client = HttpBotAdminClient::new(url.clone(), Some("bot-secret")).unwrap();
+        let err = client
+            .deliver_discord_notification(7, 99, "Test", "Body")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, BotDeliveryError::Failed(ref msg) if msg.contains("200") && msg.contains("204")),
+            "expected explicit 204 contract error on unexpected 200 OK, got: {err:?}"
+        );
+
+        shutdown.cancel();
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn http2_bot_admin_client_times_out_cleanly_on_stalled_upstream() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shutdown = CancellationToken::new();
+        let app = Router::new()
+            .route(
+                "/internal/bot/guilds",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    Json(vec![1i64])
+                }),
+            )
+            .route(
+                "/internal/bot/deliver-notification",
+                post(|| async {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    StatusCode::NO_CONTENT
+                }),
+            );
+        let server_shutdown = shutdown.clone();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    server_shutdown.cancelled().await;
+                })
+                .await
+                .unwrap();
+        });
+
+        let url = parse_market_url(&format!("http://{addr}")).unwrap();
+        let client = HttpBotAdminClient::with_timeouts_for_test(
+            url,
+            Some("bot-secret"),
+            Duration::from_millis(80),
+        )
+        .unwrap();
+
+        let err = client.bot_guild_ids().await.unwrap_err();
+        assert!(matches!(err, ApiError::ServiceUnavailable(_)));
+
+        let delivery_err = client
+            .deliver_discord_notification(7, 99, "Test", "Body")
+            .await
+            .unwrap_err();
+        assert!(matches!(delivery_err, BotDeliveryError::Failed(_)));
+
+        shutdown.cancel();
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn in_process_bot_admin_over_http2_rejects_invalid_ids_without_panicking() {
+        let pool = sea_orm::sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgres://ultros:ultros@127.0.0.1:1/ultros")
+            .unwrap();
+        let db = ultros_db::UltrosDb::from_connection(
+            sea_orm::SqlxPostgresConnector::from_sqlx_postgres_pool(pool),
+        );
+        let shutdown = CancellationToken::new();
+        let bot_admin: Arc<dyn BotAdminClient> =
+            Arc::new(InProcessBotAdminClient::new(db, shutdown.clone()));
+        let market_stub = Arc::new(StubMarketClient::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let roles = Roles::parse(Some("ingest,market,bot")).unwrap();
+        let (_senders, receivers) = create_event_busses();
+        let app = router(
+            market_stub,
+            bot_admin,
+            receivers,
+            roles,
+            Some("bot-secret".into()),
+            shutdown.clone(),
+        );
+        let server_shutdown = shutdown.clone();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    server_shutdown.cancelled().await;
+                })
+                .await
+                .unwrap();
+        });
+
+        let url = parse_market_url(&format!("http://{addr}")).unwrap();
+        let client = HttpBotAdminClient::new(url.clone(), Some("bot-secret")).unwrap();
+
+        for invalid in [0i64, -1] {
+            assert_eq!(
+                client
+                    .manageable_guilds(invalid, None)
+                    .await
+                    .unwrap_err()
+                    .into_response()
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(
+                client
+                    .manageable_guilds(42, Some(vec![100, invalid]))
+                    .await
+                    .unwrap_err()
+                    .into_response()
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(
+                client
+                    .require_manageable_guild(invalid, 42)
+                    .await
+                    .unwrap_err()
+                    .into_response()
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(
+                client
+                    .resolve_and_verify_channel(invalid, 42)
+                    .await
+                    .unwrap_err()
+                    .into_response()
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(
+                client
+                    .importable_guild_roles(invalid)
+                    .await
+                    .unwrap_err()
+                    .into_response()
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(
+                client
+                    .search_guild_members(invalid, "ali", 10)
+                    .await
+                    .unwrap_err()
+                    .into_response()
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(
+                client
+                    .trigger_group_sync(0, 42, GroupSyncTrigger::Manual)
+                    .await
+                    .unwrap_err()
+                    .into_response()
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(
+                client
+                    .trigger_group_sync(7, invalid, GroupSyncTrigger::Manual)
+                    .await
+                    .unwrap_err()
+                    .into_response()
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+            assert!(matches!(
+                client
+                    .deliver_discord_notification(0, 42, "Test", "Body")
+                    .await
+                    .unwrap_err(),
+                BotDeliveryError::Failed(_)
+            ));
+        }
+
+        // Also hit the server directly with `guild_id=0` on member search
+        // (bypassing HttpBotAdminClient's client-side guard) to verify the
+        // worker rejects it with 400 + no-store and never panics in Serenity.
+        let raw_client = reqwest::Client::builder()
+            .no_proxy()
+            .http2_prior_knowledge()
+            .build()
+            .unwrap();
+        let raw_zero_search = raw_client
+            .get(format!(
+                "{}internal/bot/guilds/0/members/search?q=ali&limit=10",
+                url
+            ))
+            .header(header::AUTHORIZATION, "Bearer bot-secret")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(raw_zero_search.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            raw_zero_search
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store")
+        );
+
+        shutdown.cancel();
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .unwrap()
             .unwrap();
     }
 }

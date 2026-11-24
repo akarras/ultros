@@ -130,6 +130,32 @@ impl Roles {
 
         Ok(None)
     }
+
+    /// Validate `ULTROS_MARKET_TOKEN` for the active roles.
+    ///
+    /// Bot-admin RPC (`/internal/bot/*`) always fails closed without a shared
+    /// token, so split `web` replicas and bot-enabled market workers fail fast
+    /// at startup if `ULTROS_MARKET_TOKEN` is missing or blank.
+    pub(crate) fn validate_internal_token(
+        self,
+        market_token: Option<&str>,
+    ) -> Result<Option<String>> {
+        let token = market_token
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+        if self.uses_remote_market() && token.is_none() {
+            bail!(
+                "{MARKET_TOKEN_ENV} must be set when running {ROLES_ENV} with 'web' without 'market' so /internal/bot/* RPC is authenticated"
+            );
+        }
+        if self.runs_market_only_http() && self.bot && token.is_none() {
+            bail!(
+                "{MARKET_TOKEN_ENV} must be set when running a bot-enabled market worker ({ROLES_ENV}=ingest,market,bot) so /internal/bot/* RPC is authenticated"
+            );
+        }
+        Ok(token)
+    }
 }
 
 /// Validate and normalize `ULTROS_MARKET_URL` (http/https only, host required,
@@ -163,7 +189,8 @@ pub(crate) fn parse_market_url(raw: &str) -> Result<Url> {
     Ok(url)
 }
 
-/// Read the optional internal shared bearer token for `/internal/market/*`.
+/// Read the optional internal shared bearer token for `/internal/market/*` and
+/// `/internal/bot/*`.
 pub(crate) fn market_token_from_env() -> Option<String> {
     std::env::var(MARKET_TOKEN_ENV)
         .ok()
@@ -270,6 +297,35 @@ mod tests {
                 .validate(Some("http://ultros-market:8081"))
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn validates_internal_token_for_split_bot_and_web_roles() {
+        let web = Roles::parse(Some("web")).unwrap();
+        assert!(web.validate_internal_token(None).is_err());
+        assert!(web.validate_internal_token(Some("   ")).is_err());
+        assert_eq!(
+            web.validate_internal_token(Some(" secret ")).unwrap(),
+            Some("secret".into())
+        );
+
+        let bot_worker = Roles::parse(Some("ingest,market,bot")).unwrap();
+        assert!(bot_worker.validate_internal_token(None).is_err());
+        assert!(bot_worker.validate_internal_token(Some("")).is_err());
+        assert_eq!(
+            bot_worker.validate_internal_token(Some("secret")).unwrap(),
+            Some("secret".into())
+        );
+
+        // Monolith and non-bot market worker do not require ULTROS_MARKET_TOKEN.
+        assert_eq!(Roles::all().validate_internal_token(None).unwrap(), None);
+        assert_eq!(
+            Roles::parse(Some("ingest,market"))
+                .unwrap()
+                .validate_internal_token(None)
+                .unwrap(),
+            None
         );
     }
 }

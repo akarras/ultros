@@ -890,6 +890,7 @@ pub(crate) async fn unread_alert_event_count(
 /// Path: `POST /api/v1/alerts/events/{id}/resend`.
 pub(crate) async fn resend_alert_event(
     State(db): State<UltrosDb>,
+    State(bot_admin): State<std::sync::Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     Path(event_id): Path<i64>,
 ) -> Result<Json<ResendResult>, ApiError> {
@@ -908,7 +909,6 @@ pub(crate) async fn resend_alert_event(
             error: Some("alert has no endpoints".into()),
         }));
     }
-    let serenity_ctx = crate::alerts::delivery::get_serenity_ctx();
     let title = "Ultros alert (resend)";
     let body = format!(
         "Resending alert for item {} (matched price: {:?})",
@@ -951,26 +951,28 @@ pub(crate) async fn resend_alert_event(
             }
             continue;
         }
-        let needs_ctx = matches!(endpoint.method.as_str(), "DiscordDm" | "DiscordChannel");
-        let result = if needs_ctx {
-            match serenity_ctx.as_ref() {
-                Some(ctx) => {
-                    crate::alerts::delivery::deliver_to_endpoint(
-                        &endpoint, title, &body, &push, &db, ctx,
-                    )
-                    .await
+        if matches!(endpoint.method.as_str(), "DiscordDm" | "DiscordChannel") {
+            match bot_admin
+                .deliver_discord_notification(endpoint.id, owner, title, &body)
+                .await
+            {
+                Ok(()) => any_ok = true,
+                Err(crate::bot_admin_client::BotDeliveryError::BotOffline) => {
+                    last_err = Some("Discord client not ready".into());
                 }
-                None => Err(anyhow::anyhow!("Discord client not ready")),
+                Err(crate::bot_admin_client::BotDeliveryError::Failed(msg)) => {
+                    last_err = Some(msg);
+                }
             }
         } else {
-            crate::alerts::delivery::deliver_non_discord_endpoint(
+            match crate::alerts::delivery::deliver_non_discord_endpoint(
                 &endpoint, title, &body, &push, &db,
             )
             .await
-        };
-        match result {
-            Ok(()) => any_ok = true,
-            Err(e) => last_err = Some(format!("{e}")),
+            {
+                Ok(()) => any_ok = true,
+                Err(e) => last_err = Some(format!("{e}")),
+            }
         }
     }
     Ok(Json(ResendResult {

@@ -1,5 +1,6 @@
 #![feature(trivial_bounds)]
 #![recursion_limit = "256"]
+mod bot_admin_client;
 mod fd_limit;
 pub mod leptos;
 mod market_client;
@@ -728,7 +729,7 @@ async fn main() -> Result<()> {
     let prometheus_handle = web_metrics::setup_metrics_recorder();
     let roles = roles::Roles::from_env()?;
     let remote_market_url = roles.validate(std::env::var(roles::MARKET_URL_ENV).ok().as_deref())?;
-    let market_token = roles::market_token_from_env();
+    let market_token = roles.validate_internal_token(roles::market_token_from_env().as_deref())?;
     // Validate role-specific env config upfront so misconfigured containers
     // fail fast before opening pools or sockets.
     let web_config = if roles.web {
@@ -1090,6 +1091,24 @@ async fn main() -> Result<()> {
         (None, None)
     };
 
+    let bot_admin_client: Arc<dyn bot_admin_client::BotAdminClient> = if roles.bot {
+        Arc::new(bot_admin_client::InProcessBotAdminClient::new(
+            db.clone(),
+            token.clone(),
+        ))
+    } else if let Some(market_url) = remote_market_url.clone() {
+        info!(%market_url, "configuring HTTP/2 BotAdminClient");
+        Arc::new(bot_admin_client::HttpBotAdminClient::new(
+            market_url,
+            market_token.as_deref(),
+        )?)
+    } else {
+        Arc::new(bot_admin_client::InProcessBotAdminClient::new(
+            db.clone(),
+            token.clone(),
+        ))
+    };
+
     let price_series_cache = crate::web::price_series_cache::PriceSeriesCache::default();
     let (market_client, market_event_relay): (
         Option<Arc<dyn market_client::MarketClient>>,
@@ -1166,6 +1185,7 @@ async fn main() -> Result<()> {
             world_cache,
             world_helper,
             market_client: market_client.expect("market_client initialized for web"),
+            bot_admin: bot_admin_client,
             roles,
             leptos_options,
             search_service,
@@ -1178,6 +1198,7 @@ async fn main() -> Result<()> {
     } else if roles.runs_market_only_http() {
         tokio::spawn(market_server::start_market_server(
             market_client.expect("market_client initialized for market"),
+            bot_admin_client,
             receivers,
             roles,
             market_token,

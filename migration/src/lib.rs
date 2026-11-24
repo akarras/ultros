@@ -65,6 +65,7 @@ mod m20261018_000004_game_retainer_listings;
 mod m20261027_000001_retainer_preferences;
 mod m20261120_000001_clickhouse_sale_outbox;
 mod m20261121_000001_auth_revocations;
+mod m20261123_000001_guild_post_import_sync_claim;
 
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
@@ -134,6 +135,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261027_000001_retainer_preferences::Migration),
             Box::new(m20261120_000001_clickhouse_sale_outbox::Migration),
             Box::new(m20261121_000001_auth_revocations::Migration),
+            Box::new(m20261123_000001_guild_post_import_sync_claim::Migration),
         ]
     }
 }

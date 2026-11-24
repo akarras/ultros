@@ -189,26 +189,35 @@ pub(crate) async fn list_endpoints(
 
 pub(crate) async fn list_discord_writable_guilds(
     State(cache): State<crate::web::oauth::AuthUserCache>,
+    State(bot_admin): State<std::sync::Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     cookies: axum_extra::extract::PrivateCookieJar,
 ) -> Result<Json<Vec<DiscordWritableGuild>>, ApiError> {
-    let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
-        ApiError::from(anyhow::anyhow!(
-            "Discord bot is not connected; cannot load shared servers right now"
-        ))
-    })?;
-    let guilds = crate::web::api::discord_lookup::writable_guilds_for_user(
-        &ctx,
-        user.id as i64,
+    if cookies
+        .get(crate::web::oauth::DISCORD_AUTH_COOKIE)
+        .is_none()
+    {
+        return Err(ApiError::NoAuthCookie);
+    }
+    let bot_guild_ids = bot_admin.bot_guild_ids().await?;
+    let candidates = crate::web::api::discord_lookup::discover_oauth_candidate_guild_ids(
+        &bot_guild_ids,
         &cookies,
         &cache,
     )
     .await?;
+    if matches!(candidates.as_deref(), Some([])) {
+        return Ok(Json(Vec::new()));
+    }
+    let guilds = bot_admin
+        .writable_guilds(user.id as i64, candidates)
+        .await?;
     Ok(Json(guilds))
 }
 
 pub(crate) async fn create_endpoint(
     State(db): State<UltrosDb>,
+    State(bot_admin): State<std::sync::Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     Json(req): Json<CreateEndpointRequest>,
 ) -> Result<Json<Endpoint>, ApiError> {
@@ -226,23 +235,14 @@ pub(crate) async fn create_endpoint(
     // operators don't have to type "#general" manually.
     let mut name = req.name.clone();
 
-    // For DiscordChannel endpoints we require the live serenity context, resolve
+    // For DiscordChannel endpoints we require the live Discord bot, resolve
     // the channel/guild, and verify the caller has admin in that guild before
     // accepting the endpoint. This is the only way to make sure a malicious user
     // can't spam someone else's server by typing in their channel id.
     if let EndpointMethod::DiscordChannel { channel_id, .. } = method {
-        let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
-            ApiError::from(anyhow::anyhow!(
-                "Discord bot is not connected; cannot validate channel right now"
-            ))
-        })?;
-        let resolved = crate::web::api::discord_lookup::resolve_channel(&ctx, channel_id).await?;
-        crate::web::api::discord_lookup::require_user_is_guild_admin(
-            &ctx,
-            resolved.guild_id,
-            user.id as i64,
-        )
-        .await?;
+        let resolved = bot_admin
+            .resolve_and_verify_channel(channel_id, user.id as i64)
+            .await?;
         // If the caller didn't pick a name (or sent something obviously stub-like
         // — empty / "Channel <id>"), use the resolved name.
         let trimmed = name.trim();
@@ -391,6 +391,7 @@ pub(crate) async fn delete_endpoint(
 
 pub(crate) async fn test_endpoint(
     State(db): State<UltrosDb>,
+    State(bot_admin): State<std::sync::Arc<dyn crate::bot_admin_client::BotAdminClient>>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
 ) -> Result<Json<ResendResult>, ApiError> {
@@ -418,58 +419,45 @@ pub(crate) async fn test_endpoint(
         }));
     }
 
-    // Only Discord-routed endpoints need the bot context. Webhook + WebPush use
-    // their own HTTP clients and were previously failing this branch even though
-    // serenity isn't on their delivery path. Resolving the ctx is a function of
-    // method, not of the endpoint id.
-    let needs_ctx = matches!(endpoint.method.as_str(), "DiscordDm" | "DiscordChannel");
-    let serenity_ctx = if needs_ctx {
-        match crate::alerts::delivery::get_serenity_ctx() {
-            Some(ctx) => Some(ctx),
-            None => {
-                return Ok(Json(ResendResult {
-                    queued: false,
-                    delivered: false,
-                    error: Some(
-                        "Discord bot isn't connected on this deployment, so DM/channel \
-                         endpoints can't be tested. Webhook and browser-push endpoints \
-                         still work — try one of those, or check the server logs to see \
-                         why the bot didn't start."
-                            .into(),
-                    ),
-                }));
+    let result: Result<(), String> =
+        if matches!(endpoint.method.as_str(), "DiscordDm" | "DiscordChannel") {
+            match bot_admin
+                .deliver_discord_notification(
+                    endpoint.id,
+                    user.id as i64,
+                    "Ultros test notification",
+                    "If you can read this, your endpoint is wired up correctly.",
+                )
+                .await
+            {
+                Ok(()) => Ok(()),
+                Err(crate::bot_admin_client::BotDeliveryError::BotOffline) => {
+                    return Ok(Json(ResendResult {
+                        queued: false,
+                        delivered: false,
+                        error: Some(
+                            "Discord bot isn't connected on this deployment, so DM/channel \
+                             endpoints can't be tested. Webhook and browser-push endpoints \
+                             still work — try one of those, or check the server logs to see \
+                             why the bot didn't start."
+                                .into(),
+                        ),
+                    }));
+                }
+                Err(crate::bot_admin_client::BotDeliveryError::Failed(msg)) => Err(msg),
             }
-        }
-    } else {
-        // The serenity-aware deliver_to_endpoint takes a `&Context` it never reads
-        // for non-Discord methods; we still need a value to pass through. Borrow
-        // from a possibly-set ctx if there is one (cheap), otherwise we have to
-        // hand-roll the dispatch for non-Discord methods.
-        crate::alerts::delivery::get_serenity_ctx()
-    };
-
-    let push = crate::alerts::delivery::PushOptions::immediate("/alerts");
-    let result = if let Some(ctx) = serenity_ctx.as_ref() {
-        crate::alerts::delivery::deliver_to_endpoint(
-            &endpoint,
-            "Ultros test notification",
-            "If you can read this, your endpoint is wired up correctly.",
-            &push,
-            &db,
-            ctx,
-        )
-        .await
-    } else {
-        // Webhook/WebPush only — dispatch directly so we don't need a live ctx.
-        crate::alerts::delivery::deliver_non_discord_endpoint(
-            &endpoint,
-            "Ultros test notification",
-            "If you can read this, your endpoint is wired up correctly.",
-            &push,
-            &db,
-        )
-        .await
-    };
+        } else {
+            let push = crate::alerts::delivery::PushOptions::immediate("/alerts");
+            crate::alerts::delivery::deliver_non_discord_endpoint(
+                &endpoint,
+                "Ultros test notification",
+                "If you can read this, your endpoint is wired up correctly.",
+                &push,
+                &db,
+            )
+            .await
+            .map_err(|e| format!("{e}"))
+        };
 
     match result {
         Ok(()) => {
@@ -488,7 +476,7 @@ pub(crate) async fn test_endpoint(
         Err(e) => Ok(Json(ResendResult {
             queued: false,
             delivered: false,
-            error: Some(format!("{e}")),
+            error: Some(e),
         })),
     }
 }

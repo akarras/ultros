@@ -13,7 +13,9 @@
 #      exist in that exact host directory before starting the split stack.
 #   2. Migrate `./data/plugin-keys.json` to `ULTROS_PLUGIN_PAIRING_KEY` and
 #      `ULTROS_PLUGIN_IDENTITY_KEY` env vars so `ultros-web` has no local state.
-#   3. Set `ULTROS_MARKET_TOKEN` in `.env` to authenticate `/internal/market/*`.
+#   3. Set a strong non-empty `ULTROS_MARKET_TOKEN` in `.env` (required by
+#      split `ultros-market` and `ultros-web-*` to authenticate `/internal/bot/*`
+#      and `/internal/market/*`).
 #   4. Initial cutover from `ULTROS_ROLES=all` MUST be stop-before-start:
 #      stop the legacy all-in-one container before starting `ultros-market`
 #      (the legacy `all` container does not hold the split worker lease).
@@ -53,6 +55,7 @@ services:
     environment:
       ULTROS_ROLES: ingest,market,bot
       PORT: "8081"
+      ULTROS_MARKET_TOKEN: ${ULTROS_MARKET_TOKEN:?ULTROS_MARKET_TOKEN must be set in .env}
       ULTROS_SKIP_MIGRATIONS: "false"
       POSTGRES_MAX_CONNECTIONS: "30"
       POSTGRES_MIN_CONNECTIONS: "4"
@@ -74,6 +77,7 @@ services:
       ULTROS_ROLES: web
       PORT: "8080"
       ULTROS_MARKET_URL: http://ultros-market:8081
+      ULTROS_MARKET_TOKEN: ${ULTROS_MARKET_TOKEN:?ULTROS_MARKET_TOKEN must be set in .env}
       ULTROS_SKIP_MIGRATIONS: "true"
       ULTROS_PKG_ARCHIVE_DIR: /srv/ultros-pkg-archive
       ULTROS_PKG_ARCHIVE_RETAIN: "3"
@@ -97,6 +101,7 @@ services:
       ULTROS_ROLES: web
       PORT: "8080"
       ULTROS_MARKET_URL: http://ultros-market:8081
+      ULTROS_MARKET_TOKEN: ${ULTROS_MARKET_TOKEN:?ULTROS_MARKET_TOKEN must be set in .env}
       ULTROS_SKIP_MIGRATIONS: "true"
       ULTROS_PKG_ARCHIVE_DIR: /srv/ultros-pkg-archive
       ULTROS_PKG_ARCHIVE_RETAIN: "3"

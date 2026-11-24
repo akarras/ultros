@@ -223,6 +223,8 @@ define_error_enum!(ApiError {
     Forbidden(&'static str),
     #[error("{0}")]
     BadRequest(&'static str),
+    #[error("{0}")]
+    BadRequestMessage(String),
     /// A dependency we don't control is down — in practice the Discord
     /// gateway. Distinct from the `anyhow` catch-all because that one is
     /// reported as a 500 *and* has its message replaced by "Internal server
@@ -302,7 +304,7 @@ impl ApiError {
             // failure at error level (the GlitchTip 2218/2210 lineage).
             ApiError::NoAuthCookie | ApiError::DiscordTokenInvalid(_) => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
-            ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            ApiError::BadRequest(_) | ApiError::BadRequestMessage(_) => StatusCode::BAD_REQUEST,
             ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             // A refusal from Discord is an upstream answering "no" to *us*:
             // 502 says the gateway between the caller and Discord is at
@@ -343,6 +345,9 @@ impl ApiError {
             ApiError::Forbidden(_) => ultros_api_types::result::ApiError::Forbidden,
             ApiError::BadRequest(message) => {
                 ultros_api_types::result::ApiError::BadRequest((*message).into())
+            }
+            ApiError::BadRequestMessage(message) => {
+                ultros_api_types::result::ApiError::BadRequest(message.clone())
             }
             // Explicit arm: 503 is a server error, so the fallback below would
             // swap this message for "Internal server error" and defeat the
