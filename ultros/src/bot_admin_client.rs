@@ -628,8 +628,17 @@ impl BotAdminClient for InProcessBotAdminClient {
                         .await?
                     {
                         PostImportSyncClaim::ClaimedNow => {
+                            // Route through the unified durable runner (delay 0)
+                            // so `follow_up_due_at` stays durable in Postgres
+                            // until reconciliation completes, and an already
+                            // in-flight reconcile cannot drop the handoff.
                             crate::group_sync::sync_rate_limiter().record(guild_id, now);
-                            crate::group_sync::spawn_reconcile(self.db.clone(), guild_id);
+                            crate::group_sync::schedule_post_import_follow_up(
+                                self.db.clone(),
+                                guild_id,
+                                Duration::ZERO,
+                                self.shutdown.clone(),
+                            );
                             Ok(GroupSyncStatus::Ran)
                         }
                         PostImportSyncClaim::Deferred { retry_after } => {

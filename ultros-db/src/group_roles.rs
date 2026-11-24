@@ -1139,7 +1139,9 @@ pub(crate) async fn insert_role_member(
 /// Result of an atomic Postgres per-guild post-import reconciliation claim.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PostImportSyncClaim {
-    /// The caller won the cooldown window and should reconcile immediately.
+    /// The caller won the cooldown window; Postgres durably recorded
+    /// `follow_up_due_at = NOW()` so the reconcile remains recoverable until
+    /// [`UltrosDb::complete_post_import_sync`] clears it after completion.
     ClaimedNow,
     /// Another post-import reconcile ran within the cooldown window. Postgres
     /// durably recorded `follow_up_due_at`, so the worker must schedule a single
@@ -1147,26 +1149,43 @@ pub enum PostImportSyncClaim {
     Deferred { retry_after: std::time::Duration },
 }
 
-/// Result of attempting to claim a previously scheduled durable follow-up row.
+/// Opaque Postgres timestamp token identifying one leased post-import sync run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PostImportDueToken(chrono::DateTime<chrono::Utc>);
+
+impl PostImportDueToken {
+    /// Construct a synthetic token from Unix microseconds (for unit tests).
+    pub fn from_unix_micros(micros: i64) -> Self {
+        Self(
+            chrono::DateTime::from_timestamp_micros(micros)
+                .expect("valid unix microsecond timestamp"),
+        )
+    }
+}
+
+/// Result of attempting to begin a due durable post-import reconciliation.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum FollowUpClaim {
-    /// This worker atomically claimed the due follow-up and should run it now.
-    Claimed,
+pub enum FollowUpLease {
+    /// This worker refreshed `claimed_at` and acquired a durable run token
+    /// (`due_token`, kept non-null in `follow_up_due_at` until
+    /// [`UltrosDb::complete_post_import_sync`] succeeds).
+    Ready { due_token: PostImportDueToken },
     /// A follow-up is still pending in Postgres, but `follow_up_due_at` has not
-    /// elapsed according to Postgres `NOW()` yet (for example due to timer skew).
+    /// elapsed according to Postgres `NOW()` yet.
     NotYetDue(std::time::Duration),
-    /// No pending follow-up exists for this guild (already claimed or cleared).
+    /// No pending follow-up exists for this guild.
     NonePending,
 }
 
 impl UltrosDb {
     /// Atomically claim the post-import reconciliation window for `guild_id` in
-    /// Postgres, or durably record `follow_up_due_at` if the guild is still
-    /// within `cooldown`.
+    /// Postgres, always leaving `follow_up_due_at` non-null until a reconcile
+    /// actually completes via [`Self::complete_post_import_sync`].
     ///
     /// Using Postgres `NOW()` and row locking on `guild_id PRIMARY KEY` ensures
-    /// concurrent calls serialize atomically and the cooldown + pending
-    /// follow-up survive worker restarts and standby handoffs.
+    /// concurrent calls serialize atomically and both the cooldown and pending
+    /// work survive worker restarts, standby handoffs, and in-flight guild
+    /// reconciles.
     pub async fn claim_post_import_sync(
         &self,
         guild_id: i64,
@@ -1180,7 +1199,7 @@ impl UltrosDb {
             .query_one_raw(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "INSERT INTO guild_post_import_sync_claim (guild_id, claimed_at, follow_up_due_at)
-                 VALUES ($1, NOW(), NULL)
+                 VALUES ($1, NOW(), NOW())
                  ON CONFLICT (guild_id) DO UPDATE
                  SET
                      claimed_at = CASE
@@ -1192,15 +1211,15 @@ impl UltrosDb {
                      follow_up_due_at = CASE
                          WHEN guild_post_import_sync_claim.claimed_at
                              + ($2::double precision * INTERVAL '1 second') <= NOW()
-                         THEN NULL
+                         THEN NOW()
                          ELSE guild_post_import_sync_claim.claimed_at
                              + ($2::double precision * INTERVAL '1 second')
                      END
                  RETURNING
-                     (follow_up_due_at IS NULL) AS claimed_now,
+                     (claimed_at = follow_up_due_at) AS claimed_now,
                      GREATEST(
                          0.0,
-                         EXTRACT(EPOCH FROM (COALESCE(follow_up_due_at, NOW()) - NOW()))
+                         EXTRACT(EPOCH FROM (follow_up_due_at - NOW()))
                      )::DOUBLE PRECISION AS retry_after_secs",
                 [guild_id.into(), cooldown_secs.into()],
             ))
@@ -1218,25 +1237,36 @@ impl UltrosDb {
         }
     }
 
-    /// Atomically claim a due durable post-import follow-up for `guild_id`.
-    pub async fn claim_due_post_import_follow_up(&self, guild_id: i64) -> Result<FollowUpClaim> {
+    /// Begin a due durable post-import reconciliation for `guild_id` WITHOUT
+    /// clearing `follow_up_due_at`.
+    ///
+    /// Refreshes `claimed_at = NOW()` and stamps `follow_up_due_at = NOW()` as
+    /// the run token returned in [`FollowUpLease::Ready`]. If a restart happens
+    /// before reconciliation finishes, `follow_up_due_at` remains non-null for
+    /// startup recovery; if another role is imported while reconciliation is
+    /// running, [`Self::claim_post_import_sync`] advances `follow_up_due_at` so
+    /// [`Self::complete_post_import_sync`] will not clear the newer work.
+    pub async fn begin_due_post_import_sync(&self, guild_id: i64) -> Result<FollowUpLease> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
-        let claimed = self
+        let leased = self
             .db
             .query_one_raw(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "UPDATE guild_post_import_sync_claim
-                 SET claimed_at = NOW(), follow_up_due_at = NULL
+                 SET claimed_at = NOW(), follow_up_due_at = NOW()
                  WHERE guild_id = $1
                    AND follow_up_due_at IS NOT NULL
                    AND follow_up_due_at <= NOW()
-                 RETURNING guild_id",
+                 RETURNING follow_up_due_at",
                 [guild_id.into()],
             ))
             .await?;
-        if claimed.is_some() {
-            return Ok(FollowUpClaim::Claimed);
+        if let Some(row) = leased {
+            let due_token: chrono::DateTime<chrono::Utc> = row.try_get("", "follow_up_due_at")?;
+            return Ok(FollowUpLease::Ready {
+                due_token: PostImportDueToken(due_token),
+            });
         }
 
         let pending = self
@@ -1256,12 +1286,40 @@ impl UltrosDb {
         match pending {
             Some(row) => {
                 let remaining_secs: f64 = row.try_get("", "remaining_secs")?;
-                Ok(FollowUpClaim::NotYetDue(
+                Ok(FollowUpLease::NotYetDue(
                     std::time::Duration::from_secs_f64(remaining_secs.max(0.0)),
                 ))
             }
-            None => Ok(FollowUpClaim::NonePending),
+            None => Ok(FollowUpLease::NonePending),
         }
+    }
+
+    /// Clear `follow_up_due_at` after reconciliation succeeds, ONLY if no newer
+    /// post-import claim advanced `follow_up_due_at` past `due_token` while
+    /// reconciliation was running.
+    ///
+    /// Returns `true` if the pending marker was cleared, or `false` if a newer
+    /// import already scheduled follow-up work.
+    pub async fn complete_post_import_sync(
+        &self,
+        guild_id: i64,
+        due_token: PostImportDueToken,
+    ) -> Result<bool> {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+        let cleared = self
+            .db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "UPDATE guild_post_import_sync_claim
+                 SET follow_up_due_at = NULL
+                 WHERE guild_id = $1
+                   AND follow_up_due_at = $2
+                 RETURNING guild_id",
+                [guild_id.into(), due_token.0.into()],
+            ))
+            .await?;
+        Ok(cleared.is_some())
     }
 
     /// List all guilds that have a pending durable post-import follow-up, used
@@ -1911,45 +1969,69 @@ pub(crate) mod tests {
         let guild_id = next_id();
         let cooldown = std::time::Duration::from_millis(250);
 
-        // 1. First claim wins immediately.
+        // 1. First claim wins immediately and leaves a durable pending row until completed.
         assert_eq!(
             db.claim_post_import_sync(guild_id, cooldown).await.unwrap(),
             PostImportSyncClaim::ClaimedNow
         );
+        assert!(
+            db.list_pending_post_import_follow_ups()
+                .await
+                .unwrap()
+                .iter()
+                .any(|(id, _)| *id == guild_id),
+            "claimed work must remain recoverable in Postgres until reconciliation completes"
+        );
 
-        // 2. Second claim inside cooldown is deferred and persists follow_up_due_at
-        //    (visible to a fresh handle / restarted worker via list_pending).
+        // 2. Begin first run -> gets durable run token without clearing follow_up_due_at.
+        let FollowUpLease::Ready { due_token: token_1 } =
+            db.begin_due_post_import_sync(guild_id).await.unwrap()
+        else {
+            panic!("expected Ready lease for newly claimed guild");
+        };
+        assert!(
+            db.list_pending_post_import_follow_ups()
+                .await
+                .unwrap()
+                .iter()
+                .any(|(id, _)| *id == guild_id),
+            "follow_up_due_at must stay non-null while reconciliation is in flight"
+        );
+
+        // 3. A second import arrives WHILE run 1 is in flight -> deferred inside cooldown
+        //    and advances follow_up_due_at past token_1.
         let deferred = db.claim_post_import_sync(guild_id, cooldown).await.unwrap();
         assert!(matches!(deferred, PostImportSyncClaim::Deferred { .. }));
-        let pending = db.list_pending_post_import_follow_ups().await.unwrap();
+
+        // 4. Run 1 finishes and tries to clear token_1 -> MUST NOT clear run 2's newer marker!
         assert!(
-            pending.iter().any(|(id, _)| *id == guild_id),
-            "pending follow-up must survive in Postgres for restart recovery"
+            !db.complete_post_import_sync(guild_id, token_1)
+                .await
+                .unwrap(),
+            "completing run 1 must preserve a newer follow_up_due_at written mid-run"
         );
-
-        // 3. Before cooldown expires, claiming due follow-up reports NotYetDue.
         assert!(matches!(
-            db.claim_due_post_import_follow_up(guild_id).await.unwrap(),
-            FollowUpClaim::NotYetDue(_)
+            db.begin_due_post_import_sync(guild_id).await.unwrap(),
+            FollowUpLease::NotYetDue(_)
         ));
 
-        // 4. After cooldown elapses, the follow-up is claimed exactly once.
+        // 5. After cooldown elapses, run 2 leases the due follow-up and completes it cleanly.
         tokio::time::sleep(std::time::Duration::from_millis(320)).await;
-        assert_eq!(
-            db.claim_due_post_import_follow_up(guild_id).await.unwrap(),
-            FollowUpClaim::Claimed
+        let FollowUpLease::Ready { due_token: token_2 } =
+            db.begin_due_post_import_sync(guild_id).await.unwrap()
+        else {
+            panic!("expected Ready lease once cooldown elapsed");
+        };
+        assert!(
+            db.complete_post_import_sync(guild_id, token_2)
+                .await
+                .unwrap(),
+            "completing run 2 with no newer import must clear follow_up_due_at"
         );
         assert_eq!(
-            db.claim_due_post_import_follow_up(guild_id).await.unwrap(),
-            FollowUpClaim::NonePending
+            db.begin_due_post_import_sync(guild_id).await.unwrap(),
+            FollowUpLease::NonePending
         );
-
-        // 5. Claiming the follow-up refreshed claimed_at, so an immediate
-        //    subsequent post-import call is again deferred inside cooldown.
-        assert!(matches!(
-            db.claim_post_import_sync(guild_id, cooldown).await.unwrap(),
-            PostImportSyncClaim::Deferred { .. }
-        ));
     }
 
     #[tokio::test]
