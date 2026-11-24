@@ -710,6 +710,7 @@ impl HttpMarketClient {
             .get(header::CACHE_CONTROL)
             .cloned()
             .unwrap_or_else(|| HeaderValue::from_static("no-store"));
+        let total_count = resp.headers().get("x-total-count").cloned();
         let content_encoding = resp.headers().get(header::CONTENT_ENCODING).cloned();
         let vary = resp.headers().get(header::VARY).cloned();
 
@@ -722,6 +723,9 @@ impl HttpMarketClient {
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::CACHE_CONTROL, cache_control);
+        if let Some(total) = total_count {
+            builder = builder.header("x-total-count", total);
+        }
         if let Some(encoding) = content_encoding {
             builder = builder.header(header::CONTENT_ENCODING, encoding);
             if vary.is_none() {

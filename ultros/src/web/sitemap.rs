@@ -186,6 +186,7 @@ pub(crate) async fn generic_pages_sitemap(
         "venture-analyzer",
         "market-trends",
         "lists-alerts-retainers",
+        "ai-agents",
     ];
     for slug in HELP_SLUGS {
         let mut builder = Url::builder(format!("https://ultros.app/help/{slug}"));

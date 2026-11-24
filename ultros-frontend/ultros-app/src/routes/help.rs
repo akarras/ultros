@@ -344,6 +344,35 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             height: 266,
         }),
     },
+    HelpTopic {
+        slug: "ai-agents",
+        title: "AI assistants & MCP",
+        category: "Automation",
+        summary: "Connect Claude, ChatGPT, or any MCP client directly to Ultros's live market, flip, crafting, leve, venture, and scrip analyzers.",
+        purpose: "Use this when you want an AI assistant to search FFXIV market data, tweak analyzer filters, or build a crafting shopping list using live Ultros numbers and clickable links back to Ultros.",
+        inputs: &[
+            "Remote MCP endpoint (Streamable HTTP): https://ultros.app/mcp",
+            "OpenAPI 3.1 spec for Custom GPTs and REST agents: https://ultros.app/openapi.json",
+            "Agent discovery guide: https://ultros.app/llms.txt and https://ultros.app/llms-full.txt",
+            "Markdown view of any public tool or item page via Accept: text/markdown or ?format=md",
+        ],
+        assumptions: &[
+            "All public agent and MCP tools are read-only and require no login.",
+            "Public endpoints are rate-limited to 90 requests per minute per IP.",
+            "Prices are point-in-time snapshots from Ultros's live market ingest; open the returned Ultros link to verify live listings before buying in bulk.",
+        ],
+        results: &[
+            "Enriched results include resolved item names, world names, crafting breakdowns, and direct item_url links.",
+            "Every analyzer response includes a pre-filtered view_url that opens the exact tweaked tool settings in Ultros.",
+            "11 read-only MCP tools cover worlds, search, item summaries, flips, recipes, vendor resale, leves, ventures, scrips, trends, and craft shopping-list planning.",
+        ],
+        next_actions: &[
+            "Add https://ultros.app/mcp as a remote MCP server in Claude, ChatGPT, Cursor, or VS Code.",
+            "Ask your assistant something like: 'Find profitable Culinarian crafts on Gilgamesh under level 100 with at least 2 sales per day.'",
+            "Click the returned Ultros view_url to inspect live listings, price charts, and copy item names in-game.",
+        ],
+        image: None,
+    },
 ];
 
 pub fn help_topic(slug: &str) -> Option<HelpTopic> {

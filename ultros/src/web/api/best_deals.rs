@@ -37,7 +37,7 @@ pub(crate) struct BestDealsQuery {
     pub(crate) max_roi: Option<f32>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub(crate) struct ResaleStatsDto {
     /// Post-tax gil: the estimated sale price net of the 5% marketboard cut,
     /// minus the buy price. Same math as the Flip Finder with its `include_tax`
@@ -161,6 +161,7 @@ fn best_deals_response(
         axum::http::HeaderValue::from_static("no-store")
     };
 
+    let total = stats.len();
     let dtos: Vec<ResaleStatsDto> = stats
         .into_iter()
         .take(limit)
@@ -168,6 +169,7 @@ fn best_deals_response(
         .collect();
 
     let mut response = Json(dtos).into_response();
+    response.headers_mut().insert("x-total-count", total.into());
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, cache_control);
