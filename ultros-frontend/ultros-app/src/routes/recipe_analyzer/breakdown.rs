@@ -392,8 +392,8 @@ pub(super) fn RecipeBreakdownDrawer(
                                 <tr>
                                     <th scope="col" class="text-left">{t!(i18n, recipe_breakdown_col_ingredient)}</th>
                                     <th scope="col" class="text-right">{t!(i18n, recipe_breakdown_col_qty)}</th>
-                                    <th scope="col" class="text-right">"Unit price (gil)"</th>
-                                    <th scope="col" class="text-right">"Total (gil)"</th>
+                                    <th scope="col" class="text-right">{t!(i18n, recipe_breakdown_col_unit_gil)}</th>
+                                    <th scope="col" class="text-right">{t!(i18n, recipe_breakdown_col_total_gil)}</th>
                                 </tr>
                             </thead>
                             <tbody>{lines}</tbody>

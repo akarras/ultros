@@ -47,6 +47,8 @@ async function main() {
     await page.$eval(selector,(el,v) => {el.value=String(v);el.dispatchEvent(new Event('input',{bubbles:true}));},value);
   }
   async function open() {
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    await page.waitForSelector('[data-recipe-breakdown-toggle]', { visible: true });
     await page.click('[data-recipe-breakdown-toggle]');
     await page.waitForSelector(form);
     await page.waitForSelector(select);

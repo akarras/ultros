@@ -176,7 +176,7 @@ pub fn AddRecipeToListForm(
                         <ItemIcon item_id={recipe.item_result} icon_size=IconSize::Medium />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="text-xl font-extrabold text-[color:var(--brand-fg)]">
+                        <div class="text-xl font-extrabold text-[color:var(--brand-fg)]" data-dialog-title="">
                             {t!(i18n, add_recipe_title)}
                         </div>
                         <div class="text-[color:var(--color-text-muted)] truncate">
@@ -216,7 +216,19 @@ pub fn AddRecipeToListForm(
                     />
                 </div>
                 <p class="text-sm">
-                    {move || format!("{} crafts × {} per craft = {} items", craft_quantity(), recipe.amount_result.max(1), craft_quantity().saturating_mul(recipe.amount_result.max(1)))}
+                    {move || {
+                        let crafts = craft_quantity();
+                        let per_craft = recipe.amount_result.max(1);
+                        let total = crafts.saturating_mul(per_craft);
+                        t_string!(
+                            i18n,
+                            add_recipe_output_summary,
+                            crafts = crafts,
+                            per_craft = per_craft,
+                            total = total
+                        )
+                        .to_string()
+                    }}
                 </p>
                 <div class="flex flex-col gap-2">
                     <For
@@ -259,15 +271,18 @@ pub fn AddRecipeToListForm(
                                     return Some(Either::Right(view! {
                                         <AccountListsFailure error />
                                         <Show when=move || signed_out>
-                                            <a href="/login?next=/recipe-analyzer" rel="external" class="btn-primary">"Sign in to add ingredients to an account list"</a>
+                                            <a href="/login?next=/recipe-analyzer" rel="external" class="btn-primary">{t!(i18n, add_recipe_sign_in_cta)}</a>
                                         </Show>
                                     }));
                                 },
                             };
 
-                            let no_lists = lists.is_empty();
-                            Some(Either::Left(view! {
-                                <Show when=move || no_lists><p class="text-sm">"Create a list to save these ingredients. "<a class="underline" href="/list">"Open lists"</a></p></Show>
+                            if lists.is_empty() {
+                                return Some(Either::Left(Either::Left(view! {
+                                    <p class="text-sm">{t!(i18n, add_recipe_create_list_hint)}" "<a class="underline" href="/list">{t!(i18n, add_recipe_open_lists)}</a></p>
+                                })));
+                            }
+                            Some(Either::Left(Either::Right(view! {
                                 <form class="space-y-2" on:submit=move |ev| {
                                     ev.prevent_default();
                                     if add_bulk_action.pending().get_untracked() { return; }
@@ -276,11 +291,11 @@ pub fn AddRecipeToListForm(
                                         if !items.is_empty() { add_bulk_action.dispatch((list_id, items)); }
                                     }
                                 }>
-                                    <label class="block text-sm" for=format!("recipe-list-{}", recipe.key_id.0)>"Destination list"</label>
+                                    <label class="block text-sm" for=format!("recipe-list-{}", recipe.key_id.0)>{t!(i18n, add_recipe_destination_list)}</label>
                                     <select id=format!("recipe-list-{}", recipe.key_id.0) class="input w-full"
                                         prop:value=move || selected_list().map(|id| id.to_string()).unwrap_or_default()
                                         on:change=move |ev| selected_list.set(event_target_value(&ev).parse().ok())>
-                                        <option value="">"Choose a list"</option>
+                                        <option value="">{t!(i18n, add_recipe_choose_list)}</option>
                                         {lists.into_iter().map(|list| view! { <option value=list.id.to_string()>{list.name}</option> }).collect_view()}
                                     </select>
                                     <button type="submit" class="btn-primary w-full justify-center"
@@ -292,7 +307,7 @@ pub fn AddRecipeToListForm(
                                         {move || add_bulk_action.value().get().and_then(Result::err).map(|e| e.to_string())}
                                     </div>
                                 </form>
-                            }))
+                            })))
                         }}
                     </Suspense>
                     <LocalListTargets build_items=local_items on_added=close_on_added />
