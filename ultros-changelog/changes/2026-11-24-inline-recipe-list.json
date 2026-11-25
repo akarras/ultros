@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Add ingredients from the recipe preview",
+  "blurb": "Choose a list, craft count, ingredient quantities, HQ, and crystals right in the cost preview. Ingredient prices are easier to read on narrow screens.",
+  "link": "/recipe-analyzer"
+}
