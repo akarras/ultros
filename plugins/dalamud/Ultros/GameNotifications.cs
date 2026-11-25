@@ -24,12 +24,15 @@ internal sealed class GameNotifications : IDisposable
     private static string Plain(string value)=>new(value.Where(c=>!char.IsControl(c)).Take(2000).ToArray());
     private void Print(string title,string body)
     {
-        var type=ChatTypes.FirstOrDefault(t=>(int)t==config.NotificationChatType,XivChatType.Echo);
-        Plugin.Chat.Print(new XivChatEntry{Type=type,Message=new SeStringBuilder().AddUiForeground("[Ultros] ",45).AddText($"{Plain(title)} — {Plain(body)}").Build()});
+        if(config.NotificationChatEnabled)
+        {
+            var type=ChatTypes.FirstOrDefault(t=>(int)t==config.NotificationChatType,XivChatType.Echo);
+            Plugin.Chat.Print(new XivChatEntry{Type=type,Message=new SeStringBuilder().AddUiForeground("[Ultros] ",45).AddText($"{Plain(title)} — {Plain(body)}").Build()});
+        }
         if(config.NotificationPopup)
         {
             try{Plugin.Notifications.AddNotification(new Notification{Title=Plain(title),Content=Plain(body)});}
-            catch(Exception error){Plugin.Log.Warning("Ultros popup failed ({Type}); the message was printed in chat.",error.GetType().Name);}
+            catch(Exception error){Plugin.Log.Warning("Ultros popup failed ({Type}); the notification history was kept.",error.GetType().Name);}
         }
     }
     internal unsafe void PlaySound()
@@ -39,7 +42,7 @@ internal sealed class GameNotifications : IDisposable
     }
     internal void Test()
     {
-        Print("Notification test","Ultros notifications appear here. Choose a chat category and optional sound in Settings.");
+        Print("Notification test","Ultros notifications appear here. Choose chat output, popup and sound options in Settings.");
         if(config.NotificationSound)PlaySound();
     }
     private void Update(IFramework framework)

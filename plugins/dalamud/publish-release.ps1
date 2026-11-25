@@ -24,11 +24,18 @@ if ($build.PluginVersion -ne $version -or $manifest.AssemblyVersion -ne $version
     throw 'Package identity, version, API level or protocol does not match the release source.'
 }
 if ([Reflection.AssemblyName]::GetAssemblyName((Join-Path $package 'Ultros.dll')).Version.ToString(4) -ne $version -or
-    [Reflection.AssemblyName]::GetAssemblyName((Join-Path $package 'Ultros.Lists.dll')).Version.ToString(4) -ne $version) {
+    [Reflection.AssemblyName]::GetAssemblyName((Join-Path $package 'Ultros.Lists.dll')).Version.ToString(4) -ne $version -or
+    [Reflection.AssemblyName]::GetAssemblyName((Join-Path $package 'UltrosListDoc.WasmIL.dll')).Version.ToString(4) -ne $version) {
     throw 'Managed assembly versions do not match the release.'
 }
-if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $package 'ultros_list_doc_ffi.dll')).Hash -ne $build.NativeSha256) {
-    throw 'The native library differs from the tested package.'
+if ($build.Target -cne 'wasm32-wasip1') {
+    throw 'Published releases must use the pure-managed wasm32-wasip1 document module.'
+}
+if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $package 'UltrosListDoc.WasmIL.dll')).Hash -ne $build.NativeSha256) {
+    throw 'The managed WasmIL document module differs from the tested package.'
+}
+if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $package 'WebAssembly.dll')).Hash -ne $build.WebAssemblySha256) {
+    throw 'The WebAssembly runtime assembly differs from the tested package.'
 }
 $source = Get-PluginReleaseSource (Join-Path $PSScriptRoot '../..')
 if ($source.Dirty) { throw 'Commit and validate the release sources before publishing.' }
@@ -40,7 +47,7 @@ $root = (Resolve-Path -LiteralPath $ReleaseDirectory).Path
 $lock = [IO.File]::Open((Join-Path $root '.publish.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 $pending = Join-Path $root "Ultros-$version.pending.zip"
 try {
-    $files = @('Ultros.dll','Ultros.json','Ultros.deps.json','Ultros.Lists.dll','ultros_list_doc_ffi.dll','capture-compatibility.json','build-info.json','README.md','PORTABILITY.md','LICENSE') | Sort-Object
+    $files = @('Ultros.dll','Ultros.json','Ultros.deps.json','Ultros.Lists.dll','WebAssembly.dll','UltrosListDoc.WasmIL.dll','capture-compatibility.json','build-info.json','README.md','PORTABILITY.md','LICENSE') | Sort-Object
     $stream = [IO.File]::Open($pending, [IO.FileMode]::Create, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     try {
         $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create, $true)

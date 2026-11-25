@@ -110,9 +110,71 @@ async fn estimate(
         })
         .collect::<Vec<_>>();
     let result = estimate_cart(requests.into_iter().map(|r| (r, listings.as_slice())));
-    Ok(Json(
-        serde_json::json!({"version":STANDARD.encode(doc.version()),"scope":resolved.get_name(),"observed_at":chrono::Utc::now(),"total":result.total,"incomplete":result.is_incomplete(),"unpriced_units":result.unpriced_units,"lines":result.lines.into_iter().map(|r|serde_json::json!({"item_id":r.item_id,"hq":r.hq,"remaining":r.remaining,"priced_units":r.priced_units,"total":r.total,"status":format!("{:?}",r.status)})).collect::<Vec<_>>()}),
-    ))
+    Ok(Json(estimate_payload(
+        &STANDARD.encode(doc.version()),
+        resolved.get_name(),
+        chrono::Utc::now(),
+        result,
+    )))
+}
+
+fn estimate_payload(
+    version: &str,
+    scope: &str,
+    observed_at: chrono::DateTime<chrono::Utc>,
+    result: ultros_calc::list_estimate::CartEstimate,
+) -> serde_json::Value {
+    let incomplete = result.is_incomplete();
+    let world_totals = result
+        .world_totals()
+        .into_iter()
+        .map(|world| {
+            serde_json::json!({
+                "world_id": world.world_id,
+                "total": world.total,
+                "units": world.units,
+                "listings": world.listings,
+            })
+        })
+        .collect::<Vec<_>>();
+    let lines = result
+        .lines
+        .into_iter()
+        .map(|row| {
+            let allocations = row
+                .allocations
+                .into_iter()
+                .map(|alloc| {
+                    serde_json::json!({
+                        "world_id": alloc.world_id,
+                        "price_per_unit": alloc.price_per_unit,
+                        "hq": alloc.hq,
+                        "units": alloc.units,
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "item_id": row.item_id,
+                "hq": row.hq,
+                "remaining": row.remaining,
+                "priced_units": row.priced_units,
+                "total": row.total,
+                "unit_price": row.unit_price,
+                "status": format!("{:?}", row.status),
+                "allocations": allocations,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "version": version,
+        "scope": scope,
+        "observed_at": observed_at,
+        "total": result.total,
+        "incomplete": incomplete,
+        "unpriced_units": result.unpriced_units,
+        "lines": lines,
+        "world_totals": world_totals,
+    })
 }
 async fn characters(
     State(db): State<UltrosDb>,
@@ -404,5 +466,32 @@ mod version_bound_tests {
         assert!(maximum_envelope > 12 * 1024 * 1024);
         assert!(maximum_envelope < MAX_SYNC_BODY_BYTES);
         assert!(decode_sync_version("invalid!").is_err());
+    }
+
+    #[test]
+    fn estimate_payload_includes_world_totals_and_line_allocations() {
+        use ultros_calc::list_estimate::{
+            estimate_cart,
+            fixtures::{listing, request},
+        };
+        let mut world_a = listing(1, 8, false, 100, 2);
+        world_a.world_id = 63;
+        let mut world_b = listing(2, 8, false, 150, 5);
+        world_b.world_id = 73;
+        let result = estimate_cart([(request(1, 8, Some(false), 4, 0), &[world_a, world_b][..])]);
+        let json = estimate_payload("ver1", "Aether", chrono::Utc::now(), result);
+        assert_eq!(json["total"], 500);
+        assert_eq!(json["lines"][0]["unit_price"], 100);
+        assert_eq!(json["lines"][0]["allocations"].as_array().unwrap().len(), 2);
+        assert_eq!(json["lines"][0]["allocations"][0]["world_id"], 63);
+        assert_eq!(json["lines"][0]["allocations"][0]["units"], 2);
+        assert_eq!(json["lines"][0]["allocations"][1]["world_id"], 73);
+        assert_eq!(json["lines"][0]["allocations"][1]["units"], 2);
+        let totals = json["world_totals"].as_array().unwrap();
+        assert_eq!(totals.len(), 2);
+        assert_eq!(totals[0]["world_id"], 73);
+        assert_eq!(totals[0]["total"], 300);
+        assert_eq!(totals[1]["world_id"], 63);
+        assert_eq!(totals[1]["total"], 200);
     }
 }

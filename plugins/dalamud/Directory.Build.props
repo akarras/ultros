@@ -1,8 +1,8 @@
 <Project>
   <PropertyGroup>
     <!-- One checked-in version for every managed assembly and release package. -->
-    <UltrosPluginVersion>1.6.0.5</UltrosPluginVersion>
-    <UltrosPluginReleaseNotes>Retainers follow your Ultros order, with a summoning-bell shortcut to refresh missing retainers and use the game's order. Disable retainers you no longer use while keeping their saved data. Connected lists receive live updates, and all item right-click shortcuts can be turned off in Settings.</UltrosPluginReleaseNotes>
+    <UltrosPluginVersion>1.7.0.0</UltrosPluginVersion>
+    <UltrosPluginReleaseNotes>Polished Market and Lists views with in-game item icons, resolved world names, HQ/NQ filters, sortable listings, auto-refreshed list estimates, and a world-grouped Shopping Route. Added Settings toggles for the summoning-bell shortcut and game-chat alert printing, one-click post-patch re-enable banners, tab unread badges, notification timestamps, and a 100% pure-managed WASM-to-IL list document engine (no native DLL).</UltrosPluginReleaseNotes>
     <Version>$(UltrosPluginVersion)</Version>
     <AssemblyVersion>$(UltrosPluginVersion)</AssemblyVersion>
     <FileVersion>$(UltrosPluginVersion)</FileVersion>

@@ -94,6 +94,34 @@ internal static class ClientChecks
         Require(worldDirectory.RegionFor(72,63)=="Japan","Current region did not take precedence over home world.");
         Require(worldDirectory.RegionFor(0,63)=="North-America","Missing current world did not fall back to home region.");
         Require(worldDirectory.RegionFor(999,998)=="","Unknown worlds silently chose a different price zone.");
+        Require(worldDirectory.WorldName(63)=="Gilgamesh"&&worldDirectory.DatacenterName(63)=="Aether","World directory failed to resolve world/DC names.");
+
+        // Market summary, timestamp formatting, and Shopping Route builder checks.
+        var summary=MarketStats.Summarize(
+            [new(63,"Alpha",false,10,120),new(73,"Beta",false,5,95),new(63,"Gamma",true,2,300),new(73,"Delta",true,1,250)],
+            [new(false,1,100,"2026-11-24T12:00:00",63),new(true,2,200,"2026-11-24T12:15:00",73),new(false,1,300,"2026-11-24T12:30:00",63)]);
+        Require(summary.CheapestNq==95&&summary.CheapestHq==250&&summary.NqCount==2&&summary.HqCount==2,"Market summary miscomputed cheapest NQ/HQ prices.");
+        Require(summary.MedianSalePrice==200&&summary.AverageSalePrice==200&&summary.SaleCount==3,"Market summary miscomputed recent sale statistics.");
+        var refNow=new DateTimeOffset(2026,11,24,13,0,0,TimeSpan.Zero);
+        Require(TimestampFormat.FormatSaleTime("2026-11-24T12:45:00",refNow)=="15m ago","Sale timestamp did not format relative minutes.");
+        Require(TimestampFormat.FormatSaleTime("not-a-date",refNow)=="not-a-date","Invalid sale timestamp did not fall back cleanly.");
+
+        var cartRows=new CartRow[]{new(8,"nq",5,1,null),new(5056,"hq",2,0,null),new(9,"any",3,3,null),new(10,"nq",2,0,null)};
+        var progress=ShoppingRoute.Progress(cartRows);
+        Require(progress.TotalNeed==12&&progress.TotalAcquired==4&&progress.CompletedRows==1&&progress.RemainingUnits==8,"Cart progress miscomputed totals.");
+        var routeEstimate=new CartEstimate("v1","Aether",refNow,1350,true,2,
+            [
+                new(8,false,4,4,450,"Priced",100,[new(63,100,false,2),new(63,110,false,1),new(73,140,false,1)]),
+                new(5056,true,2,2,900,"Priced",450,[new(73,450,true,2)]),
+                new(9,null,0,0,0,"Acquired",null,[]),
+                new(10,false,2,0,0,"NoSupply",null,[]),
+            ],
+            [new(73,1040,3,2),new(63,310,3,2)]);
+        var plan=ShoppingRoute.Build(cartRows,routeEstimate);
+        Require(plan.Stops.Length==2&&plan.Stops[0].WorldId==73&&plan.Stops[1].WorldId==63,"Shopping route did not preserve world_totals order.");
+        Require(plan.Stops[0].TotalGil==1040&&plan.Stops[0].TotalUnits==3&&plan.Stops[0].Items.Length==2,"First shopping stop miscomputed totals.");
+        Require(plan.Stops[1].Items.Single().UnitsToBuy==3&&plan.Stops[1].Items.Single().MinUnitPrice==100&&plan.Stops[1].Items.Single().MaxUnitPrice==110,"Same-world allocations did not merge cleanly.");
+        Require(plan.UnpricedRows.Single().ItemId==10,"Unpriced rows were not separated into the short-supply list.");
         ListAccess List(int id,string name,string permission)=>new(new(id,1,name,default),permission,null);
         var selection=new[]{List(1,"Wishlist","Owner"),List(2,"Cart","Read"),List(3,"cart","Owner")};
         Require(ListSelection.Default(selection,null)==3,"Default cart selected a shared list over the owned Cart.");

@@ -68,6 +68,6 @@ public sealed record ListAccess(RemoteList List, string Permission, string? Owne
 {
     public bool CanWrite => Permission is "Write" or "Owner";
 }
-public sealed record MarketRow(string World, string Retainer, bool Hq, int Quantity, long UnitPrice);
-public sealed record MarketView(int ItemId, string Scope, MarketRow[] Listings, string Status);
-public sealed record SaleRow(bool Hq, int Quantity, long UnitPrice, string SoldAt);
+public sealed record MarketRow(int WorldId, string Retainer, bool Hq, int Quantity, long UnitPrice);
+public sealed record MarketView(int ItemId, string Scope, MarketRow[] Listings, string Status, DateTimeOffset? FetchedAt = null);
+public sealed record SaleRow(bool Hq, int Quantity, long UnitPrice, string SoldAt, int WorldId = 0);

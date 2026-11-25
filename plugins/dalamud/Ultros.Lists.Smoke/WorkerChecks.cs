@@ -46,6 +46,16 @@ internal static class WorkerChecks
                 SyncCounts.AddOrUpdate(id,1,(_,prior)=>prior+1);
                 return SyncReplies.TryGetValue(id,out var reply)?new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(reply,Protocol.Json))}:new(HttpStatusCode.ServiceUnavailable){Content=new StringContent("{}")};
             }
+            if(route.StartsWith("/api/v1/plugin/lists/",StringComparison.Ordinal)&&route.EndsWith("/estimate",StringComparison.Ordinal)) {
+                var id=int.Parse(route.Split('/')[5],System.Globalization.CultureInfo.InvariantCulture);
+                var version=SyncReplies.TryGetValue(id,out var reply)?reply.Version:"";
+                var payload=new{
+                    version,scope="Aether",observed_at=DateTimeOffset.UtcNow,total=500L,incomplete=false,unpriced_units=0L,
+                    lines=new[]{new{item_id=8,hq=(bool?)false,remaining=5,priced_units=5,total=500L,unit_price=(long?)100,status="Priced",allocations=new[]{new{world_id=63,price_per_unit=100L,hq=false,units=5}}}},
+                    world_totals=new[]{new{world_id=63,total=500L,units=5L,listings=1}}
+                };
+                return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(payload),Encoding.UTF8,"application/json")};
+            }
             if(route=="/api/v1/plugin/session/reauthorize") {
                 using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellation));
                 PairingScopes.Add(body.RootElement.GetProperty("scopes").EnumerateArray().Select(value=>value.GetString()!).ToArray());
@@ -91,7 +101,8 @@ internal static class WorkerChecks
         };
         await fixture.OnWorker(()=>Set(fixture.Worker,"lists",handler.Lists));
         Require(fixture.Worker.SelectList(1),"Live list selection was not queued.");
-        await Until(()=>opened.Count==1&&fixture.Worker.View.Cart?.Rows.Length==1&&fixture.Worker.View.ListTransport=="Live updates");
+        await Until(()=>opened.Count==1&&fixture.Worker.View.Cart?.Rows.Length==1&&fixture.Worker.View.ListTransport=="Live updates"&&fixture.Worker.View.Estimate?.Total==500);
+        Require(fixture.Worker.View.Estimate?.WorldTotals?.Single().WorldId==63,"Auto-fetched estimate lost world totals.");
         var original=opened.First();
         await fixture.OnWorker(()=>Set(fixture.Worker,"nextCart",DateTimeOffset.UtcNow.AddHours(1)));
         first.Edit(new{kind="add",item_id=10,quality="hq",need=30});

@@ -10,15 +10,17 @@ internal sealed class BellRetainerShortcut : IDisposable
 {
     private readonly ClientWorker worker;
     private readonly RetainerCapture capture;
+    private readonly Configuration config;
     private readonly BellRetainerPanel panel;
-    internal BellRetainerShortcut(ClientWorker worker,RetainerCapture capture,MainWindow window)
+    internal BellRetainerShortcut(ClientWorker worker,RetainerCapture capture,MainWindow window,Configuration config)
     {
-        this.worker=worker;this.capture=capture;
+        this.worker=worker;this.capture=capture;this.config=config;
         panel=new(){Refresh=character=>worker.Register(character),UseGameOrder=character=>worker.UseGameRetainerOrder(character),Manage=window.ShowRetainers};
         Plugin.Interface.UiBuilder.Draw+=Draw;
     }
     private void Draw()
     {
+        if(!config.BellShortcutEnabled)return;
         var view=worker.View;
         if(!view.Connected||capture.Bell is not { } bell)return;
         ImGui.SetNextWindowPos(ImGui.GetMainViewport().Pos+bell.Position);
