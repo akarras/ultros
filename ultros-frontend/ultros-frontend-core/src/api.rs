@@ -108,8 +108,13 @@ pub async fn execute_api_explorer_request(
     path_and_query: &str,
     json_body: Option<&str>,
 ) -> Result<ApiExplorerResponse, String> {
-    if !path_and_query.starts_with('/') {
-        return Err("Request path must start with '/'".to_string());
+    // `//host/...` and `/\host/...` are protocol-relative: the browser would
+    // send the request off-origin. The runner is same-origin only.
+    if !path_and_query.starts_with('/')
+        || path_and_query.starts_with("//")
+        || path_and_query.starts_with("/\\")
+    {
+        return Err("Request path must be a same-origin path starting with '/'".to_string());
     }
     let started = js_sys::Date::now();
     let response = match method {
