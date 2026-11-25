@@ -1049,6 +1049,137 @@ const cases = [
     },
     expectDrop: true,
   },
+  // Category 13: an error raised entirely inside a browser extension's or an
+  // injected script's code. GlitchTip #8172 (34 events, a Chrome extension's
+  // XHR hook on /flip-finder) and #8173 (a scraper's injected `app.js`).
+  {
+    name: "Unhandled rejection entirely inside a chrome-extension:// script is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Cannot read properties of undefined (reading 'M_ID')",
+            mechanism: { type: "auto.browser.global_handlers.onunhandledrejection", handled: false },
+            stacktrace: {
+              frames: [
+                {
+                  filename: "chrome-extension://eppiocemhmnlbhjplcgkofciiegomcon/executors/200.js",
+                  function: "XMLHttpRequest.<anonymous>",
+                  lineno: 1,
+                },
+                {
+                  filename: "chrome-extension://eppiocemhmnlbhjplcgkofciiegomcon/executors/200.js",
+                  function: "h",
+                  lineno: 1,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "Error inside a moz-extension:// script is dropped",
+    ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:160.0) Gecko/20100101 Firefox/160.0",
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "e is null",
+            mechanism: { type: "auto.browser.global_handlers.onerror", handled: false },
+            stacktrace: {
+              frames: [{ filename: "moz-extension://1b2c3d4e-0000-4000-8000-000000000000/content.js", function: "run" }],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "Error in an injected script with a bare relative filename (app.js) is dropped",
+    ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "window[eFuncName] is not a function",
+            mechanism: { type: "auto.browser.browserapierrors.setTimeout", handled: false },
+            stacktrace: {
+              frames: [{ filename: "app.js", abs_path: "app.js", function: "?", lineno: 17, colno: 42 }],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "Extension frame calling into the pkg bundle is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Cannot read properties of undefined (reading 'x')",
+            mechanism: { type: "auto.browser.global_handlers.onerror", handled: false },
+            stacktrace: {
+              frames: [
+                { filename: "chrome-extension://abcdefghijklmnop/inject.js", function: "hook" },
+                { filename: "https://ultros.app/pkg/8217061/ultros.js", function: "e" },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  {
+    name: "Error with only an ultros.app page frame (inline script) is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "x is not a function",
+            mechanism: { type: "auto.browser.global_handlers.onerror", handled: false },
+            stacktrace: {
+              frames: [{ filename: "https://ultros.app/item/Zalera/8005", function: "?" }],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  {
+    name: "Only <anonymous> frames (nothing proves an extension) is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "x is not a function",
+            mechanism: { type: "auto.browser.global_handlers.onerror", handled: false },
+            stacktrace: {
+              frames: [{ filename: "<anonymous>", abs_path: "<anonymous>", function: "?" }],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
   // Category 11: a scraper served an emptied module body. The hydration
   // bootstrap's `mod.default(...)` then finds no default export. The only
   // frame is the inline bootstrap on the page itself. GlitchTip #8166-#8169.

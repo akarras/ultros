@@ -167,6 +167,16 @@
 //      ~15 ms after a side-nav click, with Firefox's no-reason abort message
 //      "The operation was aborted. ". Nothing to act on, and the user sees
 //      nothing. Any stack frame, or an onerror mechanism, keeps the event.
+//  13. An error whose every stack frame is a browser extension's code
+//      (`chrome-extension://`, `moz-extension://`, Safari's and Edge's
+//      schemes) or an injected script with a bare relative filename such as
+//      `app.js`. Ultros serves nothing from either: our bundle and pages all
+//      have absolute https URLs. #8172 is a Chrome extension hooking
+//      XMLHttpRequest on /flip-finder and crashing on the response (34 events,
+//      one user). #8173 is a scraper whose injected `app.js` calls a global it
+//      never defined. `<anonymous>` frames are neutral, but at least one frame
+//      must be positively foreign, and a single frame anywhere else (pkg
+//      bundle, an ultros.app page) keeps the event.
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
   // Third-party analytics / ads / consent / CDN-telemetry hosts. Ultros loads
@@ -917,6 +927,48 @@
     return false;
   }
 
+  // Category 13: every frame is a browser extension's or an injected script's.
+  // See the header.
+  var ULTROS_EXTENSION_SCHEME_RE =
+    /^(?:chrome|moz|safari|safari-web|ms-browser)-extension:\/\//i;
+  // A bare relative filename (`app.js`): no scheme, no path. Everything Ultros
+  // serves has an absolute URL, so only an eval'd / CDP-injected script with a
+  // made-up sourceURL reports like this.
+  var ULTROS_BARE_SCRIPT_NAME_RE = /^[\w.-]+\.js$/i;
+  function isExtensionScriptError(event) {
+    try {
+      var ex = firstException(event);
+      if (!ex) return false;
+      var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
+      if (frames.length === 0) return false;
+      var sawForeign = false;
+      for (var i = 0; i < frames.length; i++) {
+        var f = frames[i] || {};
+        // Both spellings must agree: a frame is foreign only if filename and
+        // absPath (when present) are each extension / bare names.
+        var names = [f.filename, f.absPath, f.abs_path].filter(function (n) {
+          return typeof n === "string" && n !== "";
+        });
+        if (names.length === 0) return false;
+        var anon = names.every(function (n) {
+          return n === "<anonymous>";
+        });
+        var foreign = names.every(function (n) {
+          return ULTROS_EXTENSION_SCHEME_RE.test(n) || ULTROS_BARE_SCRIPT_NAME_RE.test(n);
+        });
+        if (foreign) {
+          sawForeign = true;
+        } else if (!anon) {
+          return false;
+        }
+      }
+      return sawForeign;
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return false;
+  }
+
   // Category 10: the page is instrumented by Baidu's render crawler, whose
   // hooks break DOM APIs under our code. See the header.
   function isCrawlerHookedPage(event) {
@@ -1028,7 +1080,8 @@
       isHeadlessFetchAbortRejection(event) ||
       isCrawlerHookedPage(event) ||
       isStubbedBundleModule(event) ||
-      isUnobservedAbortRejection(event)
+      isUnobservedAbortRejection(event) ||
+      isExtensionScriptError(event)
     );
   };
 })();

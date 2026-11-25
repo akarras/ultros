@@ -339,7 +339,11 @@ async fn world_item_listings(
         db_clone_2.get_listing_last_updated_for_worlds(ItemId(item_id), &worlds),
     )
     .await
-    .inspect_err(|e| tracing::error!(error = ?e, "Error getting listings"))?;
+    // The span's `world`/`item_id` are not copied into the Sentry event (only
+    // the event's own fields are), so name them here: without them a failure
+    // that hits one item every time (a corrupt retainer/buyer `name` row that
+    // fails UTF-8 decoding) cannot be traced back to the row.
+    .inspect_err(|e| tracing::error!(error = ?e, %world, item_id, "Error getting listings"))?;
     let currently_shown = CurrentlyShownItem {
         listings: listings
             .into_iter()
