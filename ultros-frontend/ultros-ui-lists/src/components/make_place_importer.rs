@@ -44,7 +44,6 @@ fn parse_list(list: &str) -> Result<Vec<MakePlaceItemData>, ParseListError> {
         .filter(|line| !line.contains('('))
         .flat_map(|line| line.split_once(':'))
         .map(|(item_name, quantity)| {
-            println!("{item_name}: {quantity}");
             let quantity = quantity.trim().parse::<i32>()?;
             // TODO: There are some dyes that have unmarketable variants such as Pure White Dye -> General Purpose Pure White Dye
             // We should be able to automatically find the general-purpose version in the future

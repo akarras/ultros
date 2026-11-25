@@ -95,6 +95,7 @@
     "test:lists-default": "node ./lists-default.cjs",
     "test:lists-readonly": "node ./lists-readonly.cjs",
     "test:lists-help": "node ./lists-help.cjs",
+    "test:list-restock": "node ./list-restock.cjs",
     "test:recipe-worker": "node ./recipe-worker.cjs"
   },
   "devDependencies": {

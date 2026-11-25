@@ -238,15 +238,17 @@ exercise Docker's immediate-abort build.
 
 ## Promotion
 
-> **Gate status (2026-10-18): production checks remain open.** The current
-> integration and local bundle result are recorded in
-> [`lists-promotion-decision.md`](lists-promotion-decision.md). The deployed
-> two-account/device/bot exercise and production projection check have no
-> evidence here, and the scoped waiver remains unsigned. Production was
-> inspected at `0254444` with Lists still behind Labs. Do not merge the
-> promotion until that record's blockers are evidenced or its waiver is signed.
+> **Status (2026-11-24): promoted and live by default.** Lists 2.0 was promoted
+> out of Labs by [PR #1665](https://github.com/akarras/ultros/pull/1665)
+> (`09af481f`, merged and deployed 2026-10-19) under the owner-approved scoped
+> waiver in [`lists-promotion-decision.md`](lists-promotion-decision.md). On
+> 2026-11-24, `@akarras` explicitly signed off to close
+> [#1510](https://github.com/akarras/ultros/issues/1510) and
+> [#1372](https://github.com/akarras/ultros/issues/1372) without running the
+> overdue Oct 19–26 post-deploy log/projection checks. `ULTROS_LISTS_READONLY`
+> and `list_projection_check` remain active operational safeguards.
 
-In the promotion branch, Lists 2.0 is the default for account and device
+Lists 2.0 is the default for account and device
 lists. The Labs switch, original REST-driven list editor and directory, and
 `?cart=legacy` comparison grid have been removed. Old `LABS` cookies and
 `?labs=lists-sync` bookmarks no longer select a different implementation.
@@ -516,26 +518,15 @@ disposition: [`lists-promotion-decision.md`](lists-promotion-decision.md).
 When all three hold, open the redesign spec (Lists 2.0 sub-project 2). The
 toggle stays on for the maintainer until the redesign ships on top of it.
 
-## Known gaps carried out of Phase 4
+## Remaining notes carried out of Phase 4
 
 - Phase 4 commit `59fbc662` guards list loads and delayed permission
   responses with the active route and exact document-handle identity,
   preventing stale responses from changing or purging a successor list.
-  The navigation regression probe covers delayed permission success and
-  denial in both load and background-revalidation paths, across navigation
-  and unmount; all eight cases passed. Full CI, fresh SSR/WASM builds and
-  browser checks passed for convergence, offline reconnect, undo, REST and
-  legacy interoperability, revocation/deletion purge, account isolation,
-  and physical interactions in plain and Labs list flows. Two initial
-  fixture-startup failures passed on targeted rerun; push-subscription
-  creation was skipped because VAPID was unconfigured. These local checks
-  do not replace the production soak.
-- Broadcast-driven revalidation has no maximum debounce wait (see above).
-- A row added locally shows no price until a market event or an import
-  bumps the listings cache.
+  Broadcast-driven revalidation uses the fixed 1,000 ms window documented above
+  (#1473), and locally added rows trigger a single coverage-miss listings fetch
+  in `list_view_sync.rs`.
 - `MakePlaceImporter` still writes over REST; its rows reach the document
-  through the socket. Labs recipe previews now add their rows through the
+  through the socket (and is available on online account lists via the
+  **More options** menu). Inline recipe previews add their rows through the
   document as one undoable operation.
-- The bulk-edit Puppeteer suite (`integration/list-bulk-edit.cjs`) sends
-  add-item bodies without `ListItem.id` and fails on `main` too; it is not
-  in the e2e gate.
