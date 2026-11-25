@@ -760,9 +760,10 @@ fn CopySnippetButton(
     #[prop(into)] text: Signal<String>,
     #[prop(optional, into)] label: Option<String>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let copied = RwSignal::new(false);
     let toasts = crate::global_state::toasts::use_toast();
-    let label_text = label.unwrap_or_else(|| "Copy".to_string());
+    let label_text = label.unwrap_or_else(|| t_string!(i18n, api_docs_copy).to_string());
 
     let on_copy = move |_| {
         #[cfg(feature = "hydrate")]
@@ -773,16 +774,18 @@ fn CopySnippetButton(
                 let clipboard = window.navigator().clipboard();
                 let value = text.get_untracked();
                 let promise = clipboard.write_text(&value);
+                let copied_msg = t_string!(i18n, api_docs_copied_toast).to_string();
+                let failed_msg = t_string!(i18n, api_docs_copy_failed).to_string();
                 spawn_local(async move {
                     if JsFuture::from(promise).await.is_ok() {
                         copied.set(true);
                         if let Some(toasts) = toasts {
-                            toasts.success("Copied to clipboard!");
+                            toasts.success(copied_msg);
                         }
                         gloo_timers::future::TimeoutFuture::new(1500).await;
                         copied.set(false);
                     } else if let Some(toasts) = toasts {
-                        toasts.error("Couldn't copy. Select and copy the snippet manually.");
+                        toasts.error(failed_msg);
                     }
                 });
             }
@@ -811,7 +814,7 @@ fn CopySnippetButton(
                 height="0.95em"
                 aria_hidden=true
             />
-            <span>{move || if copied.get() { "Copied".to_string() } else { label_text.clone() }}</span>
+            <span>{move || if copied.get() { t_string!(i18n, api_docs_copied).to_string() } else { label_text.clone() }}</span>
         </button>
     }
 }
@@ -863,6 +866,7 @@ fn SchemaView(
     schemas: StoredValue<BTreeMap<String, Value>>,
     #[prop(default = 0)] depth: usize,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let type_label = summarize_schema_type(&schema);
     let raw_json = serde_json::to_string_pretty(&schema).unwrap_or_else(|_| "{}".to_string());
 
@@ -913,7 +917,7 @@ fn SchemaView(
                 </code>
                 {ref_name.map(|name| view! {
                     <span class="text-[color:var(--color-text-muted)]">
-                        "Schema: " <code class="font-mono">{name}</code>
+                        {t!(i18n, api_docs_schema_ref, name = move || view! { <code class="font-mono">{name.clone()}</code> })}
                     </span>
                 })}
             </div>
@@ -924,7 +928,7 @@ fn SchemaView(
 
             {(!enum_values.is_empty()).then(|| view! {
                 <div class="flex flex-wrap items-center gap-1.5">
-                    <span class="text-[color:var(--color-text-muted)]">"Values:"</span>
+                    <span class="text-[color:var(--color-text-muted)]">{t!(i18n, api_docs_values)}</span>
                     {enum_values
                         .into_iter()
                         .map(|val| view! {
@@ -941,9 +945,9 @@ fn SchemaView(
                     <table class="w-full text-left border-collapse">
                         <thead>
                             <tr class="bg-black/25 text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)]">
-                                <th class="px-3 py-1.5 font-semibold">"Field"</th>
-                                <th class="px-3 py-1.5 font-semibold">"Type"</th>
-                                <th class="px-3 py-1.5 font-semibold">"Description"</th>
+                                <th class="px-3 py-1.5 font-semibold">{t!(i18n, api_docs_field)}</th>
+                                <th class="px-3 py-1.5 font-semibold">{t!(i18n, api_docs_type)}</th>
+                                <th class="px-3 py-1.5 font-semibold">{t!(i18n, api_docs_description)}</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-[color:var(--color-outline)]/60">
@@ -954,7 +958,7 @@ fn SchemaView(
                                         <td class="px-3 py-1.5 font-mono whitespace-nowrap text-[color:var(--color-text)]">
                                             {prop.name}
                                             {prop.required.then(|| view! {
-                                                <span class="ml-1 text-rose-300" title="Required">"*"</span>
+                                                <span class="ml-1 text-rose-300" title=t_string!(i18n, api_docs_required_field)>"*"</span>
                                             })}
                                         </td>
                                         <td class="px-3 py-1.5 font-mono text-brand-300 whitespace-nowrap">
@@ -974,7 +978,7 @@ fn SchemaView(
             {(!variants.is_empty() && depth < 2).then(|| view! {
                 <div class="space-y-2 pl-3 border-l-2 border-[color:var(--color-outline)]">
                     <div class="text-[color:var(--color-text-muted)] font-semibold uppercase tracking-wide text-[11px]">
-                        "Variants"
+                        {t!(i18n, api_docs_variants)}
                     </div>
                     {variants
                         .into_iter()
@@ -990,7 +994,7 @@ fn SchemaView(
             {item_schema.filter(|_| depth < 2).map(|item| view! {
                 <div class="pl-3 border-l-2 border-[color:var(--color-outline)] space-y-1.5">
                     <div class="text-[color:var(--color-text-muted)] font-semibold uppercase tracking-wide text-[11px]">
-                        "Array item"
+                        {t!(i18n, api_docs_array_item)}
                     </div>
                     <SchemaView schema=item schemas depth=depth + 1 />
                 </div>
@@ -999,7 +1003,7 @@ fn SchemaView(
             {add_props_schema.filter(|_| depth < 2).map(|val_schema| view! {
                 <div class="pl-3 border-l-2 border-[color:var(--color-outline)] space-y-1.5">
                     <div class="text-[color:var(--color-text-muted)] font-semibold uppercase tracking-wide text-[11px]">
-                        "Map value"
+                        {t!(i18n, api_docs_map_value)}
                     </div>
                     <SchemaView schema=val_schema schemas depth=depth + 1 />
                 </div>
@@ -1008,7 +1012,7 @@ fn SchemaView(
             {(depth == 0).then(|| view! {
                 <details class="group">
                     <summary class="cursor-pointer select-none text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]">
-                        "Raw OpenAPI schema JSON"
+                        {t!(i18n, api_docs_raw_schema_json)}
                     </summary>
                     <pre class="mt-2 p-3 rounded-lg bg-black/40 border border-[color:var(--color-outline)] overflow-x-auto text-[11px] font-mono text-[color:var(--color-text)] max-h-72">
                         <code>{raw_json}</code>
@@ -1025,6 +1029,7 @@ fn EndpointCard(
     base_url: String,
     schemas: StoredValue<BTreeMap<String, Value>>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let expanded = RwSignal::new(false);
     let initial_params: BTreeMap<String, String> = endpoint
         .params
@@ -1167,16 +1172,16 @@ fn EndpointCard(
                             {(!ep.params.is_empty()).then(|| view! {
                                 <section class="space-y-2.5 min-w-0">
                                     <h4 class="text-xs font-bold uppercase tracking-wider text-brand-300">
-                                        "Parameters"
+                                        {t!(i18n, api_docs_parameters)}
                                     </h4>
                                     <div class="overflow-x-auto rounded-lg border border-[color:var(--color-outline)]">
                                         <table class="w-full text-left border-collapse text-xs sm:text-sm">
                                             <thead>
                                                 <tr class="bg-black/25 text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)]">
-                                                    <th class="px-3 py-2 font-semibold">"Name"</th>
-                                                    <th class="px-3 py-2 font-semibold">"In"</th>
-                                                    <th class="px-3 py-2 font-semibold">"Type"</th>
-                                                    <th class="px-3 py-2 font-semibold">"Description"</th>
+                                                    <th class="px-3 py-2 font-semibold">{t!(i18n, api_docs_name)}</th>
+                                                    <th class="px-3 py-2 font-semibold">{t!(i18n, api_docs_in)}</th>
+                                                    <th class="px-3 py-2 font-semibold">{t!(i18n, api_docs_type)}</th>
+                                                    <th class="px-3 py-2 font-semibold">{t!(i18n, api_docs_description)}</th>
                                                 </tr>
                                             </thead>
                                             <tbody class="divide-y divide-[color:var(--color-outline)]/60">
@@ -1186,7 +1191,7 @@ fn EndpointCard(
                                                             {param.name.clone()}
                                                             {param.required.then(|| view! {
                                                                 <span class="ml-1.5 text-[10px] font-sans font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-400/30">
-                                                                    "req"
+                                                                    {t!(i18n, api_docs_param_required_short)}
                                                                 </span>
                                                             })}
                                                         </td>
@@ -1223,14 +1228,14 @@ fn EndpointCard(
                                 <section class="space-y-2.5 min-w-0">
                                     <div class="flex flex-wrap items-center gap-2">
                                         <h4 class="text-xs font-bold uppercase tracking-wider text-brand-300">
-                                            "Request Body"
+                                            {t!(i18n, api_docs_request_body)}
                                         </h4>
                                         <code class="font-mono text-[11px] text-[color:var(--color-text-muted)]">
                                             {rb.content_type}
                                         </code>
                                         {rb.required.then(|| view! {
                                             <span class="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-400/30">
-                                                "required"
+                                                {t!(i18n, api_docs_required)}
                                             </span>
                                         })}
                                     </div>
@@ -1249,11 +1254,19 @@ fn EndpointCard(
                             <section class="space-y-3 rounded-xl bg-black/25 border border-[color:var(--color-outline)] p-4 min-w-0">
                                 <div class="flex flex-wrap items-center justify-between gap-2">
                                     <h4 class="text-xs font-bold uppercase tracking-wider text-brand-300">
-                                        {if ep.is_websocket { "WebSocket Connection Example" } else { "Try It Out" }}
+                                        {if ep.is_websocket {
+                                            t_string!(i18n, api_docs_websocket_example).to_string()
+                                        } else {
+                                            t_string!(i18n, api_docs_try_it_out).to_string()
+                                        }}
                                     </h4>
                                     <CopySnippetButton
                                         text=snippet_text
-                                        label=if ep.is_websocket { "Copy JS" } else { "Copy curl" }
+                                        label=if ep.is_websocket {
+                                            t_string!(i18n, api_docs_copy_js).to_string()
+                                        } else {
+                                            t_string!(i18n, api_docs_copy_curl).to_string()
+                                        }
                                     />
                                 </div>
 
@@ -1261,7 +1274,7 @@ fn EndpointCard(
                                     Either::Left(view! {
                                         <div class="space-y-2">
                                             <p class="text-xs text-[color:var(--color-text-muted)]">
-                                                "This endpoint upgrades to a WebSocket stream. Connect from a browser console or WebSocket client and send a JSON subscription frame:"
+                                                {t!(i18n, api_docs_websocket_hint)}
                                             </p>
                                             <pre class="p-3 rounded-lg bg-black/45 border border-[color:var(--color-outline)] overflow-x-auto text-xs font-mono text-[color:var(--color-text)]">
                                                 <code>{move || snippet_text.get()}</code>
@@ -1279,7 +1292,7 @@ fn EndpointCard(
                                                         let placeholder = if !param.enum_values.is_empty() {
                                                             param.enum_values.join(" | ")
                                                         } else if let Some(def) = &param.default_value {
-                                                            format!("default: {def}")
+                                                            t_string!(i18n, api_docs_param_default_placeholder, value = def.clone()).to_string()
                                                         } else {
                                                             param.type_label.clone()
                                                         };
@@ -1312,7 +1325,7 @@ fn EndpointCard(
                                                                             }
                                                                         >
                                                                             {(!required).then(|| view! {
-                                                                                <option value="">"(default)"</option>
+                                                                                <option value="">{t!(i18n, api_docs_param_default_option)}</option>
                                                                             })}
                                                                             {enum_vals.into_iter().map(|opt| {
                                                                                 let val = opt.clone();
@@ -1349,7 +1362,7 @@ fn EndpointCard(
                                             {ep.request_body.is_some().then(|| view! {
                                                 <label class="flex flex-col gap-1 min-w-0">
                                                     <span class="text-xs font-mono text-[color:var(--color-text)]">
-                                                        "JSON Request Body"
+                                                        {t!(i18n, api_docs_json_request_body)}
                                                     </span>
                                                     <textarea
                                                         rows="4"
@@ -1372,7 +1385,11 @@ fn EndpointCard(
                                                     on:click=send_request
                                                 >
                                                     <Icon icon=i::BsPlayFill width="1.1em" height="1.1em" aria_hidden=true />
-                                                    <span>{move || if running.get() { "Sending..." } else { "Send Request" }}</span>
+                                                    <span>{move || if running.get() {
+                                                        t_string!(i18n, api_docs_sending).to_string()
+                                                    } else {
+                                                        t_string!(i18n, api_docs_send_request).to_string()
+                                                    }}</span>
                                                 </button>
                                                 {move || {
                                                     computed_path.get().ok().map(|p| view! {
@@ -1421,7 +1438,7 @@ fn EndpointCard(
                                                                             {resp.content_type}
                                                                         </code>
                                                                     </div>
-                                                                    <CopySnippetButton text=copy_signal label="Copy Response" />
+                                                                    <CopySnippetButton text=copy_signal label=t_string!(i18n, api_docs_copy_response).to_string() />
                                                                 </div>
 
                                                                 {move || {
@@ -1439,11 +1456,12 @@ fn EndpointCard(
                                                                             {was_truncated.then(|| view! {
                                                                                 <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-[color:var(--color-text-muted)]">
                                                                                     <span>
-                                                                                        "Showing first "
-                                                                                        {format_byte_size(limit)}
-                                                                                        " of "
-                                                                                        {format_byte_size(full_len)}
-                                                                                        " (use Copy Response for the full payload)."
+                                                                                        {t_string!(
+                                                                                            i18n,
+                                                                                            api_docs_truncated_notice,
+                                                                                            shown = format_byte_size(limit),
+                                                                                            total = format_byte_size(full_len)
+                                                                                        ).to_string()}
                                                                                     </span>
                                                                                     {(!expanded_body).then(|| view! {
                                                                                         <button
@@ -1451,7 +1469,7 @@ fn EndpointCard(
                                                                                             class="btn-ghost text-xs px-2 py-1"
                                                                                             on:click=move |_| show_full_body.set(true)
                                                                                         >
-                                                                                            "Show more"
+                                                                                            {t!(i18n, api_docs_show_more)}
                                                                                         </button>
                                                                                     })}
                                                                                 </div>
@@ -1473,7 +1491,7 @@ fn EndpointCard(
                             {(!ep.responses.is_empty()).then(|| view! {
                                 <section class="space-y-2.5 min-w-0">
                                     <h4 class="text-xs font-bold uppercase tracking-wider text-brand-300">
-                                        "Responses"
+                                        {t!(i18n, api_docs_responses)}
                                     </h4>
                                     <div class="space-y-3">
                                         {ep.responses.into_iter().map(|resp| {
@@ -1512,6 +1530,7 @@ fn EndpointCard(
 
 #[component]
 fn SchemasDirectory(schemas: StoredValue<BTreeMap<String, Value>>) -> impl IntoView {
+    let i18n = use_i18n();
     let schema_filter = RwSignal::new(String::new());
     let total_count = schemas.with_value(BTreeMap::len);
 
@@ -1520,17 +1539,17 @@ fn SchemasDirectory(schemas: StoredValue<BTreeMap<String, Value>>) -> impl IntoV
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                     <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
-                        "Data Models"
+                        {t!(i18n, api_docs_data_models)}
                     </h2>
                     <p class="text-xs sm:text-sm text-[color:var(--color-text-muted)]">
-                        {total_count} " OpenAPI component schemas returned or accepted by the endpoints above."
+                        {t_string!(i18n, api_docs_schema_count, count = total_count).to_string()}
                     </p>
                 </div>
                 <input
                     type="search"
                     class="input text-xs sm:text-sm py-1.5 px-3 sm:w-64"
-                    placeholder="Filter schemas..."
-                    aria-label="Filter schemas"
+                    placeholder=t_string!(i18n, api_docs_filter_schemas_placeholder)
+                    aria-label=t_string!(i18n, api_docs_filter_schemas_label)
                     prop:value=move || schema_filter.get()
                     on:input=move |ev| schema_filter.set(event_target_value(&ev))
                 />
@@ -1550,7 +1569,7 @@ fn SchemasDirectory(schemas: StoredValue<BTreeMap<String, Value>>) -> impl IntoV
                     if entries.is_empty() {
                         Either::Left(view! {
                             <p class="text-sm text-[color:var(--color-text-muted)] py-2">
-                                "No schemas match that filter."
+                                {t!(i18n, api_docs_no_schemas_match)}
                             </p>
                         })
                     } else {
@@ -1622,7 +1641,7 @@ pub fn ApiDocs() -> impl IntoView {
                                                 {doc.version.clone()}
                                             </span>
                                             <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-400/30">
-                                                "No auth required"
+                                                {t!(i18n, api_docs_no_auth)}
                                             </span>
                                         </div>
 
@@ -1643,13 +1662,13 @@ pub fn ApiDocs() -> impl IntoView {
                                                 class="btn-primary text-xs sm:text-sm px-3.5 py-2 inline-flex items-center gap-2"
                                             >
                                                 <Icon icon=i::BsCodeSlash width="1.1em" height="1.1em" aria_hidden=true />
-                                                <span>"Download OpenAPI JSON"</span>
+                                                <span>{t!(i18n, api_docs_download_json)}</span>
                                             </a>
                                             <AppLink
                                                 href="/help/ai-agents"
                                                 attr:class="btn-secondary text-xs sm:text-sm px-3.5 py-2 inline-flex items-center gap-2"
                                             >
-                                                <span>"MCP & AI Agents"</span>
+                                                <span>{t!(i18n, api_docs_mcp_agents)}</span>
                                                 <Icon icon=i::FaArrowRightSolid width="0.8em" height="0.8em" aria_hidden=true />
                                             </AppLink>
                                             <a
@@ -1664,25 +1683,36 @@ pub fn ApiDocs() -> impl IntoView {
                                                 href="#schemas"
                                                 class="btn-ghost text-xs sm:text-sm px-3 py-2"
                                             >
-                                                "Data Models (" {schema_count} ")"
+                                                {t_string!(i18n, api_docs_data_models_count, count = schema_count).to_string()}
                                             </a>
                                         </div>
 
                                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-[color:var(--color-outline)]/70 text-xs">
                                             <div class="rounded-xl bg-black/20 border border-[color:var(--color-outline)]/70 p-3 space-y-1">
-                                                <div class="font-semibold text-[color:var(--brand-fg)]">"Base URL"</div>
+                                                <div class="font-semibold text-[color:var(--brand-fg)]">{t!(i18n, api_docs_base_url)}</div>
                                                 <code class="font-mono text-brand-300 break-all">{base_url.clone()}</code>
                                             </div>
                                             <div class="rounded-xl bg-black/20 border border-[color:var(--color-outline)]/70 p-3 space-y-1">
-                                                <div class="font-semibold text-[color:var(--brand-fg)]">"{world} Scope"</div>
+                                                <div class="font-semibold text-[color:var(--brand-fg)]">{t_string!(i18n, api_docs_world_scope, param = "{world}").to_string()}</div>
                                                 <p class="text-[color:var(--color-text-muted)]">
-                                                    "Accepts a world (" <code class="font-mono">"Gilgamesh"</code> "), datacenter (" <code class="font-mono">"Aether"</code> "), or region (" <code class="font-mono">"North-America"</code> ")."
+                                                    {t!(
+                                                        i18n,
+                                                        api_docs_world_scope_hint,
+                                                        world = || view! { <code class="font-mono">"Gilgamesh"</code> },
+                                                        datacenter = || view! { <code class="font-mono">"Aether"</code> },
+                                                        region = || view! { <code class="font-mono">"North-America"</code> }
+                                                    )}
                                                 </p>
                                             </div>
                                             <div class="rounded-xl bg-black/20 border border-[color:var(--color-outline)]/70 p-3 space-y-1">
-                                                <div class="font-semibold text-[color:var(--brand-fg)]">"Bulk & Caching"</div>
+                                                <div class="font-semibold text-[color:var(--brand-fg)]">{t!(i18n, api_docs_bulk_caching)}</div>
                                                 <p class="text-[color:var(--color-text-muted)]">
-                                                    "Bulk endpoints support " <code class="font-mono">"?format=columnar"</code> " and honor standard HTTP " <code class="font-mono">"Cache-Control"</code> "."
+                                                    {t!(
+                                                        i18n,
+                                                        api_docs_bulk_caching_hint,
+                                                        format = || view! { <code class="font-mono">"?format=columnar"</code> },
+                                                        header = || view! { <code class="font-mono">"Cache-Control"</code> }
+                                                    )}
                                                 </p>
                                             </div>
                                         </div>
@@ -1695,8 +1725,8 @@ pub fn ApiDocs() -> impl IntoView {
                                                 <input
                                                     type="search"
                                                     class="input w-full text-sm py-2 px-3.5"
-                                                    placeholder="Filter endpoints by path, summary, parameter, or tag..."
-                                                    aria-label="Filter endpoints"
+                                                    placeholder=t_string!(i18n, api_docs_filter_endpoints_placeholder)
+                                                    aria-label=t_string!(i18n, api_docs_filter_endpoints_label)
                                                     prop:value=move || search_query.get()
                                                     on:input=move |ev| search_query.set(event_target_value(&ev))
                                                 />
@@ -1710,7 +1740,7 @@ pub fn ApiDocs() -> impl IntoView {
                                                             .filter(|ep| endpoint_matches_filter(ep, &q, active_tag.as_deref()))
                                                             .count()
                                                     });
-                                                    format!("{visible} of {endpoint_count} endpoints")
+                                                    t_string!(i18n, api_docs_visible_endpoints, visible = visible, total = endpoint_count).to_string()
                                                 }}
                                             </div>
                                         </div>
@@ -1727,7 +1757,7 @@ pub fn ApiDocs() -> impl IntoView {
                                                 }
                                                 on:click=move |_| selected_tag.set(None)
                                             >
-                                                "All (" {endpoint_count} ")"
+                                                {t_string!(i18n, api_docs_all_count, count = endpoint_count).to_string()}
                                             </button>
                                             {tags.iter().map(|tag| {
                                                 let tag_name = tag.name.clone();
@@ -1785,7 +1815,7 @@ pub fn ApiDocs() -> impl IntoView {
                                             Either::Left(view! {
                                                 <div class="panel rounded-2xl p-8 text-center space-y-3">
                                                     <p class="text-sm text-[color:var(--color-text-muted)]">
-                                                        "No endpoints match your current filter."
+                                                        {t!(i18n, api_docs_no_endpoints_match)}
                                                     </p>
                                                     <button
                                                         type="button"
@@ -1795,7 +1825,7 @@ pub fn ApiDocs() -> impl IntoView {
                                                             selected_tag.set(None);
                                                         }
                                                     >
-                                                        "Reset filters"
+                                                        {t!(i18n, api_docs_reset_filters)}
                                                     </button>
                                                 </div>
                                             })
@@ -1844,13 +1874,13 @@ pub fn ApiDocs() -> impl IntoView {
                             Err(error) => Either::Right(view! {
                                 <div class="panel rounded-2xl p-6 space-y-2 border border-rose-400/40">
                                     <h1 class="text-xl font-bold text-[color:var(--brand-fg)]">
-                                        "Could not load API documentation"
+                                        {t!(i18n, api_docs_load_error)}
                                     </h1>
                                     <p class="text-sm text-[color:var(--color-text-muted)]">
                                         {error.to_string()}
                                     </p>
                                     <a href="/openapi.json" class="text-sm text-brand-300 underline">
-                                        "Open raw /openapi.json"
+                                        {t!(i18n, api_docs_open_raw_json)}
                                     </a>
                                 </div>
                             }),
