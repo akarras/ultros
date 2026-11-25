@@ -150,8 +150,22 @@ pub fn ListEstimateSummary(
     /// `None` hides the line (an empty cart has no progress to report).
     #[prop(default = Signal::derive(|| None))]
     progress: Signal<Option<(i32, i32)>>,
+    /// Whether the current player can reset all owned quantities for a
+    /// recurring restock run.
+    #[prop(default = Signal::derive(|| false))]
+    can_write: Signal<bool>,
+    /// Resets every row's owned count back to zero in one undoable step.
+    #[prop(optional)]
+    on_reset_progress: Option<Callback<()>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    let confirming_reset = RwSignal::new(false);
+    Effect::new(move |_| {
+        let has_acquired = progress.get().is_some_and(|(acquired, _)| acquired > 0);
+        if !has_acquired || !can_write.get() {
+            confirming_reset.set(false);
+        }
+    });
     let total = move || {
         estimate.with(|estimate| {
             displayed_total(feed.get(), estimate)
@@ -224,10 +238,44 @@ pub fn ListEstimateSummary(
             </div>
             {move || progress.get().filter(|(_, needed)| *needed > 0).map(|(acquired, needed)| {
                 let pct = 100 * i64::from(acquired) / i64::from(needed);
+                let complete = acquired >= needed;
+                let reset_button = (acquired > 0 && can_write.get()).then_some(on_reset_progress).flatten().map(|reset| {
+                    let class = if complete {
+                        "btn-secondary px-2.5 py-0.5 text-xs"
+                    } else {
+                        "btn-ghost px-2 py-0.5 text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                    };
+                    view! {
+                        <button
+                            type="button"
+                            class=class
+                            data-testid="cart-reset-progress"
+                            data-confirming=move || confirming_reset.get().to_string()
+                            aria-pressed=move || confirming_reset.get().to_string()
+                            on:click=move |_| {
+                                if !confirming_reset.get_untracked() {
+                                    confirming_reset.set(true);
+                                    return;
+                                }
+                                confirming_reset.set(false);
+                                reset.run(());
+                            }
+                        >
+                            {move || if confirming_reset.get() {
+                                t_string!(i18n, cart_reset_progress_confirm).to_string()
+                            } else {
+                                t_string!(i18n, cart_reset_progress).to_string()
+                            }}
+                        </button>
+                    }
+                });
                 view! {
-                    <p class="text-xs text-[color:var(--color-text-muted)]" data-testid="list-estimate-progress">
-                        {t_string!(i18n, list_view_units_acquired_progress, acquired = acquired, quantity = needed, pct = pct).to_string()}
-                    </p>
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <p class="text-xs text-[color:var(--color-text-muted)]" data-testid="list-estimate-progress">
+                            {t_string!(i18n, list_view_units_acquired_progress, acquired = acquired, quantity = needed, pct = pct).to_string()}
+                        </p>
+                        {reset_button}
+                    </div>
                 }
             })}
             <Show when=move || feed.get().has_prices()>
@@ -527,6 +575,55 @@ mod tests {
             assert!(html.contains("20 gil"));
             assert!(html.contains("Known subtotal only"));
             assert!(html.contains("The latest refresh failed"));
+        });
+    }
+
+    #[test]
+    fn reset_progress_renders_only_for_writable_lists_with_owned_units() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let i18n = leptos_i18n::context::init_i18n_context::<Locale>();
+            provide_context(i18n);
+            let feed = PriceFeed::observed(chrono::Utc::now());
+            let reset = Callback::new(|()| {});
+
+            let none_owned = view! {
+                <ListEstimateSummary
+                    estimate=Signal::stored(cart(&[(4, 0, 4)]))
+                    feed=Signal::stored(feed)
+                    progress=Signal::stored(Some((0, 4)))
+                    can_write=Signal::stored(true)
+                    on_reset_progress=reset
+                />
+            }
+            .to_html();
+            assert!(!none_owned.contains("cart-reset-progress"), "{none_owned}");
+
+            let readonly = view! {
+                <ListEstimateSummary
+                    estimate=Signal::stored(cart(&[(4, 4, 4)]))
+                    feed=Signal::stored(feed)
+                    progress=Signal::stored(Some((4, 4)))
+                    can_write=Signal::stored(false)
+                    on_reset_progress=reset
+                />
+            }
+            .to_html();
+            assert!(!readonly.contains("cart-reset-progress"), "{readonly}");
+
+            let writable = view! {
+                <ListEstimateSummary
+                    estimate=Signal::stored(cart(&[(4, 4, 4)]))
+                    feed=Signal::stored(feed)
+                    progress=Signal::stored(Some((4, 4)))
+                    can_write=Signal::stored(true)
+                    on_reset_progress=reset
+                />
+            }
+            .to_html();
+            assert!(writable.contains("cart-reset-progress"), "{writable}");
+            assert!(writable.contains("Reset progress"), "{writable}");
         });
     }
 }
