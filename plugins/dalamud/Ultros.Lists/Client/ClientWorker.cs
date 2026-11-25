@@ -15,7 +15,8 @@ public sealed record ClientView(bool Connected, string Status, string StorageMod
     GameDelivery[] Inbox, MarketView? Market, SaleRow[] Sales, CartEstimate? Estimate, string[] Scopes, string PriceRegion = "", string NotificationTransport = "Polling", string RosterStatus = "", bool Registering = false, string? ApprovalUrl = null,
     Guid? CartInstance = null, long RecoveryRevision = 0, string[]? ReadNotificationIds = null,
     RetainerSnapshot[]? RetainerSnapshots = null, bool RefreshingRetainers = false, string ListTransport = "Periodic refresh", bool RetainerPreferences = false,
-    bool Estimating = false, IReadOnlyDictionary<string, DateTimeOffset>? NotificationReceivedAt = null)
+    bool Estimating = false, IReadOnlyDictionary<string, DateTimeOffset>? NotificationReceivedAt = null,
+    int CurrentWorldId = 0, string CurrentWorld = "", string CurrentDatacenter = "", string[]? ScopeOptions = null)
 {
     public override string ToString() => $"ClientView {{ Connected = {Connected}, pairing credentials redacted }}";
 }
@@ -44,6 +45,10 @@ public sealed class ClientWorker : IDisposable
     private CartEstimate? estimate;
     private WorldDirectory? worlds;
     private string priceRegion="";
+    private int currentWorldId;
+    private string currentWorld="";
+    private string currentDatacenter="";
+    private string[] scopeOptions=[];
     private NotificationFeed? notificationFeed;
     private ListFeed? listFeed;
     private sealed record ListFeedTarget(string Device,string Account,int List,Guid Instance);
@@ -123,8 +128,12 @@ public sealed class ClientWorker : IDisposable
     }
     private string SelectionPath()=>Path.Combine(connection!.Directory,"accounts",connection.Session!.AccountId,"selected-list.json");
     public bool SetCurrentWorld(int current,int home)=>Offer(async()=>{
+        currentWorldId=current>0?current:home;
         worlds??=await connection!.Public<WorldDirectory>("/api/v1/world_data",stop.Token);
         priceRegion=worlds.RegionFor(current,home);
+        currentWorld=worlds.WorldName(current)??worlds.WorldName(home)??"";
+        currentDatacenter=worlds.DatacenterName(current)??worlds.DatacenterName(home)??"";
+        scopeOptions=worlds.ScopeOptions(current,home);
     });
     private bool MatchesDestination(ListEditTarget? target) => connection?.Connected==true
         &&target?.MatchesDestination(connection.Session,cart?.Id,cart?.InstanceId)==true;
@@ -136,6 +145,11 @@ public sealed class ClientWorker : IDisposable
     public bool Edit(CartCommandTarget? target,object edit)=>target is not null&&Offer(()=>{
         if(!CartCommands.Edit(target,connection?.Session,cart,CanEdit(),edit)){RejectChangedDestination();return Task.CompletedTask;}
         nextCart=DateTimeOffset.MinValue;ScheduleEstimate(2);status="Saved locally; synchronizing…";return Task.CompletedTask;
+    });
+    public bool EditBatch(CartCommandTarget? target,object[] edits)=>target is not null&&edits.Length>0&&Offer(()=>{
+        foreach(var edit in edits)
+            if(!CartCommands.Edit(target,connection?.Session,cart,CanEdit(),edit)){RejectChangedDestination();return Task.CompletedTask;}
+        nextCart=DateTimeOffset.MinValue;ScheduleEstimate(2);status="Stop marked acquired; synchronizing…";return Task.CompletedTask;
     });
     public bool AddItem(ListEditTarget target,int item,string quality="any",int quantity=1)
     {
@@ -220,6 +234,16 @@ public sealed class ClientWorker : IDisposable
         await SyncCart();
         if(!target.Matches(connection?.Session,cart))return;
         await FetchEstimate(target,manual:true);
+    });
+    public bool RefreshListsAndEstimate(CartCommandTarget? target)=>Offer(async()=>{
+        await connection!.Restore(stop.Token,true);
+        await RefreshAccount();
+        nextCart=DateTimeOffset.MinValue;
+        if(target is not null&&connection.Connected&&target.Matches(connection.Session,cart))
+        {
+            await SyncCart();
+            if(target.Matches(connection.Session,cart)) await FetchEstimate(target,manual:true);
+        }
     });
     private void ScheduleEstimate(int delaySeconds)
     {
@@ -368,6 +392,21 @@ public sealed class ClientWorker : IDisposable
             if(entry.EventId is not null)
                 _=await connection!.Send<bool>(HttpMethod.Post,"/api/v1/plugin/notifications/read",new{ids=new[]{PositiveId(id)}},stop.Token);
             history.MarkRead(id);status="Notification marked read.";
+        });
+    }
+    public bool MarkAllRead()
+    {
+        var expected=View.Session;
+        return Offer(async()=>{
+            if(!SameNotificationSession(expected)||history is null)return;
+            var readSet=history.ReadIds.ToHashSet(StringComparer.Ordinal);
+            var unread=history.Entries.Where(d=>!readSet.Contains(d.Id)).ToArray();
+            if(unread.Length==0)return;
+            var serverIds=unread.Where(d=>d.EventId is not null).Select(d=>PositiveId(d.Id)).ToArray();
+            if(serverIds.Length>0&&connection!.HasScope("notifications:mark-read"))
+                _=await connection.Send<bool>(HttpMethod.Post,"/api/v1/plugin/notifications/read",new{ids=serverIds},stop.Token);
+            foreach(var entry in unread) history.MarkRead(entry.Id);
+            status=$"Marked {unread.Length} notification{(unread.Length==1?"":"s")} read.";
         });
     }
     public bool DeleteNotifications(DeviceSession? expected,string[] ids)=>Offer(()=>{
@@ -567,7 +606,8 @@ public sealed class ClientWorker : IDisposable
             connection?.Session,ready&&connection!.HasScope("lists:read")?lists:[],visibleCart?.Id,visibleCart?.Document.View,CanEdit(),ready&&connection!.HasScope("retainers:read")?characters:[],ready?history?.Entries??[]:[],market,sales,ready?estimate:null,connection?.Session?.Scopes??[],priceRegion,Volatile.Read(ref feedReady)!=0?"Live notifications (SSE)":"Polling fallback",ready?rosterStatus:"",registering,connection?.ApprovalUrl,
             visibleCart?.InstanceId,visibleCart?.RecoveryRevision??0,ready?history?.ReadIds:[],
             ready&&connection!.HasScope("retainers:read")?retainerSnapshots:null,ready&&refreshingRetainers,
-            liveLists?"Live updates":"Periodic refresh",ready&&retainerPreferences,ready&&estimating,ready?history?.ReceivedTimes:null));
+            liveLists?"Live updates":"Periodic refresh",ready&&retainerPreferences,ready&&estimating,ready?history?.ReceivedTimes:null,
+            currentWorldId,currentWorld,currentDatacenter,scopeOptions));
     }
     private async Task<Connection> AcquireConnection()
     {

@@ -53,8 +53,10 @@ var estimate = new CartEstimate("v1", "Aether", now, 377260, false, 0,
 var lists = new[] { new ListAccess(new(1, 123, "Raid Prep Cart", default), "Owner", null) };
 var view = new ClientView(true, "Connected.", "Credentials protected by Windows.", null, "https://ultros.app/plugin/verify", session,
     lists, 1, cartView, true, [], deliveries, marketView, sales, estimate, scopes,
-    PriceRegion: "Aether", NotificationTransport: "Live alerts", ReadNotificationIds: ["1"],
-    CartInstance: Guid.NewGuid(), ListTransport: "Live updates", NotificationReceivedAt: receivedTimes);
+    PriceRegion: "North-America", NotificationTransport: "Live alerts", ReadNotificationIds: ["1"],
+    CartInstance: Guid.NewGuid(), ListTransport: "Live updates", NotificationReceivedAt: receivedTimes,
+    CurrentWorldId: 63, CurrentWorld: "Gilgamesh", CurrentDatacenter: "Aether",
+    ScopeOptions: ["North-America", "Aether", "Gilgamesh", "Adamantoise", "Cactuar"]);
 var retainerView = view with
 {
     Characters = [new("1", "Mira Example", 63, true, false, true, 1, now, [new("1", "Copper Finch", 1, true, 1, now, false, 1)])],
@@ -75,6 +77,7 @@ foreach (var width in new[] { 960, 650 })
     Render("retainers", width, Page.Retainers, retainerView);
     Render("retainers-with-disabled", width, Page.Retainers, disabledView);
     Render("retainer-management", width, Page.Retainers, disabledView);
+    Render("settings", width, Page.Settings, view);
     Render("bell-missing", width, Page.Retainers, retainerView);
     Render("bell-menu", width, Page.Retainers, retainerView);
     Render("bell-refreshing", width, Page.Retainers, retainerView with { Registering = true });
@@ -134,6 +137,9 @@ unsafe void Render(string name, int width, Page selected, ClientView state, floa
         var history = new NotificationPanel();
         var retainers = new RetainerListingsPanel { ItemName = FixtureItemName, WorldName = FixtureWorldName, Marketable = _ => true };
         var bell = new BellRetainerPanel();
+        var settings = new SettingsPanel();
+        var settingsState = new SettingsState(true, 0, ["Echo", "System messages", "Notices"], true, true, 6, true, true, false, true, false, "Inventory progress is off.", false, false, "http://localhost:8080", "default", "Matches the loaded Dalamud client structs.", "2026.11.03");
+        var retainerChrome = new RetainerChrome(true, true, "2026.11.03", "Uploader ready.", null, null, null, false, () => { }, () => { }, _ => { }, () => { }, _ => { }, (_, _, _) => { });
         var log = Path.GetFullPath(Path.Combine(output, $"{name}-{width}.txt"));
         File.WriteAllText(log, "");
 
@@ -172,8 +178,11 @@ unsafe void Render(string name, int width, Page selected, ClientView state, floa
             }
             else if (selected == Page.Retainers)
             {
-                UiKit.Heading("Retainers", "Your uploaded listings, grouped by character and retainer.");
-                retainers.Draw(state);
+                retainers.Draw(state, retainerChrome);
+            }
+            else if (selected == Page.Settings)
+            {
+                settings.Draw(settingsState);
             }
             else history.Draw(state);
             UiKit.EndContent(state.Status);
@@ -191,8 +200,10 @@ unsafe void Render(string name, int width, Page selected, ClientView state, floa
             throw new Exception("Market view did not resolve world names.");
         if (name == "lists" && (!drawn.Contains("Shopping Route (2)", StringComparison.Ordinal) || !drawn.Contains("377,260 gil", StringComparison.Ordinal)))
             throw new Exception("Lists view did not render estimate totals or Shopping Route count.");
-        if (name == "lists-route" && (!drawn.Contains("Adamantoise", StringComparison.Ordinal) || !drawn.Contains("Gilgamesh", StringComparison.Ordinal)))
-            throw new Exception("Shopping Route view did not group stops by world.");
+        if (name == "lists-route" && (!drawn.Contains("Adamantoise", StringComparison.Ordinal) || !drawn.Contains("Gilgamesh", StringComparison.Ordinal) || !drawn.Contains("YOU ARE HERE", StringComparison.Ordinal)))
+            throw new Exception("Shopping Route view did not group stops by world or highlight current world.");
+        if (name == "settings" && (!drawn.Contains("Show summoning-bell Ultros button", StringComparison.Ordinal) || !drawn.Contains("Print alerts in game chat", StringComparison.Ordinal)))
+            throw new Exception("Settings view did not render streamer/privacy toggles.");
         if (name == "history" && !drawn.Contains("Notifications (1)", StringComparison.Ordinal))
             throw new Exception("Unread notification count did not appear on the Notifications tab.");
         if (name == "retainers-with-disabled" && (!drawn.Contains("Show disabled retainers", StringComparison.Ordinal) || drawn.Contains("Silver Wren", StringComparison.Ordinal)))

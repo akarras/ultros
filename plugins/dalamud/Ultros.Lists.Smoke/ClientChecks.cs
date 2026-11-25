@@ -95,6 +95,8 @@ internal static class ClientChecks
         Require(worldDirectory.RegionFor(0,63)=="North-America","Missing current world did not fall back to home region.");
         Require(worldDirectory.RegionFor(999,998)=="","Unknown worlds silently chose a different price zone.");
         Require(worldDirectory.WorldName(63)=="Gilgamesh"&&worldDirectory.DatacenterName(63)=="Aether","World directory failed to resolve world/DC names.");
+        var scopeOpts=worldDirectory.ScopeOptions(63,63);
+        Require(scopeOpts.Length>=3&&scopeOpts[0]=="North-America"&&scopeOpts[1]=="Aether"&&scopeOpts[2]=="Gilgamesh","World directory ScopeOptions did not prioritize region, DC, and current world.");
 
         // Market summary, timestamp formatting, and Shopping Route builder checks.
         var summary=MarketStats.Summarize(
@@ -118,6 +120,8 @@ internal static class ClientChecks
             ],
             [new(73,1040,3,2),new(63,310,3,2)]);
         var plan=ShoppingRoute.Build(cartRows,routeEstimate);
+        var currentFirst=ShoppingRoute.Build(cartRows,routeEstimate,currentWorldId:63);
+        Require(currentFirst.Stops.Length==2&&currentFirst.Stops[0].WorldId==63,"ShoppingRoute.Build did not bubble the player's current world to the first stop.");
         Require(plan.Stops.Length==2&&plan.Stops[0].WorldId==73&&plan.Stops[1].WorldId==63,"Shopping route did not preserve world_totals order.");
         Require(plan.Stops[0].TotalGil==1040&&plan.Stops[0].TotalUnits==3&&plan.Stops[0].Items.Length==2,"First shopping stop miscomputed totals.");
         Require(plan.Stops[1].Items.Single().UnitsToBuy==3&&plan.Stops[1].Items.Single().MinUnitPrice==100&&plan.Stops[1].Items.Single().MaxUnitPrice==110,"Same-world allocations did not merge cleanly.");

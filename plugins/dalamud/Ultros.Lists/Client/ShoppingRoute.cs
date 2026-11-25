@@ -61,7 +61,7 @@ public static class ShoppingRoute
         return estimate.Lines.FirstOrDefault(l => l.ItemId == row.ItemId && l.Hq == hq);
     }
 
-    public static ShoppingRoutePlan Build(CartRow[] rows, CartEstimate? estimate)
+    public static ShoppingRoutePlan Build(CartRow[] rows, CartEstimate? estimate, int currentWorldId = 0)
     {
         if (estimate is null || rows.Length == 0)
             return new([], rows.Where(r => r.Acquired < Math.Max(1, r.Need)).ToArray(), 0, 0);
@@ -133,7 +133,8 @@ public static class ShoppingRoute
             .ToDictionary(x => x.WorldId, x => x.idx);
 
         var orderedStops = stops
-            .OrderBy(s => worldRank.TryGetValue(s.WorldId, out var rank) ? rank : int.MaxValue)
+            .OrderByDescending(s => currentWorldId > 0 && s.WorldId == currentWorldId)
+            .ThenBy(s => worldRank.TryGetValue(s.WorldId, out var rank) ? rank : int.MaxValue)
             .ThenByDescending(s => s.TotalGil)
             .ThenBy(s => s.WorldId)
             .ToArray();

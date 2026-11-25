@@ -14,7 +14,7 @@ internal sealed class ListsPanel
     private string addSearch = "";
     private string lastAddSearch = "";
     private (int Id, string Name)[] addMatches = [];
-    private int addItemId = 8;
+    private int addItemId;
     private int addQuality;
     private int addQuantity = 1;
     private bool hideAcquired;
@@ -25,28 +25,26 @@ internal sealed class ListsPanel
     internal Func<int, bool> HasItem { get; init; } = id => id > 0;
     internal Func<string, (int Id, string Name)[]> SearchAllItems { get; init; } = _ => [];
     internal Func<int, bool, ImTextureID?>? ItemIcon { get; init; }
-    internal Action Refresh { get; init; } = () => { };
+    internal Action<CartCommandTarget?> RefreshAll { get; init; } = _ => { };
     internal Action<int> SelectList { get; init; } = _ => { };
     internal Action<CartCommandTarget?> RetrySave { get; init; } = _ => { };
-    internal Action<CartCommandTarget?> RefreshEstimate { get; init; } = _ => { };
     internal Action<RecoveryChoiceTarget?> RetryRecovery { get; init; } = _ => { };
     internal Action<RecoveryChoiceTarget?> UseServerCopy { get; init; } = _ => { };
     internal Action<ListEditTarget, int, string, int> AddItem { get; init; } = (_, _, _, _) => { };
     internal Action<CartCommandTarget?, object> Edit { get; init; } = (_, _) => { };
+    internal Action<CartCommandTarget?, object[]> EditBatch { get; init; } = (_, _) => { };
     internal Action<int> OpenItem { get; init; } = _ => { };
     internal Action<string> Notify { get; init; } = _ => { };
 
     internal void Draw(ClientView view, (string Title, string Message, string ActionLabel, Action OnAction)? buildBanner = null)
     {
-        UiKit.Heading("Lists", "Plan purchases, follow your shopping route by world, and track acquired quantities live.");
-
         if (buildBanner is { } banner)
             UiKit.Banner("lists-build", banner.Title, banner.Message, banner.ActionLabel, banner.OnAction, warning: true);
 
         var cartTarget = CartCommandTarget.Capture(view);
         var recoveryTarget = RecoveryChoiceTarget.Capture(view);
 
-        // Compact single-row (wrapping on narrow windows) list selector + sync controls
+        // Single streamlined toolbar: List selector + Status pill + unified Refresh + Undo/Redo
         var avail = ImGui.GetContentRegionAvail().X;
         ImGui.SetNextItemWidth(Math.Max(150 * UiKit.Scale, Math.Min(230 * UiKit.Scale, avail - 150 * UiKit.Scale)));
         var currentName = view.Lists.FirstOrDefault(l => l.List.Id == view.SelectedList)?.List.Name ?? "Cart";
@@ -65,8 +63,6 @@ internal sealed class ListsPanel
             }
             finally { ImGui.EndCombo(); }
         }
-        UiKit.Inline(120);
-        if (ImGui.Button("Refresh lists")) Refresh();
 
         if (!view.Connected)
         {
@@ -75,27 +71,28 @@ internal sealed class ListsPanel
         }
         if (view.Cart is not { } cart)
         {
+            UiKit.Inline(100);
+            if (ImGui.Button("Refresh##lists-refresh")) RefreshAll(null);
             UiKit.Empty("No active list selected", "Your online Cart is selected automatically when available. Create a list on Ultros, or pick one above.");
             return;
         }
 
-        // Inline sync badge + actions
-        UiKit.Inline(110);
+        UiKit.Inline(90);
         if (cart.AwaitingPersist) UiKit.Pill("UNSAVED", UiKit.Danger);
         else if (cart.RecoveryReview) UiKit.Pill("RECOVERY", UiKit.Warning);
         else UiKit.Pill(view.ListTransport == "Live updates" ? "LIVE" : "POLLING", view.ListTransport == "Live updates" ? UiKit.Success : UiKit.Accent);
 
+        UiKit.Inline(110);
         if (cart.AwaitingPersist)
         {
-            UiKit.Inline(140);
-            if (ImGui.Button("Retry save / sync")) RetrySave(cartTarget);
+            if (UiKit.PrimaryButton("Retry save")) RetrySave(cartTarget);
         }
         else
         {
-            UiKit.Inline(130);
             ImGui.BeginDisabled(view.Estimating);
-            if (ImGui.Button(view.Estimating ? "Refreshing…" : "Refresh prices")) RefreshEstimate(cartTarget);
+            if (ImGui.Button(view.Estimating ? "Refreshing…" : "Refresh##lists-refresh")) RefreshAll(cartTarget);
             ImGui.EndDisabled();
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Sync lists and refresh market estimates");
         }
 
         if (view.CanEdit)
@@ -118,7 +115,7 @@ internal sealed class ListsPanel
         {
             UiKit.Banner("recovery", "List recovery paused for review",
                 "Both documents are preserved. Retry recovery after resolving the conflict on Ultros, or keep the server copy (your local copy is backed up first).");
-            if (ImGui.Button("Retry recovery")) RetryRecovery(recoveryTarget);
+            if (UiKit.PrimaryButton("Retry recovery")) RetryRecovery(recoveryTarget);
             if (cart.HasServerCopy)
             {
                 ImGui.SameLine();
@@ -127,13 +124,9 @@ internal sealed class ListsPanel
             return;
         }
 
-        // Progress bar + Estimate KPI cards
+        // Combined 3-card Summary Row (Progress + Cost + Stops)
         var progress = ShoppingRoute.Progress(cart.Rows);
-        var route = ShoppingRoute.Build(cart.Rows, view.Estimate);
-        if (cart.Rows.Length > 0)
-        {
-            UiKit.ProgressBar(progress.Fraction, $"{progress.TotalAcquired:N0} / {progress.TotalNeed:N0} units · {progress.CompletedRows} of {progress.TotalRows} items complete");
-        }
+        var route = ShoppingRoute.Build(cart.Rows, view.Estimate, view.CurrentWorldId);
 
         var estimateCurrent = view.Estimate is { } est && est.Version == cart.Version;
         var costValue = view.Estimate is { } e ? $"{e.Total:N0} gil" : view.Estimating ? "Calculating…" : "—";
@@ -141,21 +134,22 @@ internal sealed class ListsPanel
             ? (estimateCurrent
                 ? $"{e2.Scope} · {TimestampFormat.FormatRelativeOrLocal(e2.ObservedAt)}"
                 : $"Outdated · {e2.Scope}")
-            : "Refresh prices to estimate";
+            : "Refresh to estimate";
         var routeValue = route.Stops.Length > 0 ? $"{route.Stops.Length} world{(route.Stops.Length == 1 ? "" : "s")}" : progress.RemainingUnits == 0 ? "Done" : "—";
         var routeSub = view.Estimate is { UnpricedUnits: > 0 } ep
             ? $"{ep.UnpricedUnits:N0} unpriced units"
             : progress.RemainingUnits > 0 ? $"{progress.RemainingUnits:N0} units left" : "All items acquired";
 
         UiKit.KpiRow(
+            new KpiCard("Progress", $"{progress.TotalAcquired:N0} / {progress.TotalNeed:N0}", $"{progress.CompletedRows} of {progress.TotalRows} items", null, progress.Fraction),
             new KpiCard("Estimated remaining", costValue, costSub, estimateCurrent ? UiKit.Accent : UiKit.Warning),
             new KpiCard("Shopping stops", routeValue, routeSub, route.Stops.Length > 0 ? UiKit.Success : null));
 
-        // Sub-view switcher + Add Item bar
-        DrawViewButton("Items", !showRoute, () => showRoute = false);
+        // Sub-view switcher + Hide acquired
+        if (UiKit.ToggleChip($"Items ({cart.Rows.Length})##lv-items", !showRoute)) showRoute = false;
         ImGui.SameLine();
-        var routeLabel = route.Stops.Length > 0 ? $"Shopping Route ({route.Stops.Length})" : "Shopping Route";
-        DrawViewButton(routeLabel, showRoute, () => showRoute = true);
+        var routeLabel = route.Stops.Length > 0 ? $"Shopping Route ({route.Stops.Length})##lv-route" : "Shopping Route##lv-route";
+        if (UiKit.ToggleChip(routeLabel, showRoute)) showRoute = true;
         if (!showRoute)
         {
             UiKit.Inline(150);
@@ -166,50 +160,38 @@ internal sealed class ListsPanel
 
         if (showRoute) DrawRoute(view, cart, cartTarget, route);
         else DrawItems(view, cart, cartTarget);
-
-        if (view.CanEdit) DrawAddByIdFallback(view);
-    }
-
-    private void DrawViewButton(string label, bool active, Action onClick)
-    {
-        if (active) ImGui.PushStyleColor(ImGuiCol.Button, UiKit.Accent);
-        try { if (ImGui.Button(label)) onClick(); }
-        finally { if (active) ImGui.PopStyleColor(); }
     }
 
     private void DrawAddBar(ClientView view)
     {
         var avail = ImGui.GetContentRegionAvail().X;
-        ImGui.SetNextItemWidth(Math.Max(150 * UiKit.Scale, Math.Min(250 * UiKit.Scale, avail - 300 * UiKit.Scale)));
-        var enter = ImGui.InputTextWithHint("##list-add-search", "Add item by name…", ref addSearch, 100, ImGuiInputTextFlags.EnterReturnsTrue);
+        ImGui.SetNextItemWidth(Math.Max(150 * UiKit.Scale, Math.Min(260 * UiKit.Scale, avail - 230 * UiKit.Scale)));
+        var enter = ImGui.InputTextWithHint("##list-add-search", "Add item by name or ID…", ref addSearch, 100, ImGuiInputTextFlags.EnterReturnsTrue);
         var trimmed = addSearch.Trim();
-        if (enter || (trimmed.Length >= 2 && trimmed != lastAddSearch))
+        if (enter || trimmed != lastAddSearch)
         {
             lastAddSearch = trimmed;
-            addMatches = trimmed.Length >= 2 ? SearchAllItems(trimmed) : [];
+            addMatches = ResolveAddMatches(trimmed);
             if (enter && addMatches.Length > 0)
             {
                 addItemId = addMatches[0].Id;
-                addSearch = addMatches[0].Name;
+                addSearch = ItemName(addItemId);
                 lastAddSearch = addSearch;
                 addMatches = [];
             }
         }
-        else if (trimmed.Length < 2 && addMatches.Length > 0)
-        {
-            lastAddSearch = "";
-            addMatches = [];
-        }
 
-        UiKit.Inline(85);
-        ImGui.SetNextItemWidth(76 * UiKit.Scale);
+        UiKit.Inline(215);
+        ImGui.SetNextItemWidth(68 * UiKit.Scale);
         ImGui.Combo("##list-add-qual", ref addQuality, Qualities, Qualities.Length);
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(76 * UiKit.Scale);
+        ImGui.SetNextItemWidth(62 * UiKit.Scale);
         if (ImGui.InputInt("##list-add-qty", ref addQuantity, 0, 0)) addQuantity = Math.Clamp(addQuantity, 1, 1_000_000);
         ImGui.SameLine();
-        if (ImGui.Button("Add##list-add"))
+        if (UiKit.PrimaryButton("Add##list-add"))
         {
+            if (addItemId <= 0 && int.TryParse(addSearch.Trim(), out var parsedId) && HasItem(parsedId))
+                addItemId = parsedId;
             if (!HasItem(addItemId) || addQuantity is < 1 or > 1_000_000)
                 Notify("Choose a valid item and a quantity between 1 and 1,000,000.");
             else if (ListEditTarget.Capture(view) is { } destination)
@@ -234,8 +216,8 @@ internal sealed class ListsPanel
                             if (ImGui.Selectable($"{match.Name.Replace('#', '＃')}##pick-add", addItemId == match.Id))
                             {
                                 addItemId = match.Id;
-                                addSearch = match.Name;
-                                lastAddSearch = match.Name;
+                                addSearch = ItemName(match.Id);
+                                lastAddSearch = addSearch;
                                 addMatches = [];
                             }
                         }
@@ -248,24 +230,12 @@ internal sealed class ListsPanel
         }
     }
 
-    private void DrawAddByIdFallback(ClientView view)
+    private (int Id, string Name)[] ResolveAddMatches(string trimmed)
     {
-        ImGui.Spacing();
-        if (ImGui.CollapsingHeader("Add by item ID"))
-        {
-            ImGui.SetNextItemWidth(110 * UiKit.Scale);
-            ImGui.InputInt("Item ID##list-id", ref addItemId);
-            ImGui.SameLine();
-            UiKit.Muted(HasItem(addItemId) ? ItemName(addItemId) : "Unknown item");
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Add ID##list-add-id"))
-            {
-                if (!HasItem(addItemId) || addQuantity is < 1 or > 1_000_000)
-                    Notify("Choose a valid item and a quantity between 1 and 1,000,000.");
-                else if (ListEditTarget.Capture(view) is { } destination)
-                    AddItem(destination, addItemId, WireQualities[addQuality], addQuantity);
-            }
-        }
+        if (trimmed.Length == 0) return [];
+        if (int.TryParse(trimmed, out var parsedId) && HasItem(parsedId))
+            return [(parsedId, $"{ItemName(parsedId)} (#{parsedId})")];
+        return trimmed.Length >= 2 ? SearchAllItems(trimmed) : [];
     }
 
     private void DrawItems(ClientView view, CartView cart, CartCommandTarget? editTarget)
@@ -281,7 +251,7 @@ internal sealed class ListsPanel
             return;
         }
 
-        if (ImGui.GetContentRegionAvail().X < 740 * UiKit.Scale)
+        if (ImGui.GetContentRegionAvail().X < 700 * UiKit.Scale)
         {
             DrawItemsCompact(view, visibleRows, editTarget);
         }
@@ -290,12 +260,12 @@ internal sealed class ListsPanel
             try
             {
                 ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 1f);
-                ImGui.TableSetupColumn("Qual", ImGuiTableColumnFlags.WidthFixed, 46 * UiKit.Scale);
-                ImGui.TableSetupColumn("Need", ImGuiTableColumnFlags.WidthFixed, 68 * UiKit.Scale);
-                ImGui.TableSetupColumn("Have", ImGuiTableColumnFlags.WidthFixed, 68 * UiKit.Scale);
-                ImGui.TableSetupColumn("Est. cost", ImGuiTableColumnFlags.WidthFixed, 108 * UiKit.Scale);
-                ImGui.TableSetupColumn("Quick", ImGuiTableColumnFlags.WidthFixed, 96 * UiKit.Scale);
-                ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 68 * UiKit.Scale);
+                ImGui.TableSetupColumn("Qual", ImGuiTableColumnFlags.WidthFixed, 42 * UiKit.Scale);
+                ImGui.TableSetupColumn("Need", ImGuiTableColumnFlags.WidthFixed, 62 * UiKit.Scale);
+                ImGui.TableSetupColumn("Have", ImGuiTableColumnFlags.WidthFixed, 62 * UiKit.Scale);
+                ImGui.TableSetupColumn("Est. cost", ImGuiTableColumnFlags.WidthFixed, 102 * UiKit.Scale);
+                ImGui.TableSetupColumn("Quick", ImGuiTableColumnFlags.WidthFixed, 84 * UiKit.Scale);
+                ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 30 * UiKit.Scale);
                 ImGui.TableHeadersRow();
 
                 foreach (var row in visibleRows)
@@ -332,7 +302,7 @@ internal sealed class ListsPanel
                             DrawRowEstimate(line, done);
 
                             ImGui.TableNextColumn();
-                            DrawQuickButtons(key, row, editTarget);
+                            DrawQuickButtons(key, row, done, editTarget);
 
                             ImGui.TableNextColumn();
                             DrawRemoveButton(key, row, editTarget);
@@ -370,22 +340,22 @@ internal sealed class ListsPanel
                 ImGui.BeginDisabled(!view.CanEdit);
                 try
                 {
-                    UiKit.Inline(108);
+                    UiKit.Inline(104);
                     UiKit.Muted("Need");
                     ImGui.SameLine();
-                    ImGui.SetNextItemWidth(56 * UiKit.Scale);
+                    ImGui.SetNextItemWidth(54 * UiKit.Scale);
                     var (commit, needActive) = DrawNeedInput(key, row, ref draft, editTarget);
 
-                    UiKit.Inline(108);
+                    UiKit.Inline(104);
                     UiKit.Muted("Have");
                     ImGui.SameLine();
-                    ImGui.SetNextItemWidth(56 * UiKit.Scale);
+                    ImGui.SetNextItemWidth(54 * UiKit.Scale);
                     var (acquired, acquiredActive) = DrawAcquiredInput(key, row, ref draft, editTarget);
                     if (!commit && !acquired && (needActive || acquiredActive)) drafts[key] = draft;
                     else drafts.Remove(key);
 
-                    UiKit.Inline(155);
-                    DrawQuickButtons(key, row, editTarget);
+                    UiKit.Inline(120);
+                    DrawQuickButtons(key, row, done, editTarget);
                     ImGui.SameLine();
                     DrawRemoveButton(key, row, editTarget);
                 }
@@ -407,7 +377,7 @@ internal sealed class ListsPanel
             if (ImGui.Selectable($"{displayName}##open")) OpenItem(row.ItemId);
         }
         finally { if (done) ImGui.PopStyleColor(); }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Click to open in Market");
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Click to inspect in Market");
     }
 
     private (bool Committed, bool Active) DrawNeedInput(string key, CartRow row, ref (int Need, int Acquired) draft, CartCommandTarget? editTarget)
@@ -436,8 +406,18 @@ internal sealed class ListsPanel
         return (acquired, active);
     }
 
-    private void DrawQuickButtons(string key, CartRow row, CartCommandTarget? editTarget)
+    private void DrawQuickButtons(string key, CartRow row, bool done, CartCommandTarget? editTarget)
     {
+        if (done)
+        {
+            if (ImGui.SmallButton("-1"))
+            {
+                drafts.Remove(key);
+                Edit(editTarget, new { kind = "add_acquired", item_id = row.ItemId, quality = row.Quality, delta = -1 });
+            }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Subtract 1 acquired");
+            return;
+        }
         if (ImGui.SmallButton("+1"))
         {
             drafts.Remove(key);
@@ -453,11 +433,12 @@ internal sealed class ListsPanel
 
     private void DrawRemoveButton(string key, CartRow row, CartCommandTarget? editTarget)
     {
-        if (ImGui.SmallButton("Remove"))
+        if (UiKit.DangerButton("×##rm", small: true))
         {
             drafts.Remove(key);
             Edit(editTarget, new { kind = "remove", item_id = row.ItemId, quality = row.Quality });
         }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Remove from list");
     }
 
     private static void DrawRowEstimate(EstimateLine? line, bool done)
@@ -498,7 +479,7 @@ internal sealed class ListsPanel
         if (view.Estimate is null)
         {
             UiKit.Empty(view.Estimating ? "Building shopping route…" : "No price estimate loaded yet",
-                "Click Refresh prices above to group your remaining items by cheapest world.");
+                "Click Refresh above to group your remaining items by cheapest world.");
             return;
         }
         if (route.Stops.Length == 0 && route.UnpricedRows.Length == 0)
@@ -508,15 +489,38 @@ internal sealed class ListsPanel
         }
 
         if (view.Estimate.Version != cart.Version)
-            UiKit.Hint("Prices are from before your latest edits. Click Refresh prices to update stops.");
+            UiKit.Hint("Prices are from before your latest edits. Click Refresh to update stops.");
 
         var compactRoute = ImGui.GetContentRegionAvail().X < 560 * UiKit.Scale;
         foreach (var stop in route.Stops)
         {
+            var isCurrentWorld = view.CurrentWorldId > 0 && stop.WorldId == view.CurrentWorldId;
             ImGui.PushID(stop.WorldId);
             try
             {
-                UiKit.Section($"{WorldName(stop.WorldId)} · {stop.TotalGil:N0} gil ({stop.TotalUnits:N0} unit{(stop.TotalUnits == 1 ? "" : "s")})");
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.SetWindowFontScale(1.12f);
+                ImGui.TextUnformatted($"{WorldName(stop.WorldId)} · {stop.TotalGil:N0} gil ({stop.TotalUnits:N0} unit{(stop.TotalUnits == 1 ? "" : "s")})");
+                ImGui.SetWindowFontScale(1f);
+                if (isCurrentWorld)
+                {
+                    ImGui.SameLine();
+                    UiKit.Pill("YOU ARE HERE", UiKit.Success);
+                }
+                if (view.CanEdit && stop.Items.Length > 0)
+                {
+                    UiKit.Inline(140);
+                    if (ImGui.SmallButton("Mark stop bought"))
+                    {
+                        var edits = stop.Items
+                            .Select(i => (object)new { kind = "add_acquired", item_id = i.ItemId, quality = i.RowQuality, delta = i.UnitsToBuy })
+                            .ToArray();
+                        EditBatch(editTarget, edits);
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Mark all {stop.TotalUnits:N0} units on {WorldName(stop.WorldId)} acquired");
+                }
+
                 if (compactRoute)
                 {
                     foreach (var item in stop.Items)
@@ -559,10 +563,10 @@ internal sealed class ListsPanel
                     try
                     {
                         ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 1f);
-                        ImGui.TableSetupColumn("Qual", ImGuiTableColumnFlags.WidthFixed, 46 * UiKit.Scale);
-                        ImGui.TableSetupColumn("Buy", ImGuiTableColumnFlags.WidthFixed, 56 * UiKit.Scale);
-                        ImGui.TableSetupColumn("Est. price", ImGuiTableColumnFlags.WidthFixed, 130 * UiKit.Scale);
-                        ImGui.TableSetupColumn("Mark bought", ImGuiTableColumnFlags.WidthFixed, 118 * UiKit.Scale);
+                        ImGui.TableSetupColumn("Qual", ImGuiTableColumnFlags.WidthFixed, 42 * UiKit.Scale);
+                        ImGui.TableSetupColumn("Buy", ImGuiTableColumnFlags.WidthFixed, 52 * UiKit.Scale);
+                        ImGui.TableSetupColumn("Est. price", ImGuiTableColumnFlags.WidthFixed, 134 * UiKit.Scale);
+                        ImGui.TableSetupColumn("Bought", ImGuiTableColumnFlags.WidthFixed, 96 * UiKit.Scale);
                         ImGui.TableHeadersRow();
 
                         foreach (var item in stop.Items)

@@ -20,10 +20,10 @@ internal sealed class MainWindow : Window
     private readonly ListsPanel lists;
     private readonly NotificationPanel notifications;
     private readonly RetainerListingsPanel retainerListings;
+    private readonly SettingsPanel settings;
     private Page page = Page.Account;
     private bool firstDraw = true;
-    private bool localhost;
-    private string localOrigin, profile;
+    private bool styled;
     private bool openItem, openLists, openRetainers, manageRetainers;
     private string uiStatus = "";
     private string? browserError;
@@ -55,6 +55,7 @@ internal sealed class MainWindow : Window
             FetchItem = (id, s) => Submit(worker.FetchItem(id, s)),
             AddToList = (id, quality, qty) => AddToList(id, ListEditTarget.Capture(worker.View), quality, qty),
             OpenWebsite = OpenItemWebsite,
+            Notify = msg => uiStatus = msg,
         };
         lists = new ListsPanel
         {
@@ -63,14 +64,14 @@ internal sealed class MainWindow : Window
             HasItem = HasItem,
             SearchAllItems = SearchAllItems,
             ItemIcon = ItemIcon,
-            Refresh = () => Submit(worker.Refresh()),
+            RefreshAll = target => Submit(worker.RefreshListsAndEstimate(target)),
             SelectList = id => Submit(worker.SelectList(id)),
             RetrySave = target => Submit(worker.RetrySave(target)),
-            RefreshEstimate = target => Submit(worker.Estimate(target)),
             RetryRecovery = target => Submit(worker.RetryRecovery(target)),
             UseServerCopy = target => Submit(worker.UseServerCopy(target)),
             AddItem = (dest, id, quality, qty) => Submit(worker.AddItem(dest, id, quality, qty)),
             Edit = (target, edit) => Submit(worker.Edit(target, edit)),
+            EditBatch = (target, edits) => Submit(worker.EditBatch(target, edits)),
             OpenItem = id => ShowItem(id),
             Notify = msg => uiStatus = msg,
         };
@@ -79,6 +80,7 @@ internal sealed class MainWindow : Window
             Test = () => Submit(worker.TestNotification()),
             Refresh = () => Submit(worker.Refresh()),
             MarkRead = id => Submit(worker.MarkRead(id)),
+            MarkAllRead = () => Submit(worker.MarkAllRead()),
             Delete = (session, ids) => Submit(worker.DeleteNotifications(session, ids)),
             OpenItem = id => ShowItem(id),
             OpenList = id => { Submit(worker.SelectList(id)); openLists = true; },
@@ -92,10 +94,53 @@ internal sealed class MainWindow : Window
             OpenItem = id => ShowItem(id),
             SetEnabled = (id, enabled) => Submit(worker.SetRetainerEnabled(id, enabled)),
         };
+        settings = new SettingsPanel
+        {
+            SetChatEnabled = value => { config.NotificationChatEnabled = value; Plugin.Interface.SavePluginConfig(config); },
+            SetChatIndex = index => { config.NotificationChatType = (int)GameNotifications.ChatTypes[index]; Plugin.Interface.SavePluginConfig(config); },
+            SetPopupEnabled = value => { config.NotificationPopup = value; Plugin.Interface.SavePluginConfig(config); },
+            SetSoundEnabled = value => { config.NotificationSound = value; Plugin.Interface.SavePluginConfig(config); },
+            SetSoundId = value => { config.NotificationSoundId = value; Plugin.Interface.SavePluginConfig(config); },
+            TestNotification = () =>
+            {
+                Plugin.TestNotification();
+                if (!config.NotificationChatEnabled && !config.NotificationPopup && !config.NotificationSound)
+                    uiStatus = "Game chat, popup, and sound outputs are all turned off. Enable at least one to preview alerts.";
+            },
+            SetItemContextMenu = value => { config.ItemContextMenuEnabled = value; Plugin.Interface.SavePluginConfig(config); },
+            SetBellShortcut = value => { config.BellShortcutEnabled = value; Plugin.Interface.SavePluginConfig(config); },
+            SetInventoryProgress = value =>
+            {
+                config.InventoryProgressEnabled = value;
+                config.InventoryProgressGameBuild = value ? capture.GameBuild : null;
+                worker.CancelQueuedInventory();
+                Plugin.Interface.SavePluginConfig(config);
+            },
+            ConfirmInventoryBuild = () =>
+            {
+                config.InventoryProgressGameBuild = capture.GameBuild;
+                worker.CancelQueuedInventory();
+                Plugin.Interface.SavePluginConfig(config);
+                uiStatus = "Inventory progress enabled for the current game build.";
+            },
+            SaveConnection = (nextLocalhost, nextOrigin, nextProfile) =>
+            {
+                try
+                {
+                    _ = new UltrosEndpoint(nextLocalhost, nextOrigin);
+                    if (nextProfile.Length < 1 || nextProfile.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_'))
+                        throw new ArgumentException();
+                    config.Localhost = nextLocalhost;
+                    config.LocalOrigin = nextOrigin;
+                    config.Profile = nextProfile;
+                    Plugin.Interface.SavePluginConfig(config);
+                    uiStatus = "Connection settings saved. Reload Ultros in Dalamud to apply.";
+                }
+                catch { uiStatus = "Use a loopback origin and a profile containing letters, numbers, '-' or '_'."; }
+            },
+            OpenLab = Plugin.OpenLab,
+        };
 
-        localhost = config.Localhost;
-        localOrigin = config.LocalOrigin;
-        profile = config.Profile;
         Size = new Vector2(960, 720);
         SizeCondition = ImGuiCond.FirstUseEver;
         SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(650, 440), MaximumSize = new Vector2(float.MaxValue) };
@@ -107,8 +152,6 @@ internal sealed class MainWindow : Window
 
     private async Task OpenBrowser(string url)
     {
-        // Approval links are validated by Connection; other URLs are built from
-        // the configured origin. Dalamud's helper logs the full URL on failure.
         if (!await BrowserLinks.Open(url).ConfigureAwait(false))
             Interlocked.Exchange(ref browserError, "Could not open your browser. Open the website manually or retry this button.");
     }
@@ -175,7 +218,19 @@ internal sealed class MainWindow : Window
 
     public override void OnClose() => account.Reset();
     public override void OnOpen() => account.Reset();
-    public override void PreDraw() => ImGui.SetNextWindowBgAlpha(1);
+    public override void PreDraw()
+    {
+        ImGui.SetNextWindowBgAlpha(1);
+        UiKit.BeginStyle();
+        styled = true;
+    }
+
+    public override void PostDraw()
+    {
+        if (!styled) return;
+        styled = false;
+        UiKit.EndStyle();
+    }
 
     public override void Draw()
     {
@@ -189,48 +244,40 @@ internal sealed class MainWindow : Window
         if (openRetainers) { page = Page.Retainers; openRetainers = false; }
 
         var unread = v.Inbox.Count(d => v.ReadNotificationIds?.Contains(d.Id) != true);
-        UiKit.BeginStyle();
+        page = UiKit.Navigation(page, v.Connected, unread, activatePage);
+        account.Track(v, page == Page.Account);
+        UiKit.BeginContent();
         try
         {
-            page = UiKit.Navigation(page, v.Connected, unread, activatePage);
-            account.Track(v, page == Page.Account);
-            UiKit.BeginContent();
-            try
+            if (config.Localhost) UiKit.Pill("LOCALHOST", UiKit.Warning);
+            switch (page)
             {
-                if (config.Localhost) UiKit.Muted("LOCALHOST DEVELOPMENT");
-                switch (page)
-                {
-                    case Page.Account:
-                        account.Draw(v);
-                        break;
-                    case Page.Market:
-                        market.Draw(v);
-                        break;
-                    case Page.Lists:
-                        lists.Draw(v, InventoryBuildBanner());
-                        break;
-                    case Page.Retainers:
-                        UiKit.Heading("Retainers", "Your uploaded listings, grouped by character and retainer.");
-                        Characters(v);
-                        break;
-                    case Page.Notifications:
-                        notifications.Draw(v);
-                        break;
-                    case Page.Settings:
-                        UiKit.Heading("Settings", "Customize alerts, optional in-game UI surfaces, and sync behavior.");
-                        Settings();
-                        break;
-                }
-                if (uiStatus.Length > 0)
-                {
-                    UiKit.Section("Notice");
-                    ImGui.TextWrapped(uiStatus);
-                    if (ImGui.SmallButton("Dismiss")) uiStatus = "";
-                }
+                case Page.Market:
+                    market.Draw(v);
+                    break;
+                case Page.Lists:
+                    lists.Draw(v, InventoryBuildBanner());
+                    break;
+                case Page.Retainers:
+                    var expand = manageRetainers;
+                    manageRetainers = false;
+                    retainerListings.Draw(v, BuildRetainerChrome(v, expand));
+                    break;
+                case Page.Notifications:
+                    notifications.Draw(v);
+                    break;
+                case Page.Account:
+                    account.Draw(v);
+                    break;
+                case Page.Settings:
+                    settings.Draw(BuildSettingsState());
+                    break;
             }
-            finally { UiKit.EndContent(uiStatus.Length > 0 ? uiStatus : v.Status); }
         }
-        finally { UiKit.EndStyle(); }
+        finally
+        {
+            UiKit.EndContent(v.Status, uiStatus.Length > 0 ? uiStatus : null, () => uiStatus = "");
+        }
     }
 
     private (string Title, string Message, string ActionLabel, Action OnAction)? InventoryBuildBanner()
@@ -250,17 +297,18 @@ internal sealed class MainWindow : Window
             });
     }
 
-    private void DrawRetainerCompatibilityBanner()
+    private RetainerChrome BuildRetainerChrome(ClientView v, bool expandManage)
     {
+        var uploaderOn = config.CaptureEnabled && capture.Compatible && capture.GameBuild is not null && config.CaptureGameBuild == capture.GameBuild;
+        (string Title, string Message, string? ActionLabel, Action? OnAction)? banner = null;
         if (!capture.Compatible)
         {
-            UiKit.Banner("retainer-incompatible", "Plugin update needed for Dalamud client structs",
-                capture.CompatibilityStatus + " Update Ultros in /xlplugins, then reload.", warning: true);
-            return;
+            banner = ("Plugin update needed for Dalamud client structs",
+                capture.CompatibilityStatus + " Update Ultros in /xlplugins, then reload.", null, null);
         }
-        if (config.CaptureEnabled && capture.GameBuild is not null && config.CaptureGameBuild != capture.GameBuild)
+        else if (config.CaptureEnabled && capture.GameBuild is not null && config.CaptureGameBuild != capture.GameBuild)
         {
-            UiKit.Banner("retainer-build", "Listing uploader paused after a game update",
+            banner = ("Listing uploader paused after a game update",
                 $"FFXIV updated to build {capture.GameBuild}. Confirm once to resume private retainer uploads.",
                 "Resume listing uploader for this build",
                 () =>
@@ -269,206 +317,56 @@ internal sealed class MainWindow : Window
                     config.CaptureGameBuild = capture.GameBuild;
                     Plugin.Interface.SavePluginConfig(config);
                     uiStatus = "Listing uploader enabled for the current game build. Open a retainer's Markets window to sync.";
-                }, warning: true);
+                });
         }
-    }
 
-    private void Characters(ClientView v)
-    {
-        DrawRetainerCompatibilityBanner();
-        ImGui.BeginDisabled(!v.Connected || !v.Scopes.Contains("retainers:read") || v.RefreshingRetainers);
-        if (ImGui.Button(v.RefreshingRetainers ? "Refreshing…" : "Refresh listings")) Submit(worker.RefreshRetainers());
-        ImGui.EndDisabled();
-        UiKit.Inline(240);
-        if (ImGui.Button("View listings on Ultros")) Open(new Uri(new Uri(v.VerificationUrl), "/retainers/listings").AbsoluteUri);
-        UiKit.Hint(capture.Status);
-        if (capture.Bell is { } bell)
-        {
-            var saved = ClientWorker.LatestObservation(v.Characters, bell.Character);
-            ImGui.BeginDisabled(!v.RetainerPreferences || !v.Scopes.Contains("retainers:register") || saved is null || RetainerRoster.GameOrder(saved, bell.Character) is null);
-            if (ImGui.Button("Use in-game order")) Submit(worker.UseGameRetainerOrder(bell.Character));
-            ImGui.EndDisabled();
-        }
-        UiKit.Hint("Retainers follow your saved Ultros order. Use in-game order at a summoning bell to update both views.");
-        retainerListings.Draw(v);
-        ImGui.Spacing();
-        ImGui.Spacing();
-        if (manageRetainers) { ImGui.SetNextItemOpen(true, ImGuiCond.Always); manageRetainers = false; }
-        if (!ImGui.CollapsingHeader("Manage uploads")) return;
-        UploaderControls();
-        if (v.RosterStatus.Length > 0) ImGui.TextWrapped(v.RosterStatus);
-        if (capture.Character is { } current)
-        {
-            ImGui.TextUnformatted($"{current.Name} · {WorldName(current.HomeWorld)} · {current.Retainers.Length} retainers found");
-            ImGui.BeginDisabled(!v.Connected || !v.Scopes.Contains("retainers:register") || v.Registering);
-            try
+        return new RetainerChrome(
+            UploaderOn: uploaderOn,
+            CaptureCompatible: capture.Compatible,
+            GameBuild: capture.GameBuild,
+            CaptureStatus: capture.Status,
+            ObservedCharacter: capture.Character,
+            BellCharacter: capture.Bell?.Character,
+            Banner: banner,
+            ExpandManage: expandManage,
+            Refresh: () => Submit(worker.RefreshRetainers()),
+            OpenWebsite: () => Open(new Uri(new Uri(v.VerificationUrl), "/retainers/listings").AbsoluteUri),
+            UseGameOrder: c => Submit(worker.UseGameRetainerOrder(c)),
+            ToggleUploader: () =>
             {
-                if (ImGui.Button("Save character only")) Submit(worker.Observe(current));
-                ImGui.SameLine();
-                if (ImGui.Button(v.Registering ? "Saving retainers…" : "Register all observed retainers")) Submit(worker.Register(current));
-            }
-            finally { ImGui.EndDisabled(); }
-        }
-        foreach (var character in v.Characters)
-        {
-            ImGui.PushID(character.Id);
-            try
-            {
-                UiKit.Section(character.Name);
-                UiKit.Hint($"{character.Retainers.Count(r => r.Registered)} retainers saved · uploads {(character.UploadEnabled ? "allowed" : "paused")}");
-                if (character.UploadEnabled && (!config.CaptureEnabled || config.CaptureGameBuild != capture.GameBuild))
-                    ImGui.TextWrapped("This character allows uploads, but the uploader on this game client must be enabled above.");
-                ImGui.BeginDisabled(!v.Scopes.Contains("retainers:upload") || !character.Registered);
-                try
-                {
-                    if (ImGui.Button(character.UploadEnabled ? "Pause this character's uploads" : "Allow this character's uploads"))
-                        Submit(worker.UploadConsent(character.Id, !character.UploadEnabled));
-                    UiKit.Inline(220);
-                    if (ImGui.Button("Delete saved listings...")) ImGui.OpenPopup("Delete saved listings?");
-                    if (ImGui.BeginPopupModal("Delete saved listings?", ImGuiWindowFlags.AlwaysAutoResize))
-                    {
-                        ImGui.TextUnformatted($"Pause uploads and delete private snapshots for {character.Name}?");
-                        if (ImGui.Button("Delete saved listings")) { Submit(worker.UploadConsent(character.Id, false, true)); ImGui.CloseCurrentPopup(); }
-                        ImGui.SameLine();
-                        if (ImGui.Button("Cancel")) ImGui.CloseCurrentPopup();
-                        ImGui.EndPopup();
-                    }
-                }
-                finally { ImGui.EndDisabled(); }
-                retainerListings.Manage(character, v.Connected && v.RetainerPreferences && v.Scopes.Contains("retainers:register"));
-            }
-            finally { ImGui.PopID(); }
-        }
-    }
-
-    private void UploaderControls()
-    {
-        var enabled = config.CaptureEnabled && capture.Compatible && capture.GameBuild is not null && config.CaptureGameBuild == capture.GameBuild;
-        ImGui.TextUnformatted($"Listing sync: {(enabled ? "on" : "paused")}");
-        UiKit.Hint("Selling prices you confirm in game sync privately to Ultros.");
-        ImGui.BeginDisabled(!capture.Compatible || capture.GameBuild is null);
-        try
-        {
-            if (ImGui.Button(enabled ? "Pause listing uploader" : "Enable listing uploader"))
-            {
-                config.CaptureEnabled = !enabled;
+                config.CaptureEnabled = !uploaderOn;
                 config.CaptureGameBuild = capture.GameBuild;
                 Plugin.Interface.SavePluginConfig(config);
-                uiStatus = enabled
+                uiStatus = uploaderOn
                     ? "Listing uploader paused on this game client."
                     : "Listing uploader enabled. Close and reopen the retainer's Markets window to capture its listings.";
-            }
-        }
-        finally { ImGui.EndDisabled(); }
-        UiKit.Hint(capture.Status);
+            },
+            RegisterAll: c => Submit(worker.Register(c)),
+            UploadConsent: (id, enabled, delete) => Submit(worker.UploadConsent(id, enabled, delete)));
     }
 
-    private void Settings()
+    private SettingsState BuildSettingsState()
     {
-        ImGui.TextUnformatted("Alerts");
-        var chatEnabled = config.NotificationChatEnabled;
-        if (ImGui.Checkbox("Print alerts in game chat", ref chatEnabled))
-        {
-            config.NotificationChatEnabled = chatEnabled;
-            Plugin.Interface.SavePluginConfig(config);
-        }
-        UiKit.Hint("Turn off to hide [Ultros] chat lines (for example while streaming). Alerts remain available in the Notifications tab.");
-        if (chatEnabled)
-        {
-            var chat = Math.Max(0, Array.FindIndex(GameNotifications.ChatTypes, t => (int)t == config.NotificationChatType));
-            ImGui.SetNextItemWidth(220 * UiKit.Scale);
-            if (ImGui.Combo("Chat category", ref chat, GameNotifications.ChatLabels, GameNotifications.ChatLabels.Length))
-            {
-                config.NotificationChatType = (int)GameNotifications.ChatTypes[chat];
-                Plugin.Interface.SavePluginConfig(config);
-            }
-            UiKit.Hint("Enable this category in your game chat tab's filters to see [Ultros] messages.");
-        }
-        var popup = config.NotificationPopup;
-        var playSound = config.NotificationSound;
-        if (ImGui.Checkbox("Also show a popup notification", ref popup)) { config.NotificationPopup = popup; Plugin.Interface.SavePluginConfig(config); }
-        if (ImGui.Checkbox("Play notification sound", ref playSound)) { config.NotificationSound = playSound; Plugin.Interface.SavePluginConfig(config); }
-        if (playSound)
-        {
-            var sound = config.NotificationSoundId;
-            ImGui.SetNextItemWidth(220 * UiKit.Scale);
-            if (ImGui.SliderInt("Sound effect", ref sound, 1, 16)) { config.NotificationSoundId = sound; Plugin.Interface.SavePluginConfig(config); }
-        }
-        if (ImGui.Button("Test notification"))
-        {
-            Plugin.TestNotification();
-            if (!config.NotificationChatEnabled && !config.NotificationPopup && !config.NotificationSound)
-                uiStatus = "Game chat, popup, and sound outputs are all turned off. Enable at least one to preview alerts.";
-        }
-
-        UiKit.Section("In-game UI & shortcuts");
-        var itemShortcuts = config.ItemContextMenuEnabled;
-        if (ImGui.Checkbox("Show item right-click shortcuts", ref itemShortcuts))
-        {
-            config.ItemContextMenuEnabled = itemShortcuts;
-            Plugin.Interface.SavePluginConfig(config);
-        }
-        UiKit.Hint("Add Ultros actions (Search Ultros, Add to list, Open website) to in-game item context menus.");
-
-        var bellShortcut = config.BellShortcutEnabled;
-        if (ImGui.Checkbox("Show summoning-bell Ultros button", ref bellShortcut))
-        {
-            config.BellShortcutEnabled = bellShortcut;
-            Plugin.Interface.SavePluginConfig(config);
-        }
-        UiKit.Hint("Display the quick Ultros retainer button on the summoning-bell window header. Turn off to keep the bell window unmodified.");
-
-        UiKit.Section("List progress");
-        var automatic = config.InventoryProgressEnabled;
+        var chatIndex = Math.Max(0, Array.FindIndex(GameNotifications.ChatTypes, t => (int)t == config.NotificationChatType));
         var canEnable = capture.Compatible && capture.GameBuild is not null;
-        ImGui.BeginDisabled(!canEnable && !automatic);
-        if (ImGui.Checkbox("Track new inventory items", ref automatic))
-        {
-            config.InventoryProgressEnabled = automatic;
-            config.InventoryProgressGameBuild = automatic ? capture.GameBuild : null;
-            worker.CancelQueuedInventory();
-            Plugin.Interface.SavePluginConfig(config);
-        }
-        ImGui.EndDisabled();
-        UiKit.Hint("Mark incoming items acquired on your active list.");
-        if (automatic && canEnable && config.InventoryProgressGameBuild != capture.GameBuild && ImGui.Button("Enable inventory progress for this game build"))
-        {
-            config.InventoryProgressGameBuild = capture.GameBuild;
-            worker.CancelQueuedInventory();
-            Plugin.Interface.SavePluginConfig(config);
-        }
-        UiKit.Hint(inventoryProgress.Status);
-        if (ImGui.CollapsingHeader("How inventory progress works"))
-            ImGui.TextWrapped("New items entering your bags count toward the active writable list. Existing items are the baseline. Transfers from retainers and saddlebags count; moving items within bags and equipment does not. Consuming items does not undo progress.");
-
-        UiKit.Section("Advanced");
-        if (ImGui.CollapsingHeader("Connection profile"))
-        {
-            ImGui.InputText("Game-process profile", ref profile, 32);
-            if (UltrosEndpoint.LocalhostAvailable) ImGui.Checkbox("Target localhost development server", ref localhost);
-            if (localhost) ImGui.InputText("Local origin", ref localOrigin, 128);
-            if (ImGui.Button("Save connection settings (reload plugin)"))
-            {
-                try
-                {
-                    _ = new UltrosEndpoint(localhost, localOrigin);
-                    if (profile.Length < 1 || profile.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_'))
-                        throw new ArgumentException();
-                    config.Localhost = localhost;
-                    config.LocalOrigin = localOrigin;
-                    config.Profile = profile;
-                    Plugin.Interface.SavePluginConfig(config);
-                    uiStatus = "Connection settings saved. Reload Ultros in Dalamud to apply.";
-                }
-                catch { uiStatus = "Use a loopback origin and a profile containing letters, numbers, '-' or '_'."; }
-            }
-        }
-        if (ImGui.CollapsingHeader("Capture diagnostics"))
-        {
-            ImGui.TextWrapped($"Capture compatibility: {capture.CompatibilityStatus}");
-            ImGui.TextWrapped($"Game build: {capture.GameBuild ?? "ffxivgame.ver unavailable"}");
-            UploaderControls();
-        }
-        if (UltrosEndpoint.LocalhostAvailable && ImGui.Button("Open local CRDT merge lab")) Plugin.OpenLab();
+        return new SettingsState(
+            ChatEnabled: config.NotificationChatEnabled,
+            ChatIndex: chatIndex,
+            ChatLabels: GameNotifications.ChatLabels,
+            PopupEnabled: config.NotificationPopup,
+            SoundEnabled: config.NotificationSound,
+            SoundId: config.NotificationSoundId,
+            ItemContextMenuEnabled: config.ItemContextMenuEnabled,
+            BellShortcutEnabled: config.BellShortcutEnabled,
+            InventoryProgressEnabled: config.InventoryProgressEnabled,
+            CanEnableInventory: canEnable,
+            InventoryNeedsBuildConfirm: config.InventoryProgressEnabled && canEnable && config.InventoryProgressGameBuild != capture.GameBuild,
+            InventoryStatus: inventoryProgress.Status,
+            LocalhostAvailable: UltrosEndpoint.LocalhostAvailable,
+            Localhost: config.Localhost,
+            LocalOrigin: config.LocalOrigin,
+            Profile: config.Profile,
+            CaptureCompatibilityStatus: capture.CompatibilityStatus,
+            GameBuild: capture.GameBuild);
     }
 }
