@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Restock lists and bulk progress actions",
+  "blurb": "Reset all owned quantities in one undoable click to reuse a list for your next restock run, or mark and reset ownership across selected rows from the bulk selection bar.",
+  "link": "/list"
+}

@@ -27,11 +27,17 @@ be sold on the market board are labelled **Unavailable on market board**
 instead of looking merely out of stock.
 
 Select rows for bulk changes. **Select all shown** selects the rows the
-current filter displays, and **Delete selected** asks for a second click to
-confirm; **Undo** is still offered right after a removal, and **Undo**/**Redo**
-correct other edits. Sorting by **Est. cost** orders rows by their full
-remaining line cost (the number in the column), and **Qty** sorts by
+current filter displays, **Mark acquired** / **Reset owned** update ownership
+across the selected rows in one undoable step, and **Delete selected** asks for
+a second click to confirm; **Undo** is still offered right after a removal, and
+**Undo**/**Redo** correct other edits. Sorting by **Est. cost** orders rows by
+their full remaining line cost (the number in the column), and **Qty** sorts by
 **Needed**.
+
+For recurring shopping or crafting lists, use **Reset progress** next to the
+progress summary (click twice to confirm) to set every row's owned count back
+to zero for a fresh restock run — and press **Undo** if you want your previous
+progress back.
 
 The Build estimate prices only the units you still need — not whole
 market-board stacks — in your chosen world, datacenter, or region, so its

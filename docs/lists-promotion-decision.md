@@ -1,5 +1,36 @@
 # Lists 2.0 promotion decision (#1510 soak gate)
 
+## Owner post-deploy sign-off & gate closure (2026-11-24)
+
+[PR #1665](https://github.com/akarras/ultros/pull/1665) merged into `main` as
+`09af481faff565226080acbd8917d510ee1a2404` on 2026-10-19 and was first observed
+live on `https://ultros.app/list` at `2026-10-19T22:34:09Z`. Production was
+observed on 2026-11-24 serving `41a7979` (over five weeks after Lists 2.0
+became the default for account and device lists).
+
+On 2026-11-24, repository owner **@akarras** explicitly authorized closing
+[#1510](https://github.com/akarras/ultros/issues/1510) and
+[#1372](https://github.com/akarras/ultros/issues/1372) without completing the
+overdue Oct 19–26 operator-only post-deploy checks: *"I think lists 2.0 is
+feeling solid and the user gates are blocking. We should be able to safely ship
+without me."*
+
+Explicit record of what was and was not executed:
+
+- **Waived / unrun post-deploy operator checks:** neither the seven-day private
+  `ultros_lists::sync` server-log review nor the post-deploy all-list
+  `list_projection_check` run (originally scheduled for 2026-10-22 through
+  2026-10-26) was performed or posted. This closure does **not** claim those
+  checks ran.
+- **Automated monitoring retired:** the expired hourly rollout monitor
+  (`ultros-productionalize-lists-monitor-20261019`) was deleted on 2026-11-24.
+- **Retained operational safeguards:** the read-only browser kill-switch
+  (`ULTROS_LISTS_READONLY`), the read-only `list_projection_check` CLI, and the
+  writer-containment runbook in [`lists-sync.md`](lists-sync.md) remain
+  available in the codebase.
+
+The sections below are preserved as dated release history.
+
 ## Owner release approval (2026-10-19)
 
 Repository owner **@akarras** explicitly approved the scoped waiver and owner

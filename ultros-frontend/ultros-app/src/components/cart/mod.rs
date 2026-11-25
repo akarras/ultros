@@ -513,6 +513,36 @@ pub fn ListCart(
         expanded.update(|s| s.extend(renamed.iter().copied()));
         source.set_quality_many.run((ids, hq));
     });
+    let on_set_acquired_many = Callback::new(move |(ids, acquired): (Vec<i32>, bool)| {
+        bump();
+        source.set_acquired_many.run((ids, acquired));
+    });
+    let on_reset_progress = Callback::new(move |()| {
+        if !source.can_write.get_untracked() {
+            return;
+        }
+        bump();
+        if let Some(toasts) = toasts {
+            toasts.success(t_string!(i18n, cart_progress_reset_toast).to_string());
+        }
+        source.reset_all_acquired.run(());
+    });
+    let selected_can_mark_acquired = Memo::new(move |_| {
+        selected_items.with(|selected| {
+            source.rows.with(|rows| {
+                rows.iter()
+                    .any(|(item, _)| selected.contains(&item.id) && !row::row_is_acquired(item))
+            })
+        })
+    });
+    let selected_can_reset_owned = Memo::new(move |_| {
+        selected_items.with(|selected| {
+            source.rows.with(|rows| {
+                rows.iter()
+                    .any(|(item, _)| selected.contains(&item.id) && item.acquired.unwrap_or(0) > 0)
+            })
+        })
+    });
     Effect::new(move |_| {
         source.history_revision.track();
         bump();
@@ -594,7 +624,7 @@ pub fn ListCart(
             </div>
             <div class="@container/cart space-y-3 min-w-0" class=("xl:col-span-2", move || !source.can_write.get()) data-testid="list-cart-rows-column">
             <Show when=move || source.estimate_available.get() && !is_empty.get()>
-                <crate::components::list_estimate_summary::ListEstimateSummary estimate feed=source.market scope=source.scope_name progress=Signal::from(progress) />
+                <crate::components::list_estimate_summary::ListEstimateSummary estimate feed=source.market scope=source.scope_name progress=Signal::from(progress) can_write=source.can_write on_reset_progress />
             </Show>
             <CartFeedback toast action_seq=action_seq.into() can_undo=source.can_undo can_write=source.can_write on_undo=undo_removal />
             <Show when=move || !is_empty.get()>
@@ -615,7 +645,7 @@ pub fn ListCart(
                 </label>
             </div>
             </Show>
-            <CartSelectionBar selected_items visible_ids=visible_ids.into() can_write=source.can_write pending=source.bulk_pending on_remove_many=on_remove_many on_set_quality=on_set_quality_many />
+            <CartSelectionBar selected_items visible_ids=visible_ids.into() can_write=source.can_write pending=source.bulk_pending can_mark_acquired=selected_can_mark_acquired.into() can_reset_owned=selected_can_reset_owned.into() on_remove_many=on_remove_many on_set_quality=on_set_quality_many on_set_acquired=on_set_acquired_many />
             // The order pin follows a *drafting* editor only (see
             // `editor_drafting`): it engages as the player types and releases
             // on commit, focus loss or Escape.
