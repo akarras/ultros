@@ -8,10 +8,10 @@ public sealed class Document : IDisposable
     private readonly DocumentHandle handle;
     public CartView View { get; private set; }
 
-    private Document(Native.Reply reply)
+    private Document((Native.Reply Reply, long Generation) opened)
     {
-        handle = new DocumentHandle(reply.Doc);
-        View = reply.View ?? throw new InvalidOperationException("Missing native view.");
+        handle = new DocumentHandle(opened.Reply.Doc, opened.Generation);
+        View = opened.Reply.View ?? throw new InvalidOperationException("Missing document view.");
     }
 
     public static Document Open(byte[]? snapshot = null) => new(Native.Call(new
@@ -27,7 +27,7 @@ public sealed class Document : IDisposable
         try
         {
             handle.DangerousAddRef(ref held);
-            return Native.Call(request(checked((ulong)handle.DangerousGetHandle().ToInt64())));
+            return Native.Call(request(checked((ulong)handle.DangerousGetHandle().ToInt64())), handle.Generation).Reply;
         }
         finally { if (held) handle.DangerousRelease(); }
     }
@@ -59,15 +59,17 @@ public sealed class Document : IDisposable
 
     private sealed class DocumentHandle : SafeHandle
     {
-        public DocumentHandle(ulong value) : base(nint.Zero, true)
+        public long Generation { get; }
+        public DocumentHandle(ulong value, long generation) : base(nint.Zero, true)
         {
-            if (value == 0) throw new InvalidOperationException("Invalid native document handle.");
+            if (value == 0) throw new InvalidOperationException("Invalid document handle.");
+            Generation = generation;
             SetHandle((nint)checked((long)value));
         }
         public override bool IsInvalid => handle == nint.Zero;
         protected override bool ReleaseHandle()
         {
-            try { return Native.CloseDocument(checked((ulong)handle.ToInt64())) == 0; }
+            try { return Native.CloseDocument(checked((ulong)handle.ToInt64()), Generation) == 0; }
             catch { return false; } // A finalizer must never throw into the host.
         }
     }

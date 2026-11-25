@@ -66,6 +66,8 @@ jobs:
             - uses: dtolnay/rust-toolchain@master
               with:
                   toolchain: nightly-2026-11-16
+                  targets: wasm32-wasip1
+                  components: clippy
             - name: Check image package policy
               run: ./plugins/dalamud/test-image-package.ps1
             - name: Check and download stable Dalamud references

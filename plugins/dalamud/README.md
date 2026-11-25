@@ -24,30 +24,30 @@ Under **Manage uploads**, uncheck a retainer to disable it. Disabled retainers s
 
 The active list subscribes to bearer-authenticated, list-scoped WebSocket change notices from the same list-document event bus used by the website. Notices trigger the existing durable HTTP sync; they do not replace the CRDT merge, checkpoint or recovery protocol. Wakes are coalesced, subscriptions are fenced to their account/device/list instance, reconnects catch up immediately, and periodic HTTP reconciliation remains available if the stream or server feature is unavailable. The UI reports **Live updates** or **Periodic refresh**.
 
-In **Settings → Shortcuts**, turn off **Item right-click shortcuts** to hide all Ultros item-menu actions, including list additions, Search Ultros, and Open Ultros website. This preference takes effect immediately and does not disable the summoning-bell controls. Existing shortcut preferences are preserved by leaving the switch on by default.
+In **Settings → In-game UI & shortcuts**, turn off **Show item right-click shortcuts** to hide all Ultros item-menu actions, or turn off **Show summoning-bell Ultros button** to hide the bell header shortcut. Under **Settings → Alerts**, turn off **Print alerts in game chat** to suppress `[Ultros]` chat lines while keeping history in the **Notifications** tab (and optional popups/sounds independent). These preferences take effect immediately so streamers or players who want zero visible in-game UI can hide every surface individually.
 
 ## Build and load
 
-Requires Windows, PowerShell 7, .NET 10, the repository's Rust/MSVC toolchain, and Dalamud API 15 references. The SDK normally finds them in the XIVLauncher Dalamud dev directory.
+Requires Windows, PowerShell 7, .NET 10, the repository's Rust toolchain with the `wasm32-wasip1` target (`rustup target add wasm32-wasip1`), and Dalamud API 15 references. The SDK normally finds them in the XIVLauncher Dalamud dev directory.
 
 ~~~powershell
 pwsh -File ./plugins/dalamud/build-plugin.ps1
 # Release with explicit localhost support:
 pwsh -File ./plugins/dalamud/build-plugin.ps1 -Configuration Release -EnableLocalhost
 # Optional references: -DalamudHome 'C:\path\to\Dalamud'
-# Managed/backend-only iteration with the game open (Rust code and ABI unchanged):
+# Managed-only iteration without recompiling Rust WASM (when Rust code and ABI are unchanged):
 pwsh -File ./plugins/dalamud/build-plugin.ps1 -Configuration Release -EnableLocalhost -KeepInstalledNative
 # Validate a complete release without changing the development installation:
 pwsh -File ./plugins/dalamud/build-plugin.ps1 -Configuration Release -StageOnly
 ~~~
 
-The script tests in a separate staging directory, then updates **artifacts/dalamud/dev/Ultros.dll** and **artifacts/dalamud/dev.zip** on every build. The development path stays fixed for Dalamud hot reload. Debug includes localhost support; ordinary Release accepts only the fixed production origin.
+The script compiles `ultros-list-doc-ffi` to `wasm32-wasip1`, validates its memory cap and WASI import allowlist while translating it into the pure-managed `UltrosListDoc.WasmIL.dll` assembly, tests in a separate staging directory, then updates **artifacts/dalamud/dev/Ultros.dll** and **artifacts/dalamud/dev.zip** on every build. The development path stays fixed for Dalamud hot reload. Debug includes localhost support; ordinary Release accepts only the fixed production origin.
 
-`-KeepInstalledNative` validates the installed native package and runs the managed interop checks against that exact library. Use it only when the Rust CRDT/FFI implementation is unchanged. A full build publishes the newly compiled native library; the shadow-copy loader keeps that installed source file replaceable.
+`-KeepInstalledNative` validates and reuses the installed `UltrosListDoc.WasmIL.dll` when iterating purely on C# UI code. Because the runtime loads `UltrosListDoc.WasmIL.dll` from memory into a collectible `AssemblyLoadContext`, no native DLL is shipped and the file on disk is never locked during updates or reloads.
 
-Add the printed Ultros.dll path under **Dalamud settings → Experimental → Dev Plugin Locations**, enable **Ultros**, and run **/ultros**. **/ultroslab** opens the local merge experiment in localhost-enabled builds only. Keep every packaged DLL/JSON together, including capture-compatibility.json. Use this fixed `/dev/` path throughout iteration.
+Add the printed Ultros.dll path under **Dalamud settings → Experimental → Dev Plugin Locations**, enable **Ultros**, and run **/ultros**. **/ultroslab** opens the local merge experiment in localhost-enabled builds only. Keep every packaged DLL/JSON together, including `WebAssembly.dll`, `UltrosListDoc.WasmIL.dll`, and `capture-compatibility.json`. Use this fixed `/dev/` path throughout iteration.
 
-Rebuild in the same configuration for C# iteration; the script publishes dependencies and compatibility metadata before replacing the watched plugin DLL. At runtime, the release client copies its tested Rust library into a hash-checked cache inside its configuration directory before loading it. This keeps the installed source DLL replaceable during updates, while existing documents keep their original module alive through finalization. Old prototype installations loaded that source DLL directly: exit the game once if they still lock it. No timestamped or hashed installation folders are created.
+Rebuild in the same configuration for C# iteration; the script publishes dependencies and compatibility metadata before replacing the watched plugin DLL. On plugin unload, `Native.Shutdown()` disposes the active WASM linear memory and unloads its collectible `AssemblyLoadContext` cleanly.
 
 ## Game patch maintenance
 
@@ -135,8 +135,8 @@ Development ZIPs stay local. The web server advertises only indexed release pack
 ## Try it
 
 1. **Account:** label the client, connect, and open the integrated Ultros connection page. List editing, retainer reading/registration/uploads and notifications are selected by default; expand **Customize permissions** for a more limited connection. The direct link opens permission review after sign-in; compare the account and short code, then approve once. Existing limited connections need **Change connection permissions → Review permissions in browser** to add the remaining scopes. For phone sign-in, expand **Use a phone or another browser**, then explicitly reveal or copy the game code. The direct link uses its own 256-bit fragment token, distinct from polling/access/refresh credentials. The website removes it from the address bar immediately and preserves the request across login with an encrypted HttpOnly cookie. Links expire after five minutes and stop working after approval or decline. Extra permissions require browser review. Revoke clients at /plugin/devices.
-2. **Market:** right-click an item or recipe and choose **Search Ultros** for the game window, or **Open Ultros website** for the browser. **Add to [active list]** adds one item with any quality and opens the list for feedback. The Market page also has an add button. Without a writable selection, it opens Lists so you can select a list or enable list editing in Account. A queued add stays bound to the account/device/list shown when its menu opened. Search only offers marketable items (ItemSearchCategory is nonzero); the in-game Search Ultros shortcut is hidden for nonmarketable items. The price zone defaults to the current world's region, falling back to the home region; enter a different region/datacenter/world to override it. Purchases stay manual.
-3. **Lists:** create an **online list** on Ultros, or choose **Make online** for a device list. The **Active list** selector shows your current list. An existing Cart is selected by default (your own Cart takes priority); later selections are remembered per account/profile/origin. Refresh/select another list to edit its rows or mark quantities acquired. Concurrent Acquired deltas add; Need is last-writer-wins. Numeric edits commit on Enter or leaving the field. Market estimates use the website's shared Rust calculator and allow partial stacks.
+2. **Market:** right-click an item or recipe and choose **Search Ultros** for the game window, or **Open Ultros website** for the browser. **Add to [active list]** adds one item with any quality and opens the list for feedback. The Market page offers instant click-to-load item search with game icons, resolved world names, HQ/NQ filtering, sortable listings with totals, cheapest NQ/HQ and recent-sale summary cards, an **Open on Ultros** button, and quality/quantity add-to-list controls. Without a writable selection, adding opens Lists so you can select a list or enable list editing in Account. A queued add stays bound to the account/device/list shown when its menu opened. Search only offers marketable items (ItemSearchCategory is nonzero); the in-game Search Ultros shortcut is hidden for nonmarketable items. The price zone defaults to the current world's region, falling back to the home region; enter a different region/datacenter/world to override it. Purchases stay manual.
+3. **Lists:** create an **online list** on Ultros, or choose **Make online** for a device list. The **Active list** selector shows your current list. An existing Cart is selected by default (your own Cart takes priority); later selections are remembered per account/profile/origin. Add items by name or ID, filter completed rows with **Hide acquired**, track overall progress, and click any item to open it directly in **Market**. Concurrent Acquired deltas add; Need is last-writer-wins. Numeric edits commit on Enter or leaving the field. Market estimates auto-refresh using the website's shared Rust calculator (allowing partial stacks), show per-row costs, and populate the **Shopping Route** view grouped by world with inline purchase buttons.
 4. **Retainers:** after approving registration, visit a summoning bell to save observed retainers automatically. A persistent saved count confirms registration; **Register all observed retainers** remains available for an immediate retry. This creates missing retainer records and groups them under the unverified character in the website's normal Edit, All Listings, and Undercuts views. Existing verified assignments and market metadata are preserved. Observed identities have their own namespace and do not verify Lodestone ownership.
 5. **Uploader:** the local uploader is on by default once packaged reader compatibility and the game build are verified. First registration enables a character's uploads, so after browser approval you can open a retainer's selling list without extra opt-ins. Upgrades also enable untouched old defaults: a local uploader without a game-build pin, and a registered character whose upload preference is still at epoch zero. Explicit local and character pauses are preserved; resume them in **Retainers** if desired. The controls are under Manage uploads; Settings also offers diagnostics. Enable uploads again after a game build change. The window's initial setup/data update, market inventory updates, and closing the price editor trigger capture; responses received just before the window becomes readable or registration finishes are briefly retained for that same character/retainer/object. A full loaded container, matching roster count, and 500 ms of stable data are still required, including after a price-only change or confirmation of an unchanged price. Polling unchanged memory alone never sends another snapshot. Uploaded rows appear in your website listing views as **Awaiting confirmation**, with the capture time. They stay private; only Universalis writes public listings. Matching public stacks observed at or after the game capture replace pending rows one at a time; older public rows cannot confirm a fresh upload. A fresh, loaded empty list clears the previous private view. Capture status distinguishes missing updates, incomplete counts, invalid prices and unchanged snapshots. Status changes also appear in the Dalamud log without raw game IDs or credentials.
 6. **Notifications:** messages appear in game chat with an **[Ultros]** prefix. Settings offers Echo, System messages or Notices, an optional popup, and optional sound effects 1–16 with a local test. Enable that category in the desired game chat tab's filters. **Notifications** retains recent messages, test alerts, read markers and deletion controls. Acknowledgment and marking the website inbox read are separate actions.
@@ -161,15 +161,16 @@ Changing list/account/character, disabling the option, loading incomplete invent
 
 ## Limits and validation
 
-ABI 2 uses checked integer handles, immutable responses, caller-owned buffers and an allocation-free close export. Unwinding panics are caught and poisoned state fails closed; native faults, aborts and arbitrary OOM cannot be contained.
+ABI 2 uses checked integer handles, immutable responses, bounded WASM linear memory (128 MiB hard ceiling) and an allocation-free close export. Rust traps inside the managed WASM-to-IL module throw a catchable `.NET` `RuntimeException`, fence stale handles by generation, and reset cleanly to a fresh instance without crashing the game process.
 
 Both `ultros-list-doc` and `ultros-list-doc-ffi` deny production Clippy lints for
 `unwrap`, `expect`, explicit panic/todo/unimplemented/unreachable, unchecked
 indexing/string slicing, arithmetic side effects and process exit. The shared
-document crate forbids unsafe code; FFI pointer operations require explicit
-unsafe blocks and safety comments. The ABI refuses to compile with `panic=abort`.
-Root `./check_ci.sh` runs these lints, including a non-test library build; fixture
-assertions remain available in tests.
+document crate forbids unsafe code; FFI/WASM buffer boundary operations require explicit
+unsafe blocks and safety comments. Native C ABI builds still refuse `panic=abort`,
+while the shipped `wasm32-wasip1` target runs inside managed WASM trap isolation.
+Root `./check_ci.sh` runs native lints and tests, and `build-plugin.ps1` additionally
+gates `ultros-list-doc-ffi` under `cargo clippy --target wasm32-wasip1 --lib -- -D warnings`.
 
 Three narrowly scoped, documented `expect_used` exceptions retain existing
 infallible APIs: the legacy `new` and trusted `from_rows` constructors (fresh
@@ -183,7 +184,7 @@ Resource guards include 8 MiB snapshots, a 32 MiB decompression budget, 16 MiB p
 
 Connected document/HTTP/disk work runs on one background worker. Game memory is copied on the framework thread. The local merge lab remains synchronous.
 
-The artifact targets Windows x64 inside the game's .NET 10/CoreCLR process. Standalone Windows tests do not establish in-game behavior or Wine/macOS portability; see [portability and the possible managed WASM experiment](PORTABILITY.md). Capture checks the packaged client-structs hash and disables itself after a game build change until explicitly enabled again.
+The release ships 100% pure managed .NET IL inside Dalamud's .NET 10/CoreCLR process (no native DLL); see [document runtime portability](PORTABILITY.md). Capture checks the packaged client-structs hash and disables itself after a game build change until explicitly enabled again.
 
 If capture reports **Dalamud client structs changed**, rebuild with `-DalamudHome` pointing at the installed Dalamud version, then load the new package. A Dalamud update can invalidate an older package even if the game build is unchanged. Keep the generated compatibility file with the DLLs; replacing only that file would bypass the check without rebuilding the reader.
 

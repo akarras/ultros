@@ -25,6 +25,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
     [PluginService] internal static ICondition Condition { get; private set; } = null!;
     [PluginService] internal static IGameInventory Inventory { get; private set; } = null!;
+    [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     private readonly ClientWorker worker;
     private readonly RetainerCapture capture;
     private readonly InventoryAcquisition inventoryProgress;
@@ -39,7 +40,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         if(Commands.Commands.ContainsKey("/ultros"))
             throw new InvalidOperationException("Another copy of Ultros is already loaded. Disable the older Ultros entry before enabling this installation.");
-        Native.Configure(Interface.AssemblyLocation.Directory!.FullName,Path.Combine(Interface.GetPluginConfigDirectory(),"native"));
+        Native.Configure(Interface.AssemblyLocation.Directory!.FullName);
         var config=Interface.GetPluginConfig() as Configuration??new Configuration();
         if(!UltrosEndpoint.LocalhostAvailable&&config.Localhost){config.Localhost=false;Interface.SavePluginConfig(config);}
         var endpoint=new UltrosEndpoint(config.Localhost,config.LocalOrigin);
@@ -49,7 +50,7 @@ public sealed class Plugin : IDalamudPlugin
         window=new MainWindow(worker,capture,inventoryProgress,config);
         gameNotifications=new GameNotifications(worker,config,capture);
         itemShortcuts=new ItemShortcuts(worker,window,endpoint,config);
-        bellShortcut=new BellRetainerShortcut(worker,capture,window);
+        bellShortcut=new BellRetainerShortcut(worker,capture,window,config);
         testNotifications=gameNotifications.Test;
         windows.AddWindow(window);
         openLab=ShowLab;
@@ -86,5 +87,6 @@ public sealed class Plugin : IDalamudPlugin
         bellShortcut.Dispose();itemShortcuts.Dispose();gameNotifications.Dispose();inventoryProgress.Dispose();capture.Dispose();worker.Dispose();openLab=null;testNotifications=null;
         windows.RemoveAllWindows();
         lab?.Dispose();
+        Native.Shutdown();
     }
 }

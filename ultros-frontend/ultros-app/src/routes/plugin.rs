@@ -2,9 +2,10 @@ use crate::global_state::labs::use_dalamud_labs;
 use crate::i18n::*;
 use browser::setup_available;
 use leptos::prelude::*;
+use leptos_i18n::I18nContext;
 use leptos_meta::Title;
 use leptos_router::{components::Outlet, hooks::use_location};
-use ultros_api_types::plugin::{BrowserSelection, PluginWebsiteInfo, SCOPES};
+use ultros_api_types::plugin::{BrowserSelection, PluginWebsiteInfo};
 use ultros_frontend_core::plugin_browser as browser;
 mod setup;
 pub use setup::PluginSetup;
@@ -108,9 +109,10 @@ fn SignInNotice(#[prop(default = "/plugin/verify")] next: &'static str) -> impl 
 
 #[component]
 pub fn PluginVerify() -> impl IntoView {
+    let i18n = use_i18n();
     let (dalamud_labs, _) = use_dalamud_labs();
     view! {
-        <Title text="Connect your game • Ultros" />
+        <Title text=move || t_string!(i18n, plugin_verify_title) />
         <Show when=move || dalamud_labs.get() fallback=|| view! { <PluginLabsNotice /> }>
             <PluginVerifyFlow />
         </Show>
@@ -119,14 +121,15 @@ pub fn PluginVerify() -> impl IntoView {
 
 #[component]
 fn PluginVerifyFlow() -> impl IntoView {
+    let i18n = use_i18n();
     let PluginContext { info, account } = expect_context::<PluginContext>();
     view! {
         <section class="panel p-5 sm:p-7 space-y-5">
-            <h2 class="text-2xl font-bold">"Connect your game to Ultros"</h2>
-            <Suspense fallback=|| view! { <p role="status">"Checking your account…"</p> }>
+            <h2 class="text-2xl font-bold">{t!(i18n, plugin_verify_heading)}</h2>
+            <Suspense fallback=move || view! { <p role="status">{t!(i18n, plugin_checking_account)}</p> }>
                 {move || {
                     if !info.get().flatten().is_some_and(|config| config.enabled) {
-                        return view! { <p>"Game connections are not available on this server yet."</p> }.into_any();
+                        return view! { <p>{t!(i18n, plugin_connections_unavailable)}</p> }.into_any();
                     }
                     if account.get().flatten().is_none() {
                         return view! { <ConnectionControls signin=true /> }.into_any();
@@ -135,7 +138,7 @@ fn PluginVerifyFlow() -> impl IntoView {
                 }}
             </Suspense>
         </section>
-        <p class="text-sm text-[color:var(--color-text-muted)]">"Need to install the plugin first? "<a class="underline" href="/plugin">"Follow the setup guide."</a></p>
+        <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, plugin_need_install)}" "<a class="underline" href="/plugin">{t!(i18n, plugin_follow_setup_guide)}</a></p>
     }
 }
 
@@ -144,6 +147,7 @@ fn ConnectionControls(
     #[prop(optional)] devices: bool,
     #[prop(optional)] signin: bool,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     // The surrounding account resource is server-rendered. Mount its private
     // LocalResource subtree only after hydration, rather than nesting a deferred
     // client Suspense inside the server Suspense's hydration cursor.
@@ -151,7 +155,7 @@ fn ConnectionControls(
     Effect::new(move |_| mounted.set(browser::document_ready()));
     view! {
         <div class="space-y-4">
-            <Show when=move || mounted.get() fallback=|| view! { <p role="status">"Loading connection controls…"</p> }>
+            <Show when=move || mounted.get() fallback=move || view! { <p role="status">{t!(i18n, plugin_loading_controls)}</p> }>
                 {if devices { view! { <DeviceList /> }.into_any() } else if signin { view! { <PairingSignIn /> }.into_any() } else { view! { <PairingForm /> }.into_any() }}
             </Show>
         </div>
@@ -160,9 +164,10 @@ fn ConnectionControls(
 
 #[component]
 fn PairingSignIn() -> impl IntoView {
+    let i18n = use_i18n();
     let prepared = LocalResource::new(browser::prepare_link);
     view! {
-        <Suspense fallback=|| view! { <p role="status">"Preparing your connection request…"</p> }>
+        <Suspense fallback=move || view! { <p role="status">{t!(i18n, plugin_preparing_request)}</p> }>
             {move || prepared.get().map(|result| view! {
                 <div class="space-y-4" data-testid="plugin-link-ready">
                     {result.err().map(|error| view! { <p role="alert">{error}</p> })}
@@ -175,6 +180,7 @@ fn PairingSignIn() -> impl IntoView {
 
 #[component]
 fn PairingForm() -> impl IntoView {
+    let i18n = use_i18n();
     let approval = LocalResource::new(browser::approval);
     let selected = RwSignal::<Option<BrowserSelection>>::new(None);
     let code = RwSignal::new(String::new());
@@ -206,59 +212,59 @@ fn PairingForm() -> impl IntoView {
         {move || match selected.get() {
             Some(selection) => view! { <ReviewPairing selection /> }.into_any(),
             None => view! {
-                <p>"In game, open "<code>"/ultros"</code>" → Account → Connect to Ultros. Enter the code shown there."</p>
-                <Suspense fallback=|| view! { <p role="status">"Preparing a secure connection…"</p> }>
+                <p>{t!(i18n, plugin_code_instructions_prefix)}<code>"/ultros"</code>{t!(i18n, plugin_code_instructions_suffix)}</p>
+                <Suspense fallback=move || view! { <p role="status">{t!(i18n, plugin_preparing_connection)}</p> }>
                     {move || approval.get().map(|result| match result {
-                        Ok(session) => view! {
-                            <p>"Connecting as "<strong>{session.account_name}</strong>"."</p>
-                            <form class="space-y-4" method="post" action="/api/v1/plugin/pairings/select" on:submit=move |event| {
-                                event.prevent_default();
-                                if !select.pending().get_untracked() {
-                                    select.dispatch((session.csrf.clone(), Some(code.get_untracked())));
-                                }
-                            }>
-                                <label class="block space-y-2" for="plugin-code">
-                                    <span class="font-semibold">"Code from your game"</span>
-                                    <input id="plugin-code" class="input block w-full max-w-xs font-mono tracking-widest text-xl" name="user_code" required maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH" prop:value=move || code.get() on:input=move |event| code.set(event_target_value(&event)) />
-                                </label>
-                                <button class="btn-primary" type="submit" data-testid="plugin-select" disabled=move || select.pending().get()>{move || if select.pending().get() { "Opening request…" } else { "Review connection" }}</button>
-                            </form>
-                        }.into_any(),
+                        Ok(session) => {
+                            let account_name = session.account_name.clone();
+                            view! {
+                                <p>{t!(i18n, plugin_connecting_as, name = account_name)}</p>
+                                <form class="space-y-4" method="post" action="/api/v1/plugin/pairings/select" on:submit=move |event| {
+                                    event.prevent_default();
+                                    if !select.pending().get_untracked() {
+                                        select.dispatch((session.csrf.clone(), Some(code.get_untracked())));
+                                    }
+                                }>
+                                    <label class="block space-y-2" for="plugin-code">
+                                        <span class="font-semibold">{t!(i18n, plugin_code_label)}</span>
+                                        <input id="plugin-code" class="input block w-full max-w-xs font-mono tracking-widest text-xl" name="user_code" required maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH" prop:value=move || code.get() on:input=move |event| code.set(event_target_value(&event)) />
+                                    </label>
+                                    <button class="btn-primary" type="submit" data-testid="plugin-select" disabled=move || select.pending().get()>{move || if select.pending().get() { t_string!(i18n, plugin_opening_request) } else { t_string!(i18n, plugin_review_connection_button) }}</button>
+                                </form>
+                            }.into_any()
+                        },
                         Err(error) => view! { <p role="alert">{error}</p> }.into_any(),
                     })}
                 </Suspense>
                 {move || select.value().get().and_then(Result::err).map(|error| view! { <p role="alert">{error}</p> })}
-                <a class="underline text-sm inline-block" href="/plugin/verify" rel="external">"Start again"</a>
+                <a class="underline text-sm inline-block" href="/plugin/verify" rel="external">{t!(i18n, plugin_start_again)}</a>
             }.into_any(),
         }}
     }
 }
 
-fn permission_description(scope: &str) -> &'static str {
+fn permission_description(i18n: I18nContext<Locale, I18nKeys>, scope: &str) -> &'static str {
     match scope {
-        "notifications" => "Receive alerts in game and mark delivered notifications read.",
-        "lists:read" => "View your lists and their items.",
-        "lists:write" => "Add, edit, and remove items in your lists. Includes list reading.",
-        "retainers:read" => "View your private characters, retainer roster, and saved listings.",
-        "retainers:register" => {
-            "Automatically save characters and retainers you visit to your account. Includes retainer reading."
-        }
-        "retainers:upload" => {
-            "Upload private selling lists and confirmed price changes for registered characters. Uploads start by default and can be paused per character in game. Includes retainer reading."
-        }
+        "notifications" => t_string!(i18n, plugin_scope_notifications_desc),
+        "lists:read" => t_string!(i18n, plugin_scope_lists_read_desc),
+        "lists:write" => t_string!(i18n, plugin_scope_lists_write_desc),
+        "retainers:read" => t_string!(i18n, plugin_scope_retainers_read_desc),
+        "retainers:register" => t_string!(i18n, plugin_scope_retainers_register_desc),
+        "retainers:upload" => t_string!(i18n, plugin_scope_retainers_upload_desc),
         _ => "",
     }
 }
 
-fn permission_label(scope: &str) -> &'static str {
-    if scope == "notifications" {
-        return "In-game notifications";
+fn permission_label(i18n: I18nContext<Locale, I18nKeys>, scope: &str) -> &'static str {
+    match scope {
+        "notifications" => t_string!(i18n, plugin_scope_notifications_label),
+        "lists:read" => t_string!(i18n, plugin_scope_lists_read_label),
+        "lists:write" => t_string!(i18n, plugin_scope_lists_write_label),
+        "retainers:read" => t_string!(i18n, plugin_scope_retainers_read_label),
+        "retainers:register" => t_string!(i18n, plugin_scope_retainers_register_label),
+        "retainers:upload" => t_string!(i18n, plugin_scope_retainers_upload_label),
+        _ => t_string!(i18n, plugin_scope_unknown_label),
     }
-    SCOPES
-        .iter()
-        .find(|(id, _)| *id == scope)
-        .map(|(_, label)| *label)
-        .unwrap_or("Unknown permission")
 }
 
 // UI checkbox changes keep dependent reading permissions consistent. The
@@ -287,6 +293,7 @@ fn toggle_permission(permissions: &mut Vec<String>, scope: &str, enabled: bool) 
 
 #[component]
 fn ReviewPairing(selection: BrowserSelection) -> impl IntoView {
+    let i18n = use_i18n();
     let requested = selection
         .scopes
         .iter()
@@ -311,41 +318,45 @@ fn ReviewPairing(selection: BrowserSelection) -> impl IntoView {
     view! {
         {move || match decide.value().get() {
             Some(Ok(result)) => view! {
-                <Title text=if result.approved { "Game connection approved • Ultros" } else { "Game connection declined • Ultros" } />
+                <Title text=move || if result.approved { t_string!(i18n, plugin_approved_title) } else { t_string!(i18n, plugin_declined_title) } />
                 <div class="space-y-4" data-testid="plugin-decision">
-                    <h3 class="text-xl font-bold">{if result.approved { "Game connection approved" } else { "Game connection declined" }}</h3>
-                    <p role="status">{if result.approved { "Return to your game. The plugin will finish connecting automatically. You can close this page." } else { "This request was declined. No new client has been connected. You can close this page." }}</p>
-                    <div class="flex flex-wrap gap-3"><a class="btn-secondary" href="/plugin/devices">"Connected clients"</a><a class="btn-secondary" href="/plugin">"Back to setup"</a></div>
+                    <h3 class="text-xl font-bold">{move || if result.approved { t_string!(i18n, plugin_approved_heading) } else { t_string!(i18n, plugin_declined_heading) }}</h3>
+                    <p role="status">{move || if result.approved { t_string!(i18n, plugin_approved_body) } else { t_string!(i18n, plugin_declined_body) }}</p>
+                    <div class="flex flex-wrap gap-3"><a class="btn-secondary" href="/plugin/devices">{t!(i18n, plugin_connected_clients_link)}</a><a class="btn-secondary" href="/plugin">{t!(i18n, plugin_back_to_setup)}</a></div>
                 </div>
             }.into_any(),
             _ => {
                 let requested = requested.clone();
+                let label = selection.with_value(|value| value.label.clone());
+                let account_name = selection.with_value(|value| value.account_name.clone());
                 view! {
-                    <Title text="Review game connection • Ultros" />
+                    <Title text=move || t_string!(i18n, plugin_review_title) />
                     <div class="space-y-5" data-testid="plugin-review">
-                        <h3 class="text-xl font-bold">"Review game connection"</h3>
-                        <p>"Connect "<strong>{selection.with_value(|value| value.label.clone())}</strong>" to "<strong>{selection.with_value(|value| value.account_name.clone())}</strong>"?"</p>
-                        <div class="plugin-notice"><p>"Compare this code with the one in your own game:"</p><p class="text-2xl font-mono tracking-widest mt-2">{selection.with_value(|value| value.code.clone())}</p></div>
+                        <h3 class="text-xl font-bold">{t!(i18n, plugin_review_heading)}</h3>
+                        <p>{t!(i18n, plugin_review_prompt, label = label, account = account_name)}</p>
+                        <div class="plugin-notice"><p>{t!(i18n, plugin_review_compare_code)}</p><p class="text-2xl font-mono tracking-widest mt-2">{selection.with_value(|value| value.code.clone())}</p></div>
                         <fieldset class="space-y-3" disabled=move || decide.pending().get()>
-                            <legend class="font-semibold mb-3">"Choose what this client can do"</legend>
+                            <legend class="font-semibold mb-3">{t!(i18n, plugin_review_choose_permissions)}</legend>
                             {requested.into_iter().map(|scope| {
                                 let checked_scope = scope.clone();
                                 let change_scope = scope.clone();
+                                let label_scope = scope.clone();
+                                let desc_scope = scope.clone();
                                 view! {
                                     <label class="plugin-permission">
                                         <input type="checkbox" name="scope" value=scope.clone() prop:checked=move || permissions.with(|values| values.contains(&checked_scope)) on:change=move |event| permissions.update(|values| toggle_permission(values, &change_scope, event_target_checked(&event))) />
-                                        <span><strong class="block">{permission_label(&scope)}</strong><span class="text-sm text-[color:var(--color-text-muted)]">{permission_description(&scope)}</span></span>
+                                        <span><strong class="block">{move || permission_label(i18n, &label_scope)}</strong><span class="text-sm text-[color:var(--color-text-muted)]">{move || permission_description(i18n, &desc_scope)}</span></span>
                                     </label>
                                 }
                             }).collect_view()}
                         </fieldset>
-                        <p class="text-sm text-[color:var(--color-text-muted)]">"After approval, private retainer uploads start by default for newly registered characters. You can pause uploads in game or disconnect this client at any time."</p>
+                        <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, plugin_review_uploads_note)}</p>
                         <div class="flex flex-wrap gap-3">
-                            <button class="btn-primary" type="button" value="approve" data-testid="plugin-approve" disabled=move || decide.pending().get() || permissions.with(Vec::is_empty) on:click=move |_| { decide.dispatch(false); }>{move || if decide.pending().get() { "Saving…" } else { "Approve connection" }}</button>
-                            <button class="btn-secondary" type="button" value="deny" data-testid="plugin-deny" disabled=move || decide.pending().get() on:click=move |_| { decide.dispatch(true); }>"Decline"</button>
+                            <button class="btn-primary" type="button" value="approve" data-testid="plugin-approve" disabled=move || decide.pending().get() || permissions.with(Vec::is_empty) on:click=move |_| { decide.dispatch(false); }>{move || if decide.pending().get() { t_string!(i18n, plugin_saving) } else { t_string!(i18n, plugin_approve_button) }}</button>
+                            <button class="btn-secondary" type="button" value="deny" data-testid="plugin-deny" disabled=move || decide.pending().get() on:click=move |_| { decide.dispatch(true); }>{t!(i18n, plugin_decline_button)}</button>
                         </div>
                         {move || decide.value().get().and_then(Result::err).map(|error| view! { <p role="alert">{error}</p> })}
-                        <a class="underline text-sm inline-block" href="/plugin/verify" rel="external">"Start again"</a>
+                        <a class="underline text-sm inline-block" href="/plugin/verify" rel="external">{t!(i18n, plugin_start_again)}</a>
                     </div>
                 }.into_any()
             },
@@ -355,16 +366,17 @@ fn ReviewPairing(selection: BrowserSelection) -> impl IntoView {
 
 #[component]
 pub fn PluginDevices() -> impl IntoView {
+    let i18n = use_i18n();
     let PluginContext { info, account } = expect_context::<PluginContext>();
     view! {
-        <Title text="Connected game clients • Ultros" />
+        <Title text=move || t_string!(i18n, plugin_devices_title) />
         <section class="panel p-5 sm:p-7 space-y-5">
-            <h2 class="text-2xl font-bold">"Connected game clients"</h2>
-            <p>"Manage the game clients that can use your Ultros account. Disconnecting a client also removes its in-game notification destination."</p>
-            <Suspense fallback=|| view! { <p role="status">"Checking your account…"</p> }>
+            <h2 class="text-2xl font-bold">{t!(i18n, plugin_devices_heading)}</h2>
+            <p>{t!(i18n, plugin_devices_intro)}</p>
+            <Suspense fallback=move || view! { <p role="status">{t!(i18n, plugin_checking_account)}</p> }>
                 {move || {
                     if !info.get().flatten().is_some_and(|config| config.enabled) {
-                        return view! { <p>"Game connections are not available on this server yet."</p> }.into_any();
+                        return view! { <p>{t!(i18n, plugin_connections_unavailable)}</p> }.into_any();
                     }
                     if account.get().flatten().is_none() {
                         return view! { <SignInNotice next="/plugin/devices" /> }.into_any();
@@ -378,6 +390,7 @@ pub fn PluginDevices() -> impl IntoView {
 
 #[component]
 fn DeviceList() -> impl IntoView {
+    let i18n = use_i18n();
     let plugin_available = browser::use_setup_available();
     let devices = LocalResource::new(browser::devices);
     let revoke = Action::new(|input: &(String, String)| {
@@ -390,25 +403,28 @@ fn DeviceList() -> impl IntoView {
         }
     });
     view! {
-        <Suspense fallback=|| view! { <p role="status">"Loading connected clients…"</p> }>
+        <Suspense fallback=move || view! { <p role="status">{t!(i18n, plugin_devices_loading)}</p> }>
             {move || devices.get().map(|result| match result {
                 Err(error) => view! { <p role="alert">{error}</p> }.into_any(),
                 Ok(data) => {
                     let csrf = data.csrf;
+                    let account_name = data.account_name;
                     view! {
                         <div class="space-y-4" data-testid="plugin-devices">
-                            <p>"Connections for "<strong>{data.account_name}</strong>"."</p>
-                            {data.sessions.is_empty().then(|| view! { <p>"No game clients are connected yet. Start a connection from your game to add one."</p> })}
+                            <p>{t!(i18n, plugin_devices_for, name = account_name)}</p>
+                            {data.sessions.is_empty().then(|| view! { <p>{t!(i18n, plugin_devices_empty)}</p> })}
                             {data.sessions.into_iter().map(|session| {
                                 let csrf = csrf.clone();
                                 let id = session.id.clone();
-                                let scopes = session.scopes.iter().filter(|scope| !scope.starts_with("notifications:")).map(|scope| permission_label(scope)).chain(session.scopes.iter().any(|scope| scope.starts_with("notifications:")).then_some("In-game notifications")).collect::<Vec<_>>().join(" · ");
+                                let scopes = session.scopes.iter().filter(|scope| !scope.starts_with("notifications:")).map(|scope| permission_label(i18n, scope)).chain(session.scopes.iter().any(|scope| scope.starts_with("notifications:")).then(|| permission_label(i18n, "notifications"))).collect::<Vec<_>>().join(" · ");
+                                let created = session.created_at.format("%b %-d, %Y").to_string();
+                                let last_seen = session.last_seen_at.format("%b %-d, %Y at %H:%M UTC").to_string();
                                 view! {
                                     <article class="plugin-device space-y-3" data-device=session.id>
                                         <h3 class="font-bold text-lg break-words">{session.label}</h3>
                                         <p class="text-sm text-[color:var(--color-text-muted)]">{scopes}</p>
-                                        <p class="text-sm">"Connected "{session.created_at.format("%b %-d, %Y").to_string()}" · Last used "{session.last_seen_at.format("%b %-d, %Y at %H:%M UTC").to_string()}</p>
-                                        <button class="btn-secondary" type="button" data-testid="plugin-revoke" disabled=move || revoke.pending().get() on:click=move |_| { revoke.dispatch((csrf.clone(), id.clone())); }>"Disconnect client"</button>
+                                        <p class="text-sm">{t!(i18n, plugin_devices_meta, created = created, last_seen = last_seen)}</p>
+                                        <button class="btn-secondary" type="button" data-testid="plugin-revoke" disabled=move || revoke.pending().get() on:click=move |_| { revoke.dispatch((csrf.clone(), id.clone())); }>{t!(i18n, plugin_devices_disconnect)}</button>
                                     </article>
                                 }
                             }).collect_view()}
@@ -418,23 +434,24 @@ fn DeviceList() -> impl IntoView {
             })}
         </Suspense>
         {move || revoke.value().get().map(|result| match result {
-            Ok(_) => view! { <p role="status">"Client disconnected."</p> }.into_any(),
+            Ok(_) => view! { <p role="status">{t!(i18n, plugin_devices_disconnected)}</p> }.into_any(),
             Err(error) => view! { <p role="alert">{error}</p> }.into_any(),
         })}
         <div class="flex flex-wrap gap-3">
             <Suspense fallback=|| ()>
                 <Show when=move || plugin_available.get()>
-                    <a class="btn-primary" href="/plugin/verify">"Connect a game"</a>
+                    <a class="btn-primary" href="/plugin/verify">{t!(i18n, plugin_devices_connect_button)}</a>
                 </Show>
             </Suspense>
-            <button class="btn-secondary" type="button" disabled=move || revoke.pending().get() on:click=move |_| devices.refetch()>"Refresh clients"</button>
+            <button class="btn-secondary" type="button" disabled=move || revoke.pending().get() on:click=move |_| devices.refetch()>{t!(i18n, plugin_devices_refresh)}</button>
         </div>
     }
 }
 
 #[component]
 pub fn PluginNotFound() -> impl IntoView {
-    view! { <Title text="Game plugin • Ultros" /><p>"That plugin page doesn’t exist. "<a class="underline" href="/plugin">"Open the setup guide."</a></p> }
+    let i18n = use_i18n();
+    view! { <Title text=move || t_string!(i18n, plugin_not_found_title) /><p>{t!(i18n, plugin_not_found_body)}" "<a class="underline" href="/plugin">{t!(i18n, plugin_not_found_link)}</a></p> }
 }
 
 #[cfg(test)]

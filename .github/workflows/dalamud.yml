@@ -58,6 +58,8 @@ jobs:
             - uses: dtolnay/rust-toolchain@master
               with:
                   toolchain: nightly-2026-11-16
+                  targets: wasm32-wasip1
+                  components: clippy
             - name: Check update policy and release provenance fixtures
               run: |
                   ./plugins/dalamud/test-check-updates.ps1

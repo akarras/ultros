@@ -35,9 +35,11 @@ internal static class HistoryPrivacyChecks
             history.Receive([a,b],now);
             Require(history.Entries.Select(d=>d.Id).SequenceEqual([b.Id])&&history.IsDeleted(a.Id),"Deleted delivery returned after reload/retry.");
             Require(history.ReadIds.Length==0,"Deleted history kept stale read markers.");
+            Require(history.ReceivedTimes.ContainsKey(b.Id)&&!history.ReceivedTimes.ContainsKey(a.Id),"Received timestamps did not track retained deliveries cleanly.");
             var clearing=history.Entries.Select(d=>d.Id).ToArray();
             var fresh=a with{Id="3"};history.Receive([fresh],now);history.Delete(clearing,now);
             Require(history.Entries.Select(d=>d.Id).SequenceEqual([fresh.Id]),"Clear removed a newly arrived alert.");
+            Require(new NotificationHistory(path).ReceivedTimes.ContainsKey(fresh.Id),"Received timestamp did not survive reload.");
             Require(new NotificationHistory(Path.Combine(dir,"other-device.json")).Entries.Length==0,"History crossed devices.");
             // A failed checkpoint must leave the UI entry and suppression state unchanged.
             File.Delete(path);Directory.CreateDirectory(path);

@@ -21,8 +21,8 @@
     )
 )]
 
-#[cfg(panic = "abort")]
-compile_error!("The document C ABI requires panic=unwind to contain Rust panics.");
+#[cfg(all(panic = "abort", not(target_arch = "wasm32")))]
+compile_error!("The native document C ABI requires panic=unwind to contain Rust panics.");
 
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -685,6 +685,46 @@ pub extern "C" fn ultros_list_proto_response_free(response: u64) {
             s.responses.remove(&response);
         }
     });
+}
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn ultros_list_alloc(len: usize) -> *mut u8 {
+    if len == 0 || len > MAX_REQUEST {
+        return std::ptr::null_mut();
+    }
+    let mut buf = Vec::<u8>::new();
+    if buf.try_reserve_exact(len).is_err() {
+        return std::ptr::null_mut();
+    }
+    let mut buf = std::mem::ManuallyDrop::new(buf);
+    buf.as_mut_ptr()
+}
+
+/// # Safety
+/// `ptr` and `len` must match an active allocation returned by `ultros_list_alloc`
+/// that has not yet been released.
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ultros_list_dealloc(ptr: *mut u8, len: usize) {
+    if len == 0 || len > MAX_REQUEST || ptr.is_null() {
+        return;
+    }
+    // SAFETY: caller returns a buffer previously allocated by `ultros_list_alloc`
+    // with exact capacity `len` and initialized length 0.
+    unsafe {
+        drop(Vec::from_raw_parts(ptr, 0, len));
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn ultros_list_proto_response_ptr(response: u64) -> *const u8 {
+    state()
+        .lock()
+        .ok()
+        .and_then(|s| s.responses.get(&response).map(Vec::as_ptr))
+        .unwrap_or(std::ptr::null())
 }
 
 #[cfg(test)]
