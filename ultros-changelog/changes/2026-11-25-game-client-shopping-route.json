@@ -1,0 +1,8 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Shopping routes and a refreshed game client",
+  "blurb": "The Ultros game client groups your active list into a world-by-world shopping route with remaining cost, shows item icons and HQ/NQ filters on market searches, and adds Settings toggles for chat alerts and the summoning-bell shortcut. It no longer ships a native DLL.",
+  "link": "/plugin",
+  "labs": true
+}
