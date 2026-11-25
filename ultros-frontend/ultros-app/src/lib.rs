@@ -1118,6 +1118,10 @@ mod error_filter_wiring {
         // Category 12: a frameless AbortError rejection nobody observed
         // (third-party teardown on client-side navigation, #8170/#8171).
         assert!(FILTER_JS.contains("isUnobservedAbortRejection"));
+        // Category 13: every frame is a browser extension's or an injected
+        // bare-named script's (#8172/#8173).
+        assert!(FILTER_JS.contains("isExtensionScriptError"));
+        assert!(FILTER_JS.contains("chrome|moz|safari|safari-web|ms-browser"));
     }
 
     /// Same contract for the wasm symbolicator: beforeSend calls

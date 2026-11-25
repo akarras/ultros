@@ -14,8 +14,16 @@
         "resolved": "1.2.39",
         "contentHash": "fcFN01tDTIQqDuTwr1jUQK/geofiwjG5DycJQOnC72i1SsLAk1ELe+apBOuZ11UMQG8YKFZG1FgvjZPbqHyatg=="
       },
+      "WebAssembly": {
+        "type": "Transitive",
+        "resolved": "2.1.0",
+        "contentHash": "PfY1LMx7y77AOvHW8TLc5ib+G1BhjRajwULqXTKdlvIV6q2LHUAeKtT/B5YKQVOpfbHdL2Ce0VOWodHBFI9N4A=="
+      },
       "ultros.lists": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "WebAssembly": "[2.1.0, )"
+        }
       }
     }
   }

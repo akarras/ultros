@@ -137,6 +137,16 @@ pub enum Edit {
     Remove(i32),
     RemoveMany(Vec<i32>),
     SetQuality(Vec<i32>, Option<bool>),
+    /// Bulk mark-acquired or reset-owned on selected rows as one undo step.
+    /// Marking acquired fills each row up to `need.max(1)` without shrinking
+    /// an already over-acquired row; resetting sets owned back to zero.
+    SetAcquiredMany {
+        ids: Vec<i32>,
+        acquired: bool,
+    },
+    /// Reset every owned row back to zero in one undo step for recurring
+    /// restock runs. No-op when nothing is owned.
+    ResetAllAcquired,
     /// Prefers the row whose quality matches `hq` (when it has room for
     /// more); falls back to any row of `item_id` with room. Mirrors the
     /// legacy auto-mark behaviour of "fill the row you're looking at first."
@@ -238,6 +248,47 @@ pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), 
                     {
                         doc.set_quality(&key, quality)?;
                     }
+                }
+                Ok(())
+            })
+        }
+        Edit::SetAcquiredMany { ids, acquired } => {
+            let targets: Vec<(RowKey, i64)> = ids
+                .iter()
+                .filter_map(|id| {
+                    let key = find_key(doc, *id)?;
+                    let row = doc.row(&key)?;
+                    if acquired {
+                        let need = row.need.max(1);
+                        (row.acquired < need).then_some((key, need))
+                    } else {
+                        (row.acquired != 0).then_some((key, 0))
+                    }
+                })
+                .collect();
+            if targets.is_empty() {
+                return Ok(());
+            }
+            undo.group(|doc| {
+                for (key, next) in &targets {
+                    doc.set_acquired(key, *next)?;
+                }
+                Ok(())
+            })
+        }
+        Edit::ResetAllAcquired => {
+            let keys: Vec<RowKey> = doc
+                .rows()
+                .into_iter()
+                .filter(|row| row.acquired != 0)
+                .map(|row| row.key)
+                .collect();
+            if keys.is_empty() {
+                return Ok(());
+            }
+            undo.group(|doc| {
+                for key in &keys {
+                    doc.set_acquired(key, 0)?;
                 }
                 Ok(())
             })
@@ -607,5 +658,136 @@ mod tests {
         )
         .unwrap();
         assert_eq!(doc.row(&RowKey::new(10, Some(false))).unwrap().acquired, 1);
+    }
+
+    #[test]
+    fn set_acquired_many_marks_and_resets_selected_rows_in_one_undo_step() {
+        let doc = ListDocument::from_rows(
+            MetaSnapshot {
+                name: "Restock".into(),
+                scope: None,
+            },
+            &[
+                RowSnapshot {
+                    key: RowKey::new(10, None),
+                    need: 5,
+                    acquired: 1,
+                    target: None,
+                },
+                RowSnapshot {
+                    key: RowKey::new(20, Some(true)),
+                    need: 3,
+                    acquired: 7, // over-acquired: Mark acquired must not shrink it
+                    target: None,
+                },
+                RowSnapshot {
+                    key: RowKey::new(30, None),
+                    need: 4,
+                    acquired: 0,
+                    target: None,
+                },
+            ],
+        );
+        let mut undo = ListUndo::with_merge_interval(&doc, 0);
+        let id10 = row_id(&RowKey::new(10, None)).unwrap();
+        let id20 = row_id(&RowKey::new(20, Some(true))).unwrap();
+        let id30 = row_id(&RowKey::new(30, None)).unwrap();
+
+        apply(
+            &doc,
+            &mut undo,
+            Edit::SetAcquiredMany {
+                ids: vec![id10, id20],
+                acquired: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(doc.row(&RowKey::new(10, None)).unwrap().acquired, 5);
+        assert_eq!(
+            doc.row(&RowKey::new(20, Some(true))).unwrap().acquired,
+            7,
+            "marking acquired preserves already over-acquired counts"
+        );
+        assert_eq!(doc.row(&RowKey::new(30, None)).unwrap().acquired, 0);
+
+        // One undo reverts the bulk mark.
+        assert!(undo.undo().unwrap());
+        assert_eq!(doc.row(&RowKey::new(10, None)).unwrap().acquired, 1);
+        assert_eq!(doc.row(&RowKey::new(20, Some(true))).unwrap().acquired, 7);
+
+        // Bulk reset clears selected rows to 0 in one undo step.
+        apply(
+            &doc,
+            &mut undo,
+            Edit::SetAcquiredMany {
+                ids: vec![id10, id20, id30],
+                acquired: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(doc.row(&RowKey::new(10, None)).unwrap().acquired, 0);
+        assert_eq!(doc.row(&RowKey::new(20, Some(true))).unwrap().acquired, 0);
+        assert_eq!(doc.row(&RowKey::new(30, None)).unwrap().acquired, 0);
+
+        // Repeating reset when already 0 does not push a no-op undo step.
+        apply(
+            &doc,
+            &mut undo,
+            Edit::SetAcquiredMany {
+                ids: vec![id10, id20, id30],
+                acquired: false,
+            },
+        )
+        .unwrap();
+        assert!(undo.undo().unwrap());
+        assert_eq!(doc.row(&RowKey::new(10, None)).unwrap().acquired, 1);
+        assert_eq!(doc.row(&RowKey::new(20, Some(true))).unwrap().acquired, 7);
+    }
+
+    #[test]
+    fn reset_all_acquired_clears_every_row_in_one_undo_step_for_restock() {
+        let doc = ListDocument::from_rows(
+            MetaSnapshot {
+                name: "Raid supplies".into(),
+                scope: None,
+            },
+            &[
+                RowSnapshot {
+                    key: RowKey::new(10, Some(true)),
+                    need: 20,
+                    acquired: 20,
+                    target: None,
+                },
+                RowSnapshot {
+                    key: RowKey::new(20, None),
+                    need: 12,
+                    acquired: 5,
+                    target: None,
+                },
+                RowSnapshot {
+                    key: RowKey::new(30, Some(false)),
+                    need: 4,
+                    acquired: 0,
+                    target: None,
+                },
+            ],
+        );
+        let mut undo = ListUndo::with_merge_interval(&doc, 0);
+
+        apply(&doc, &mut undo, Edit::ResetAllAcquired).unwrap();
+        assert_eq!(doc.row(&RowKey::new(10, Some(true))).unwrap().acquired, 0);
+        assert_eq!(doc.row(&RowKey::new(20, None)).unwrap().acquired, 0);
+        assert_eq!(doc.row(&RowKey::new(30, Some(false))).unwrap().acquired, 0);
+        // Needs stay intact for the restock run.
+        assert_eq!(doc.row(&RowKey::new(10, Some(true))).unwrap().need, 20);
+        assert_eq!(doc.row(&RowKey::new(20, None)).unwrap().need, 12);
+
+        // No-op when nothing is owned: must not create an empty undo step.
+        apply(&doc, &mut undo, Edit::ResetAllAcquired).unwrap();
+
+        assert!(undo.undo().unwrap());
+        assert_eq!(doc.row(&RowKey::new(10, Some(true))).unwrap().acquired, 20);
+        assert_eq!(doc.row(&RowKey::new(20, None)).unwrap().acquired, 5);
+        assert_eq!(doc.row(&RowKey::new(30, Some(false))).unwrap().acquired, 0);
     }
 }

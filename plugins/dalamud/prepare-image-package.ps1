@@ -25,13 +25,9 @@ function Assert-ImagePluginPackage([string]$Directory, [string]$Version, [string
     }
     $archive = [IO.Compression.ZipFile]::OpenRead($zip.FullName)
     try {
-        $expected = @('Ultros.dll','Ultros.json','Ultros.deps.json','Ultros.Lists.dll','ultros_list_doc_ffi.dll','capture-compatibility.json','build-info.json','README.md','PORTABILITY.md','LICENSE') | Sort-Object
-        if (@(Compare-Object $expected @($archive.Entries.FullName | Sort-Object)).Count) { throw 'Unexpected plugin ZIP contents.' }
-        foreach ($entry in $archive.Entries) {
-            if ($entry.Length -le 0 -or $entry.Length -gt 128MB) { throw 'Unexpected plugin ZIP entry size.' }
-        }
         function Read-EntryJson([string]$Name) {
             $entry = $archive.GetEntry($Name)
+            if (!$entry) { throw "Missing plugin package metadata: $Name" }
             if ($entry.Length -gt 64KB) { throw 'Plugin metadata is too large.' }
             $reader = [IO.StreamReader]::new($entry.Open())
             try { $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
@@ -39,12 +35,32 @@ function Assert-ImagePluginPackage([string]$Directory, [string]$Version, [string
         $build = Read-EntryJson 'build-info.json'
         $manifest = Read-EntryJson 'Ultros.json'
         $capture = Read-EntryJson 'capture-compatibility.json'
-        $native = $archive.GetEntry('ultros_list_doc_ffi.dll').Open()
-        try { $nativeHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($native)) } finally { $native.Dispose() }
+        $isManagedWasm = $build.Target -ceq 'wasm32-wasip1'
+        $isLegacyNative = $build.Target -ceq 'x86_64-pc-windows-msvc'
+        if (!$isManagedWasm -and !($isLegacyNative -and !$References)) {
+            throw 'The plugin release uses an unsupported document runtime target.'
+        }
+        $expected = if ($isManagedWasm) {
+            @('Ultros.dll','Ultros.json','Ultros.deps.json','Ultros.Lists.dll','WebAssembly.dll','UltrosListDoc.WasmIL.dll','capture-compatibility.json','build-info.json','README.md','PORTABILITY.md','LICENSE') | Sort-Object
+        } else {
+            @('Ultros.dll','Ultros.json','Ultros.deps.json','Ultros.Lists.dll','ultros_list_doc_ffi.dll','capture-compatibility.json','build-info.json','README.md','PORTABILITY.md','LICENSE') | Sort-Object
+        }
+        if (@(Compare-Object $expected @($archive.Entries.FullName | Sort-Object)).Count) { throw 'Unexpected plugin ZIP contents.' }
+        foreach ($entry in $archive.Entries) {
+            if ($entry.Length -le 0 -or $entry.Length -gt 128MB) { throw 'Unexpected plugin ZIP entry size.' }
+        }
+        $docEntryName = if ($isManagedWasm) { 'UltrosListDoc.WasmIL.dll' } else { 'ultros_list_doc_ffi.dll' }
+        $docStream = $archive.GetEntry($docEntryName).Open()
+        try { $docHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($docStream)) } finally { $docStream.Dispose() }
+        if ($isManagedWasm) {
+            $wasmRuntimeStream = $archive.GetEntry('WebAssembly.dll').Open()
+            try { $wasmRuntimeHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($wasmRuntimeStream)) } finally { $wasmRuntimeStream.Dispose() }
+            if ($build.WebAssemblySha256 -ine $wasmRuntimeHash) { throw 'The WebAssembly runtime assembly hash does not match build-info.json.' }
+        }
         if ($build.SourceDirty -or $build.LocalhostEnabled -or $build.ReusedInstalledNative -or
             $build.Configuration -cne 'Release' -or $build.SourceCommit -cne $release.commit -or
             $build.PluginVersion -cne $Version -or $build.ServerProtocol -ne 1 -or $build.NativeAbi -ne 2 -or
-            $build.NativeSha256 -ine $nativeHash -or $build.Target -cne 'x86_64-pc-windows-msvc' -or
+            $build.NativeSha256 -ine $docHash -or
             $build.ClientStructsSha256 -ine $capture.ClientStructsSha256 -or
             $manifest.InternalName -cne 'Ultros' -or $manifest.AssemblyVersion -cne $Version -or $manifest.DalamudApiLevel -ne 15) {
             throw 'The plugin release is not a clean, tested production package.'
@@ -61,7 +77,7 @@ function Assert-ImagePluginPackage([string]$Directory, [string]$Version, [string
 }
 
 $script:NativePackage = 'ultros-list-doc-ffi'
-$script:NativeTarget = 'x86_64-pc-windows-msvc'
+$script:NativeTarget = 'wasm32-wasip1'
 
 # Cargo's resolved build plan for the plugin's native library: every crate it
 # compiles with its version, features, target and profile settings, plus the

@@ -5,25 +5,40 @@ $fixture = Join-Path ([IO.Path]::GetTempPath()) ('ultros-image-package-' + [guid
 New-Item -ItemType Directory -Path $fixture | Out-Null
 $version = '1.2.3.4'
 $commit = 'a' * 40
-$native = 'synthetic native library'
+$native = 'synthetic managed wasm-il library'
 $nativeHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($native)))
+$webAssembly = 'synthetic webassembly runtime'
+$webAssemblyHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($webAssembly)))
 $build = @{
     SourceDirty=$false; LocalhostEnabled=$false; ReusedInstalledNative=$false; Configuration='Release'
     SourceCommit=$commit; PluginVersion=$version; ServerProtocol=1; NativeAbi=2
-    NativeSha256=$nativeHash; Target='x86_64-pc-windows-msvc'; ClientStructsSha256=('b' * 64); DalamudVersion='15.0.3.9'
+    NativeSha256=$nativeHash; WebAssemblySha256=$webAssemblyHash; Target='wasm32-wasip1'; ClientStructsSha256=('b' * 64); DalamudVersion='15.0.3.9'
 }
 $manifest = @{ InternalName='Ultros'; AssemblyVersion=$version; DalamudApiLevel=15 }
 $capture = @{ ClientStructsSha256=('b' * 64) }
-function Write-Package {
+function Write-Package([switch]$LegacyNative) {
     $zipPath = Join-Path $fixture 'Ultros.zip'
     $stream = [IO.File]::Open($zipPath, [IO.FileMode]::Create)
     $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create)
     try {
-        $files = @{
-            'Ultros.dll'='managed'; 'Ultros.Lists.dll'='managed'; 'Ultros.deps.json'='{}'
-            'ultros_list_doc_ffi.dll'=$native; 'README.md'='test'; 'PORTABILITY.md'='test'; 'LICENSE'='test'
-            'build-info.json'=($build | ConvertTo-Json); 'Ultros.json'=($manifest | ConvertTo-Json)
-            'capture-compatibility.json'=($capture | ConvertTo-Json)
+        $files = if ($LegacyNative) {
+            $legacyBuild = $build.Clone()
+            $legacyBuild.Target = 'x86_64-pc-windows-msvc'
+            $legacyBuild.Remove('WebAssemblySha256')
+            @{
+                'Ultros.dll'='managed'; 'Ultros.Lists.dll'='managed'; 'Ultros.deps.json'='{}'
+                'ultros_list_doc_ffi.dll'=$native; 'README.md'='test'; 'PORTABILITY.md'='test'; 'LICENSE'='test'
+                'build-info.json'=($legacyBuild | ConvertTo-Json); 'Ultros.json'=($manifest | ConvertTo-Json)
+                'capture-compatibility.json'=($capture | ConvertTo-Json)
+            }
+        } else {
+            @{
+                'Ultros.dll'='managed'; 'Ultros.Lists.dll'='managed'; 'Ultros.deps.json'='{}'
+                'WebAssembly.dll'=$webAssembly; 'UltrosListDoc.WasmIL.dll'=$native
+                'README.md'='test'; 'PORTABILITY.md'='test'; 'LICENSE'='test'
+                'build-info.json'=($build | ConvertTo-Json); 'Ultros.json'=($manifest | ConvertTo-Json)
+                'capture-compatibility.json'=($capture | ConvertTo-Json)
+            }
         }
         foreach ($name in $files.Keys) {
             $entry = $archive.CreateEntry($name)
@@ -59,18 +74,21 @@ try {
         Assert-Rejected { Assert-ImagePluginPackage $fixture $version } "Nonproduction flag accepted: $flag"
         $build[$flag] = $false
     }
-    foreach ($property in @('SourceCommit','NativeSha256','ClientStructsSha256')) {
+    foreach ($property in @('SourceCommit','NativeSha256','WebAssemblySha256','ClientStructsSha256')) {
         $original = $build[$property]
         $build[$property] = 'c' * $original.Length
         Write-Package
         Assert-Rejected { Assert-ImagePluginPackage $fixture $version } "Mismatched package metadata accepted: $property"
         $build[$property] = $original
     }
-    Write-Package
+    Write-Package -LegacyNative
+    $null = Assert-ImagePluginPackage $fixture $version
     $refs = Join-Path $fixture 'references'
     New-Item -ItemType Directory -Path $refs | Out-Null
     Copy-Item -LiteralPath (Join-Path $PSHOME 'System.Management.Automation.dll') -Destination (Join-Path $refs 'Dalamud.dll')
     [IO.File]::WriteAllText((Join-Path $refs 'FFXIVClientStructs.dll'), 'different references')
+    Assert-Rejected { Assert-ImagePluginPackage $fixture $version $refs } 'Legacy native package was accepted as a current release.'
+    Write-Package
     Assert-Rejected { Assert-ImagePluginPackage $fixture $version $refs } 'Stale Dalamud references were accepted.'
 
     # A web-only commit reuses the package; a dependency/native/managed change

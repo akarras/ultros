@@ -911,6 +911,10 @@ mod browser {
             remove: Callback::new(move |id| apply.run(Edit::Remove(id))),
             remove_many: Callback::new(move |ids| apply.run(Edit::RemoveMany(ids))),
             set_quality_many: Callback::new(move |(ids, hq)| apply.run(Edit::SetQuality(ids, hq))),
+            set_acquired_many: Callback::new(move |(ids, acquired)| {
+                apply.run(Edit::SetAcquiredMany { ids, acquired })
+            }),
+            reset_all_acquired: Callback::new(move |()| apply.run(Edit::ResetAllAcquired)),
             bulk_pending: Signal::derive(|| false),
             sort: sort.into(),
             set_sort: Callback::new(move |spec| sort.set(spec)),

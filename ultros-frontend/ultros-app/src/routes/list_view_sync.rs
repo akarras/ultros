@@ -455,6 +455,8 @@ pub struct ListWorkspaceSource {
     /// bar while the host's actions are in flight.
     pub remove_many: Callback<Vec<i32>>,
     pub set_quality_many: Callback<(Vec<i32>, Option<bool>)>,
+    pub set_acquired_many: Callback<(Vec<i32>, bool)>,
+    pub reset_all_acquired: Callback<()>,
     pub bulk_pending: Signal<bool>,
     /// Row order. Account lists keep it in the URL `sort` param (shared
     /// with the filter row); device lists keep it in memory.
@@ -1302,8 +1304,32 @@ pub fn ListViewSync() -> impl IntoView {
             result
         }
     });
-    let bulk_pending =
-        Signal::derive(move || delete_items.pending().get() || edit_items_hq.pending().get());
+    let edit_items_acquired = Action::new(move |(items, acquired): &(Vec<i32>, bool)| {
+        let edit = Edit::SetAcquiredMany {
+            ids: items.clone(),
+            acquired: *acquired,
+        };
+        async move {
+            let result = apply_edit(handle, edit);
+            if let Err(error) = &result {
+                mutation_feedback.set(workspace_error(i18n, error));
+            }
+            result
+        }
+    });
+    let reset_all_acquired_action = Action::new(move |_: &()| async move {
+        let result = apply_edit(handle, Edit::ResetAllAcquired);
+        if let Err(error) = &result {
+            mutation_feedback.set(workspace_error(i18n, error));
+        }
+        result
+    });
+    let bulk_pending = Signal::derive(move || {
+        delete_items.pending().get()
+            || edit_items_hq.pending().get()
+            || edit_items_acquired.pending().get()
+            || reset_all_acquired_action.pending().get()
+    });
 
     // Listings come from the existing endpoint and are cached per list; the
     // document supplies rows, so a local edit never refetches prices.
@@ -1943,6 +1969,12 @@ pub fn ListViewSync() -> impl IntoView {
         }),
         set_quality_many: Callback::new(move |(ids, hq)| {
             edit_items_hq.dispatch((ids, hq));
+        }),
+        set_acquired_many: Callback::new(move |(ids, acquired)| {
+            edit_items_acquired.dispatch((ids, acquired));
+        }),
+        reset_all_acquired: Callback::new(move |()| {
+            reset_all_acquired_action.dispatch(());
         }),
         bulk_pending,
         sort: Signal::derive(move || sort_spec.get()),

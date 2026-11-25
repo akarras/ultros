@@ -4,6 +4,8 @@ internal sealed record WorldDirectory(WorldRegion[] Regions)
 {
     internal string RegionFor(int current,int home)=>Regions.FirstOrDefault(r=>r.Datacenters.Any(d=>d.Worlds.Any(w=>w.Id==current)))?.Name
         ??Regions.FirstOrDefault(r=>r.Datacenters.Any(d=>d.Worlds.Any(w=>w.Id==home)))?.Name??"";
+    internal string? WorldName(int worldId)=>Regions.SelectMany(r=>r.Datacenters).SelectMany(d=>d.Worlds).FirstOrDefault(w=>w.Id==worldId)?.Name;
+    internal string? DatacenterName(int worldId)=>Regions.SelectMany(r=>r.Datacenters).FirstOrDefault(d=>d.Worlds.Any(w=>w.Id==worldId))?.Name;
 }
 internal sealed record WorldRegion(int Id,string Name,WorldDatacenter[] Datacenters);
 internal sealed record WorldDatacenter(int Id,string Name,WorldEntry[] Worlds);

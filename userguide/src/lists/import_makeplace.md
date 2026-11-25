@@ -14,7 +14,7 @@ Usually this file is found in the MakePlace directory in "Save"
 
 ## Importing into a list
 
-Open the list that you wish to add all the makeplace items to and then press the "Make Place" button at the top of the page.
+Open the online list that you wish to add all the MakePlace items to, open the **More options** (`⋮`) menu at the top right, and choose **Make Place**.
 
 Copy the txt file from the previous step into the text box. You should see "x items ready to add" at the bottom.
 
