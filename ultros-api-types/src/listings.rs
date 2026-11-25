@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 /// This mostly matches with the ultros-db/entity type, but doesn't include the sea-orm specifics
 /// See [ultros-db::active_listing::Entity]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ActiveListing {
     pub id: i64,
     pub world_id: i32,

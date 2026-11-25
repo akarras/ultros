@@ -48,13 +48,16 @@ use serde::{Deserialize, Serialize};
 /// which [`ActiveListing::timestamp`] carries (when the seller last touched the
 /// listing in-game).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WorldItemLastUpdated {
     pub world_id: i32,
     pub updated_at: NaiveDateTime,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CurrentlyShownItem {
+    #[cfg_attr(feature = "openapi", schema(value_type = Vec<(ActiveListing, Retainer)>))]
     pub listings: Vec<(ActiveListing, Retainer)>,
     pub sales: Vec<SaleHistory>,
     /// Per-world ingest timestamps for the queried scope. Additive field:

@@ -1,11 +1,9 @@
-//! AI-agent & public automation layer for Ultros.
+//! AI-agent & API discovery layer for Ultros.
 //!
 //! Provides:
 //! - `/llms.txt` and `/llms-full.txt` discovery documents
-//! - `/openapi.json` OpenAPI 3.1 schema for public market & gil-making endpoints
-//! - `/api/v1/public/*` enriched read-only endpoints (item names, world names,
-//!   canonical `item_url`, and pre-filtered `view_url` deep links)
-//! - `/mcp` remote Streamable HTTP MCP server exposing the same tools directly
+//! - `/openapi.json` OpenAPI 3.1 schema generated via `utoipa` for all unauthenticated `/api/*` endpoints
+//! - `/mcp` remote Streamable HTTP MCP server exposing enriched market & gil-making tools
 //! - `Accept: text/markdown` / `?format=md` content negotiation for public pages
 
 pub(crate) mod analyzers;
@@ -16,8 +14,7 @@ pub(crate) mod openapi;
 pub(crate) mod rate_limit;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, OnceLock};
 
 use axum::http::{HeaderName, Method, header};
 use axum::routing::{get, post};
@@ -43,71 +40,11 @@ pub(crate) const ATTRIBUTION_HINT: &str = "Data from Ultros (https://ultros.app)
 /// Concurrency cap for CPU-heavy server-side analyzer scans (`recipes`, `vendor_resale`,
 /// `leves`, `ventures`, `scrips`, `plan_craft`) so bursts cannot starve the server.
 const MAX_CONCURRENT_HEAVY_SCANS: usize = 4;
-const RESULT_CACHE_MAX_ENTRIES: usize = 512;
 
-/// Bounded in-memory TTL cache for serialized public agent responses, keyed on normalized
-/// `(tool, world, params)`. Prevents repeated identical scans from multiplying CPU work.
-#[derive(Clone)]
-pub(crate) struct AgentResultCache {
-    max_entries: usize,
-    entries: Arc<Mutex<HashMap<String, (Instant, String)>>>,
-}
-
-impl AgentResultCache {
-    pub(crate) fn new(max_entries: usize) -> Self {
-        Self {
-            max_entries: max_entries.max(1),
-            entries: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    pub(crate) fn get(&self, key: &str) -> Option<String> {
-        let now = Instant::now();
-        let mut guard = self
-            .entries
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match guard.get(key) {
-            Some((expires_at, body)) if *expires_at > now => Some(body.clone()),
-            Some(_) => {
-                guard.remove(key);
-                None
-            }
-            None => None,
-        }
-    }
-
-    pub(crate) fn insert(&self, key: String, body: String, ttl: Duration) {
-        let now = Instant::now();
-        let mut guard = self
-            .entries
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if guard.len() >= self.max_entries {
-            guard.retain(|_, (exp, _)| *exp > now);
-            if guard.len() >= self.max_entries {
-                let oldest = guard
-                    .iter()
-                    .min_by_key(|(_, (exp, _))| *exp)
-                    .map(|(k, _)| k.clone());
-                if let Some(k) = oldest {
-                    guard.remove(&k);
-                }
-            }
-        }
-        guard.insert(key, (now + ttl, body));
-    }
-}
-
-/// Process-wide heavy-scan semaphore & normalized result cache for shared analyzer helpers.
+/// Process-wide heavy-scan semaphore for shared analyzer helpers.
 pub(crate) fn shared_heavy_semaphore() -> &'static Arc<Semaphore> {
     static SEM: OnceLock<Arc<Semaphore>> = OnceLock::new();
     SEM.get_or_init(|| Arc::new(Semaphore::new(MAX_CONCURRENT_HEAVY_SCANS)))
-}
-
-pub(crate) fn shared_result_cache() -> &'static AgentResultCache {
-    static CACHE: OnceLock<AgentResultCache> = OnceLock::new();
-    CACHE.get_or_init(|| AgentResultCache::new(RESULT_CACHE_MAX_ENTRIES))
 }
 
 /// Standard attribution envelope wrapped around every public agent response.
@@ -186,37 +123,10 @@ pub(crate) fn discovery_router() -> Router<WebState> {
         .layer(public_cors_layer())
 }
 
-/// Rate-limited, CORS-enabled public agent REST API + remote Streamable HTTP MCP server.
-/// Uses the shared `limiter` so REST, MCP, and Markdown negotiation enforce one unified budget.
+/// Rate-limited, CORS-enabled remote Streamable HTTP MCP server.
+/// Uses the shared `limiter` so MCP and Markdown negotiation enforce one unified budget.
 pub(crate) fn agent_router(limiter: rate_limit::AgentRateLimiter) -> Router<WebState> {
     Router::new()
-        .route("/api/v1/public/mcp", get(mcp::handle_mcp_discovery))
-        .route("/api/v1/public/worlds", get(analyzers::http_worlds))
-        .route("/api/v1/public/search", get(analyzers::http_search))
-        .route(
-            "/api/v1/public/item/{world}/{item}",
-            get(analyzers::http_item_market),
-        )
-        .route("/api/v1/public/flips/{world}", get(analyzers::http_flips))
-        .route(
-            "/api/v1/public/recipes/{world}",
-            get(analyzers::http_recipes),
-        )
-        .route(
-            "/api/v1/public/vendor-resale/{world}",
-            get(analyzers::http_vendor_resale),
-        )
-        .route("/api/v1/public/leves/{world}", get(analyzers::http_leves))
-        .route(
-            "/api/v1/public/ventures/{world}",
-            get(analyzers::http_ventures),
-        )
-        .route("/api/v1/public/scrips/{world}", get(analyzers::http_scrips))
-        .route("/api/v1/public/trends/{world}", get(analyzers::http_trends))
-        .route(
-            "/api/v1/public/plan-craft",
-            post(analyzers::http_plan_craft),
-        )
         .route(
             "/mcp",
             post(mcp::handle_mcp_post)
@@ -587,18 +497,5 @@ mod tests {
         assert!(!g.recipes.is_empty());
         assert!(!g.default_choices.is_empty());
         assert!(!g.shard_ids.is_empty());
-    }
-
-    #[test]
-    fn result_cache_respects_ttl_and_capacity() {
-        let cache = AgentResultCache::new(2);
-        cache.insert("k1".into(), "v1".into(), Duration::from_secs(30));
-        cache.insert("k2".into(), "v2".into(), Duration::from_secs(60));
-        assert_eq!(cache.get("k1").as_deref(), Some("v1"));
-        cache.insert("k3".into(), "v3".into(), Duration::from_secs(60));
-        // Evicted soonest-expiring entry (k1) when capacity reached.
-        assert_eq!(cache.get("k1"), None);
-        assert_eq!(cache.get("k2").as_deref(), Some("v2"));
-        assert_eq!(cache.get("k3").as_deref(), Some("v3"));
     }
 }

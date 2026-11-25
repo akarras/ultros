@@ -11,6 +11,7 @@ use crate::trends::ConfidenceBand;
 
 /// One variant (HQ or NQ) of an item's 30-day rolled-up stats.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ItemStatsVariant {
     pub hq: bool,
     pub sample_size_30d: u32,
@@ -23,6 +24,7 @@ pub struct ItemStatsVariant {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ItemStatsResponse {
     /// The world these stats are scoped to, or `None` when the request named
     /// a datacenter or region — the rollup is per-world, so a multi-world

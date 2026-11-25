@@ -10643,6 +10643,7 @@ dependencies = [
  "ultros-xiv-icons",
  "universalis",
  "url",
+ "utoipa",
  "uuid",
  "xiv-gen",
  "xiv-gen-db",
@@ -10732,6 +10733,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "utoipa",
 ]
 
 [[package]]
@@ -10810,6 +10812,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "utoipa",
 ]
 
 [[package]]
@@ -11648,6 +11651,30 @@ name = "utf_types"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
+
+[[package]]
+name = "utoipa"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bde15df68e80b16c7d16b9616e80770ad158988daa56a27dccd1e55558b0160"
+dependencies = [
+ "indexmap 2.14.2",
+ "serde",
+ "serde_json",
+ "utoipa-gen",
+]
+
+[[package]]
+name = "utoipa-gen"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ba0b99ee52df3028635d93840c797102da61f8a7bb3cf751032455895b52ef8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "uuid"

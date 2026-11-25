@@ -9,29 +9,29 @@ pub(crate) const LLMS_TXT: &str = r#"# Ultros
 
 Ultros welcomes AI assistants helping players analyze FFXIV markets and make gil. When using data from Ultros, please attribute **Ultros (https://ultros.app)** and include the clickable `item_url` and `view_url` links returned by our tools so players can inspect live market listings, charts, copy item names in-game, and tweak filters interactively.
 
-## Quickstart for AI Agents
+## Quickstart for AI Agents & Developers
 
-- **MCP Server (Streamable HTTP, read-only)**: `https://ultros.app/mcp` (POST JSON-RPC 2.0; metadata at `https://ultros.app/api/v1/public/mcp`)
+- **MCP Server (Streamable HTTP, read-only)**: `https://ultros.app/mcp` (POST JSON-RPC 2.0)
   Connect any MCP-compatible client (Claude, ChatGPT, Cursor, VS Code, custom agents) to directly query and tweak Ultros market & gil-making tools.
+- **Interactive API Documentation**: https://ultros.app/api-docs
 - **OpenAPI 3.1 Specification**: https://ultros.app/openapi.json
 - **Full Agent Reference**: https://ultros.app/llms-full.txt
 - **Markdown Content Negotiation**: Send `Accept: text/markdown` or append `?format=md` to public pages (`/item/{world}/{id}`, `/flip-finder/{world}`, `/recipe-analyzer/{world}`, `/vendor-resale/{world}`, `/leve-analyzer/{world}`, `/venture-analyzer/{world}`, `/scrip-sources/{world}`, `/trends/{world}`) to receive a clean, token-efficient Markdown summary with tables and canonical links.
 
-## Public JSON API (Enriched with Item Names & Deep Links)
+## Unauthenticated REST API (`/api/v1/*`)
 
-All `/api/v1/public/*` endpoints return JSON with resolved item names, world names, canonical `item_url` links, and a pre-filtered `view_url` pointing to the matching Ultros web tool.
+See https://ultros.app/api-docs or https://ultros.app/openapi.json for full request/response schemas across all unauthenticated market, history, analytics, retainer, and metadata endpoints:
 
-- [List Worlds & Regions](https://ultros.app/api/v1/public/worlds): All FFXIV regions, datacenters, and worlds accepted as `{world}` parameters.
-- [Search Items & Tools](https://ultros.app/api/v1/public/search?q=Grade+3+Gemdraught): Search marketable items, NPCs, currencies, and tools by name.
-- [Item Market Summary](https://ultros.app/api/v1/public/item/Gilgamesh/44178): Cheapest NQ/HQ listings, recent sales velocity, 30d VWAP/confidence, vendor price, and crafting cost for an item ID or exact/fuzzy item name.
-- [Flip Finder](https://ultros.app/api/v1/public/flips/Gilgamesh?min_profit=10000&filter_sale=Week&min_velocity=0.5&limit=20): Cross-world arbitrage flips with post-tax profit, ROI, velocity, and launder filtering.
-- [Recipe Analyzer](https://ultros.app/api/v1/public/recipes/Gilgamesh?job=CUL&buy_scope=datacenter&use_subcrafts=true&min_profit=5000&limit=20): Crafting profit calculator with ingredient breakdown, vendor floor, subcraft optimization, and sales velocity.
-- [Vendor Resale Analyzer](https://ultros.app/api/v1/public/vendor-resale/Gilgamesh?min_profit=1000&min_sales=2&limit=20): NPC gil-shop items reselling above vendor cost on the NQ market board.
-- [Leve Analyzer](https://ultros.app/api/v1/public/leves/Gilgamesh?job=Culinarian&limit=20): Most profitable craft leve turn-ins comparing market buy cost vs. whole-batch crafting cost against gil + expected item rewards.
-- [Venture Analyzer](https://ultros.app/api/v1/public/ventures/Gilgamesh?limit=20): Highest-value fixed-reward retainer ventures.
-- [Scrip Sources Analyzer](https://ultros.app/api/v1/public/scrips/Gilgamesh?scrip=OrangeCrafters&limit=20): Lowest gil-per-scrip collectable turn-ins for Crafters' and Gatherers' scrips.
-- [Market Trends & Movers](https://ultros.app/api/v1/public/trends/Gilgamesh?window=30&limit=20): High-velocity and biggest price movers over 7, 30, or 90 days.
-- [Craft Shopping List Planner](https://ultros.app/api/v1/public/plan-craft): `POST` JSON `{ "world": "Gilgamesh", "buy_scope": "datacenter", "items": [{ "item": "Grade 3 Gemdraught of Strength", "quantity": 30 }], "use_subcrafts": true }` to compute unified raw materials, craft steps, and estimated gil cost.
+- [World Hierarchy](https://ultros.app/api/v1/world_data): All FFXIV regions, datacenters, and worlds accepted as `{world}` parameters.
+- [Search](https://ultros.app/api/v1/search?q=Grade+3+Gemdraught): Search marketable items, NPCs, currencies, and tools.
+- [Item Listings & Sales](https://ultros.app/api/v1/listings/Gilgamesh/44178): Active listings, retainers, last 200 sales, and per-world ingest timestamps.
+- [Cheapest Listings](https://ultros.app/api/v1/cheapest/North-America): Cheapest NQ/HQ listing for every item in a world, datacenter, or region (`?format=columnar` supported).
+- [Recent Sales](https://ultros.app/api/v1/recentSales/Gilgamesh): Recent sale buffer (`?format=columnar` supported).
+- [Price Series](https://ultros.app/api/v1/price_series/Gilgamesh/44178): Server-bucketed OHLC, quantiles (p25/p50/p75), volume, and optional raw sales.
+- [Best Deals (Flips)](https://ultros.app/api/v1/best_deals/Gilgamesh?min_profit=10000&filter_sale=Week): Cross-world arbitrage flips to sell on a world.
+- [Market Trends](https://ultros.app/api/v1/trends/Gilgamesh?window=30): High-velocity and moving items over 7, 30, or 90 days.
+- [Market Pulse](https://ultros.app/api/v1/market_pulse/Gilgamesh) & [Market Movers](https://ultros.app/api/v1/movers/Gilgamesh): 24h KPIs and biggest price/volume movers.
+- [Bulk Sale & Listing Stats](https://ultros.app/api/v1/sale_stats/Gilgamesh?window=7): Aggregated 1/7/30/90-day sale stats and alive listing stats.
 
 ## Interactive Web Tools (Deep-Linkable & Tweakable via URL)
 
@@ -55,15 +55,15 @@ This document specifies how AI assistants, web fetchers, and MCP clients can que
 ## Attribution & User Experience Guidelines
 
 1. Always cite **Ultros (https://ultros.app)** as the data source.
-2. Include the `view_url` (pre-filtered interactive tool page) and `item_url` links returned in every JSON, Markdown, and MCP response so the player can view live WebSocket updates, inspect price charts, copy item names in-game, and sync with the Ultros Dalamud plugin.
-3. Market prices change continuously (sourced via Universalis + Ultros live ingest). Treat returned numbers as a point-in-time snapshot (`as_of`) and remind users to verify current listings on Ultros before buying or crafting in bulk.
-4. Rate limit: public agent surfaces (`/api/v1/public/*`, `/mcp`, and Markdown content-negotiated routes) share a 90 requests/minute per-IP budget (IPv6 `/64`). Honor `Retry-After` on HTTP 429.
+2. Include the `view_url` (pre-filtered interactive tool page) and `item_url` links returned in every MCP and Markdown response so the player can view live WebSocket updates, inspect price charts, copy item names in-game, and sync with the Ultros Dalamud plugin.
+3. Market prices change continuously (sourced via Universalis + Ultros live ingest). Treat returned numbers as a point-in-time snapshot and remind users to verify current listings on Ultros before buying or crafting in bulk.
+4. Rate limit: `/mcp` and Markdown content-negotiated routes share a 90 requests/minute per-IP budget (IPv6 `/64`). Honor `Retry-After` on HTTP 429.
 
 ---
 
 ## 1. Remote MCP Server (`https://ultros.app/mcp`)
 
-Transport: **MCP Streamable HTTP** (`POST https://ultros.app/mcp` with `Content-Type: application/json`, protocol revisions `2025-06-18` and `2025-03-26`). `GET /mcp` returns `405 Method Not Allowed` (`Allow: POST, DELETE`) per Streamable HTTP; human-readable JSON metadata is available at `GET https://ultros.app/api/v1/public/mcp`. No authentication required (all tools are read-only).
+Transport: **MCP Streamable HTTP** (`POST https://ultros.app/mcp` with `Content-Type: application/json`, protocol revisions `2025-06-18` and `2025-03-26`). `GET /mcp` returns `405 Method Not Allowed` (`Allow: POST, DELETE`) per Streamable HTTP. No authentication required (all tools are read-only).
 
 Available MCP tools:
 - `list_worlds` — List all FFXIV regions, datacenters, and worlds.
@@ -80,58 +80,20 @@ Available MCP tools:
 
 ---
 
-## 2. Public REST API (`/api/v1/public/*`)
+## 2. Unauthenticated REST API (`/api/v1/*`)
 
+Interactive docs: `https://ultros.app/api-docs`
 OpenAPI 3.1 schema: `https://ultros.app/openapi.json`
 
 ### World Parameter (`{world}`)
-Accepts any valid FFXIV world name (e.g. `Gilgamesh`, `Cactuar`, `Phoenix`, `Tonberry`, `Ravana`), datacenter name (e.g. `Aether`, `Crystal`, `Light`, `Mana`), or region name (e.g. `North-America`, `Europe`, `Japan`, `Oceania`) where supported. Single-world analyzers (`flips`, `trends`, `recipes`, `vendor-resale`, `leves`, `ventures`, `scrips`) expect a specific world name; call `/api/v1/public/worlds` first if unsure.
+Accepts any valid FFXIV world name (e.g. `Gilgamesh`, `Cactuar`, `Phoenix`, `Tonberry`, `Ravana`), datacenter name (e.g. `Aether`, `Crystal`, `Light`, `Mana`), or region name (e.g. `North-America`, `Europe`, `Japan`, `Oceania`) where supported. Call `GET /api/v1/world_data` for the full tree.
 
-### Endpoints & Key Parameters
-
-1. `GET /api/v1/public/worlds`
-2. `GET /api/v1/public/search?q=<text>&limit=15`
-3. `GET /api/v1/public/item/{world}/{item}` (`{item}` can be an integer ID like `44178` or an item name like `Grade%203%20Gemdraught%20of%20Strength`)
-4. `GET /api/v1/public/flips/{world}`
-   - `min_profit`: minimum post-tax profit in gil (integer)
-   - `filter_sale`: `Day` | `Week` | `Month`
-   - `min_velocity`: minimum recent sales/day (float)
-   - `min_buffer_sales`: minimum recent sales count (integer)
-   - `max_roi`: maximum ROI % cap to exclude outliers (float)
-   - `show_suspicious`: `true` | `false` (default `false`)
-   - `limit`: 1..=50 (default 20)
-5. `GET /api/v1/public/recipes/{world}`
-   - `job`: `CRP`, `BSM`, `ARM`, `GSM`, `LTW`, `WVR`, `ALC`, `CUL` (or full job name)
-   - `min_level`, `max_level`: recipe level bounds (1..=100)
-   - `buy_scope`: `world` | `datacenter` (default) | `region`
-   - `use_subcrafts`: `true` | `false` (default `false`)
-   - `require_hq`: `true` | `false` (default `false`, price HQ ingredients)
-   - `exclude_shards`: `true` (default) | `false`
-   - `min_profit`: minimum post-tax profit per unit in gil (integer)
-   - `min_roi`: minimum ROI % (integer)
-   - `min_sales`: minimum recent sales count in buffer (integer)
-   - `min_daily_sales`: minimum daily sales velocity (float; maps to UI `min-sales`)
-   - `sort`: `profit` (default) | `roi` | `profit_per_day` | `daily_sales` | `cost` | `price`
-   - `limit`: 1..=50 (default 20)
-6. `GET /api/v1/public/vendor-resale/{world}`
-   - `min_profit`, `min_roi`, `min_sales`, `tax` (default `true`), `show_suspicious` (default `false`), `sort` (`profit` | `roi` | `daily_sales`), `limit`
-7. `GET /api/v1/public/leves/{world}`
-   - `job` (`Carpenter`, `Blacksmith`, `Armorer`, `Goldsmith`, `Leatherworker`, `Weaver`, `Alchemist`, `Culinarian`, or 3-letter code), `min_level`, `max_level`, `hq` (default `false`; doubles gil reward only for `can_be_hq` items), `min_profit`, `buy_scope` (`world` | `datacenter` | `region`), `sort` (`profit` | `level` | `cost`), `limit`
-8. `GET /api/v1/public/ventures/{world}`
-   - `min_level`, `max_level`, `min_profit`, `sort` (`profit` | `daily_sales` | `level`), `limit`
-9. `GET /api/v1/public/scrips/{world}`
-   - `scrip`: `OrangeCrafters` | `PurpleCrafters` | `OrangeGatherers` | `PurpleGatherers`
-   - `job`: crafter job code or name
-   - `buy_scope`: `world` | `datacenter` (default) | `region`
-   - `use_subcrafts`: `true` | `false`
-   - `limit`: 1..=50 (default 20)
-10. `GET /api/v1/public/trends/{world}`
-    - `window`: `7` | `30` (default) | `90`
-    - `show_suspicious`: `true` | `false` (default `false`)
-    - `sort`: `gil_volume` (default) | `sales_per_day` | `pct_change` | `unit_volume`
-    - `limit`: 1..=50 (default 20)
-11. `POST /api/v1/public/plan-craft`
-    - JSON body: `{ "world": "Gilgamesh", "buy_scope": "datacenter", "use_subcrafts": true, "exclude_shards": true, "items": [{ "item": "44178", "quantity": 10 }] }`
+### Key Endpoints
+- **Market Data**: `GET /api/v1/listings/{world}/{itemid}`, `GET /api/v1/bulkListings/{world}/{itemids}`, `GET /api/v1/cheapest/{world}`, `GET /api/v1/recentSales/{world}`, `GET /api/v1/extended_history/{world}/{itemid}`, `GET /api/v1/realtime/events` (WebSocket)
+- **Price History & Charts**: `GET /api/v1/price_series/{world}/{itemid}`, `GET /api/v1/price_density/{world}/{itemid}`, `GET /api/v1/floor_history/{world}/{itemid}`, `POST /api/v1/floor_history/{world}`, `GET /api/v1/undercut_pressure/{world}/{itemid}`
+- **Market Analytics**: `GET /api/v1/best_deals/{world}`, `GET /api/v1/trends/{world}`, `GET /api/v1/market_pulse/{world}`, `GET /api/v1/market_heat/{world}`, `GET /api/v1/movers/{world}`, `POST /api/v1/sparklines/{world}`, `POST /api/v1/resale_quality/{world}`, `GET /api/v1/item_stats/{world}/{itemid}`, `GET /api/v1/sale_stats/{world}`, `GET /api/v1/listing_stats/{world}`
+- **Retainers**: `GET /api/v1/retainer/search/{query}`, `GET /api/v1/retainer/listings/{id}`
+- **Metadata**: `GET /api/v1/world_data`, `GET /api/v1/search?q=<text>`, `GET /api/v1/game-history`, `GET /api/v1/changelog`, `GET /api/v1/detectregion`, `GET /api/v1/push/vapid-public-key`
 
 ---
 
@@ -188,10 +150,10 @@ mod tests {
     fn llms_docs_reference_key_surfaces() {
         for needle in [
             "https://ultros.app/mcp",
+            "https://ultros.app/api-docs",
             "https://ultros.app/openapi.json",
-            "/api/v1/public/recipes/",
-            "/api/v1/public/flips/",
-            "/api/v1/public/item/",
+            "/api/v1/world_data",
+            "/api/v1/listings/",
             "Accept: text/markdown",
         ] {
             assert!(LLMS_TXT.contains(needle), "llms.txt missing {needle}");
@@ -200,6 +162,8 @@ mod tests {
                 "llms-full.txt missing {needle}"
             );
         }
+        assert!(!LLMS_TXT.contains("/api/v1/public/"));
+        assert!(!LLMS_FULL_TXT.contains("/api/v1/public/"));
     }
 
     #[tokio::test]
@@ -215,15 +179,11 @@ mod tests {
     }
 
     #[test]
-    fn robots_txt_allows_public_api_and_protects_private_and_sort_crawls() {
+    fn robots_txt_allows_root_and_protects_private_and_sort_crawls() {
         let robots = include_str!("../../../static/robots.txt");
-        for rule in [
-            "Allow: /",
-            "Allow: /api/v1/public/",
-            "Disallow: /api/",
-            "Disallow: /*?*sort=",
-        ] {
+        for rule in ["Allow: /", "Disallow: /api/", "Disallow: /*?*sort="] {
             assert!(robots.contains(rule), "robots.txt missing {rule}");
         }
+        assert!(!robots.contains("/api/v1/public/"));
     }
 }

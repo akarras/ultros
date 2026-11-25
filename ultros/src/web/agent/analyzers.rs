@@ -1,20 +1,12 @@
-//! Enriched public market & gil-making query functions, HTTP handlers, and Markdown formatters.
+//! Enriched market & gil-making query functions and Markdown formatters.
 //!
 //! Each analyzer has one core query function returning an `AgentEnvelope<T>` shared by:
-//! 1. The public REST API (`/api/v1/public/*`)
-//! 2. The remote MCP server (`/mcp`)
-//! 3. `Accept: text/markdown` / `?format=md` content negotiation on web routes
+//! 1. The remote MCP server (`/mcp`)
+//! 2. `Accept: text/markdown` / `?format=md` content negotiation on web routes
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
-use std::sync::Arc;
-use std::time::Duration;
 
-use axum::Json;
-use axum::extract::{Path, Query, State};
-use axum::http::{HeaderValue, StatusCode, header};
-use axum::response::{IntoResponse, Response};
-use axum_extra::headers::{CacheControl, HeaderMapExt};
 use chrono::Utc;
 use futures::future::try_join3;
 use serde::{Deserialize, Serialize};
@@ -45,8 +37,8 @@ use crate::web::state::WebState;
 use super::{
     AgentEnvelope, SITE_ORIGIN, craft_type_info, db_selector, decode_market_json, is_shard_item,
     item_category_name, item_name, item_url, normalize_crafter_job, recipe_url, recipes_by_output,
-    resolve_item_arg, shared_heavy_semaphore, shared_result_cache, snapshot_cheapest_map,
-    static_planner_graph, tool_url, vendor_price_map, world_name_by_id,
+    resolve_item_arg, shared_heavy_semaphore, snapshot_cheapest_map, static_planner_graph,
+    tool_url, vendor_price_map, world_name_by_id,
 };
 
 const DEFAULT_LIMIT: usize = 20;
@@ -55,24 +47,6 @@ const SUSPICIOUS_PRICE_MULTIPLE: i64 = 5;
 
 fn clamp_limit(limit: Option<usize>) -> usize {
     limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT)
-}
-
-fn json_cached<T: Serialize>(value: T, secs: u64) -> Response {
-    let mut resp = Json(value).into_response();
-    resp.headers_mut()
-        .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(secs)));
-    resp
-}
-
-fn cached_json_bytes(body: String, secs: u64) -> Response {
-    let mut resp = (StatusCode::OK, body).into_response();
-    resp.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
-    resp.headers_mut()
-        .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(secs)));
-    resp
 }
 
 /// Net sale proceeds after 5% market-board tax, using `ultros_calc`'s shared rule for `i32`.
@@ -325,21 +299,9 @@ pub(crate) fn query_worlds(world_helper: &WorldHelper) -> AgentEnvelope<Vec<Publ
     AgentEnvelope::new(format!("{SITE_ORIGIN}/"), None, regions).with_total_matches(total)
 }
 
-pub(crate) async fn http_worlds(State(world_helper): State<Arc<WorldHelper>>) -> Response {
-    metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "worlds")
-        .increment(1);
-    json_cached(query_worlds(&world_helper), 3600)
-}
-
 // ============================================================================
 // 2. Search
 // ============================================================================
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct PublicSearchQuery {
-    pub(crate) q: String,
-    pub(crate) limit: Option<usize>,
-}
 
 #[derive(Debug, Serialize)]
 pub(crate) struct PublicSearchItem {
@@ -396,15 +358,6 @@ pub(crate) fn query_search(
     AgentEnvelope::new(view_url.to_string(), None, results)
         .with_filters(json!({ "q": q, "limit": limit }))
         .with_total_matches(total)
-}
-
-pub(crate) async fn http_search(
-    State(state): State<WebState>,
-    Query(query): Query<PublicSearchQuery>,
-) -> Response {
-    metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "search")
-        .increment(1);
-    json_cached(query_search(&state, &query.q, query.limit), 60)
 }
 
 // ============================================================================
@@ -640,16 +593,6 @@ pub(crate) async fn query_item_market(
     Ok(AgentEnvelope::new(url, Some(scope_name), payload))
 }
 
-pub(crate) async fn http_item_market(
-    State(state): State<WebState>,
-    Path((world, item)): Path<(String, String)>,
-) -> Result<Response, WebError> {
-    metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "item")
-        .increment(1);
-    let env = query_item_market(&state, &world, &item).await?;
-    Ok(json_cached(env, 30))
-}
-
 // ============================================================================
 // 4. Flip Finder (Cross-World Arbitrage)
 // ============================================================================
@@ -795,16 +738,6 @@ pub(crate) async fn query_flips(
         }));
     envelope.total_matches = total;
     Ok(envelope)
-}
-
-pub(crate) async fn http_flips(
-    State(state): State<WebState>,
-    Path(world): Path<String>,
-    Query(query): Query<PublicFlipsQuery>,
-) -> Result<Response, WebError> {
-    metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "flips")
-        .increment(1);
-    Ok(json_cached(query_flips(&state, &world, query).await?, 30))
 }
 
 // ============================================================================
@@ -1208,39 +1141,6 @@ pub(crate) async fn query_recipes(
     )
 }
 
-pub(crate) async fn http_recipes(
-    State(state): State<WebState>,
-    Path(world): Path<String>,
-    Query(query): Query<PublicRecipesQuery>,
-) -> Result<Response, WebError> {
-    metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "recipes")
-        .increment(1);
-    let cache_key = format!(
-        "recipes:{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
-        world.to_ascii_lowercase(),
-        query.job.as_deref().map(str::to_ascii_lowercase),
-        query.min_level,
-        query.max_level,
-        query.buy_scope.as_deref().map(str::to_ascii_lowercase),
-        query.use_subcrafts,
-        query.require_hq,
-        query.exclude_shards,
-        query.min_profit,
-        query.min_roi,
-        query.min_sales,
-        query.min_daily_sales.map(|v| (v * 100.0).round() as i32),
-        query.sort.as_deref().map(str::to_ascii_lowercase),
-        clamp_limit(query.limit),
-    );
-    if let Some(hit) = shared_result_cache().get(&cache_key) {
-        return Ok(cached_json_bytes(hit, 30));
-    }
-    let env = query_recipes(&state, &world, query).await?;
-    let body = serde_json::to_string(&env).map_err(anyhow::Error::from)?;
-    shared_result_cache().insert(cache_key, body.clone(), Duration::from_secs(30));
-    Ok(cached_json_bytes(body, 30))
-}
-
 // ============================================================================
 // 6. Vendor Resale Analyzer (NPC Gil Shop -> NQ Market Board)
 // ============================================================================
@@ -1421,37 +1321,6 @@ pub(crate) async fn query_vendor_resale(
             }))
             .with_total_matches(total),
     )
-}
-
-pub(crate) async fn http_vendor_resale(
-    State(state): State<WebState>,
-    Path(world): Path<String>,
-    Query(query): Query<PublicVendorResaleQuery>,
-) -> Result<Response, WebError> {
-    metrics::counter!(
-        "ultros_agent_requests_total",
-        "surface" => "rest",
-        "tool" => "vendor_resale"
-    )
-    .increment(1);
-    let cache_key = format!(
-        "vendor:{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{}",
-        world.to_ascii_lowercase(),
-        query.min_profit,
-        query.min_roi,
-        query.min_sales,
-        query.tax,
-        query.show_suspicious,
-        query.sort.as_deref().map(str::to_ascii_lowercase),
-        clamp_limit(query.limit),
-    );
-    if let Some(hit) = shared_result_cache().get(&cache_key) {
-        return Ok(cached_json_bytes(hit, 30));
-    }
-    let env = query_vendor_resale(&state, &world, query).await?;
-    let body = serde_json::to_string(&env).map_err(anyhow::Error::from)?;
-    shared_result_cache().insert(cache_key, body.clone(), Duration::from_secs(30));
-    Ok(cached_json_bytes(body, 30))
 }
 
 // ============================================================================
@@ -1726,34 +1595,6 @@ pub(crate) async fn query_leves(
     )
 }
 
-pub(crate) async fn http_leves(
-    State(state): State<WebState>,
-    Path(world): Path<String>,
-    Query(query): Query<PublicLevesQuery>,
-) -> Result<Response, WebError> {
-    metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "leves")
-        .increment(1);
-    let cache_key = format!(
-        "leves:{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{}",
-        world.to_ascii_lowercase(),
-        query.job.as_deref().map(str::to_ascii_lowercase),
-        query.min_level,
-        query.max_level,
-        query.hq,
-        query.min_profit,
-        query.buy_scope.as_deref().map(str::to_ascii_lowercase),
-        query.sort.as_deref().map(str::to_ascii_lowercase),
-        clamp_limit(query.limit),
-    );
-    if let Some(hit) = shared_result_cache().get(&cache_key) {
-        return Ok(cached_json_bytes(hit, 60));
-    }
-    let env = query_leves(&state, &world, query).await?;
-    let body = serde_json::to_string(&env).map_err(anyhow::Error::from)?;
-    shared_result_cache().insert(cache_key, body.clone(), Duration::from_secs(60));
-    Ok(cached_json_bytes(body, 60))
-}
-
 // ============================================================================
 // 8. Venture Analyzer (Retainer Ventures — NQ Listing Basis)
 // ============================================================================
@@ -1916,31 +1757,6 @@ pub(crate) async fn query_ventures(
             }))
             .with_total_matches(total),
     )
-}
-
-pub(crate) async fn http_ventures(
-    State(state): State<WebState>,
-    Path(world): Path<String>,
-    Query(query): Query<PublicVenturesQuery>,
-) -> Result<Response, WebError> {
-    metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "ventures")
-        .increment(1);
-    let cache_key = format!(
-        "ventures:{}:{:?}:{:?}:{:?}:{:?}:{}",
-        world.to_ascii_lowercase(),
-        query.min_level,
-        query.max_level,
-        query.min_profit,
-        query.sort.as_deref().map(str::to_ascii_lowercase),
-        clamp_limit(query.limit),
-    );
-    if let Some(hit) = shared_result_cache().get(&cache_key) {
-        return Ok(cached_json_bytes(hit, 60));
-    }
-    let env = query_ventures(&state, &world, query).await?;
-    let body = serde_json::to_string(&env).map_err(anyhow::Error::from)?;
-    shared_result_cache().insert(cache_key, body.clone(), Duration::from_secs(60));
-    Ok(cached_json_bytes(body, 60))
 }
 
 // ============================================================================
@@ -2146,31 +1962,6 @@ pub(crate) async fn query_scrips(
     )
 }
 
-pub(crate) async fn http_scrips(
-    State(state): State<WebState>,
-    Path(world): Path<String>,
-    Query(query): Query<PublicScripsQuery>,
-) -> Result<Response, WebError> {
-    metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "scrips")
-        .increment(1);
-    let cache_key = format!(
-        "scrips:{}:{:?}:{:?}:{:?}:{:?}:{}",
-        world.to_ascii_lowercase(),
-        query.scrip.as_deref().map(str::to_ascii_lowercase),
-        query.job.as_deref().map(str::to_ascii_lowercase),
-        query.buy_scope.as_deref().map(str::to_ascii_lowercase),
-        query.use_subcrafts,
-        clamp_limit(query.limit),
-    );
-    if let Some(hit) = shared_result_cache().get(&cache_key) {
-        return Ok(cached_json_bytes(hit, 60));
-    }
-    let env = query_scrips(&state, &world, query).await?;
-    let body = serde_json::to_string(&env).map_err(anyhow::Error::from)?;
-    shared_result_cache().insert(cache_key, body.clone(), Duration::from_secs(60));
-    Ok(cached_json_bytes(body, 60))
-}
-
 // ============================================================================
 // 10. Market Trends
 // ============================================================================
@@ -2302,16 +2093,6 @@ pub(crate) async fn query_trends(
             }))
             .with_total_matches(total),
     )
-}
-
-pub(crate) async fn http_trends(
-    State(state): State<WebState>,
-    Path(world): Path<String>,
-    Query(query): Query<PublicTrendsQuery>,
-) -> Result<Response, WebError> {
-    metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "trends")
-        .increment(1);
-    Ok(json_cached(query_trends(&state, &world, query).await?, 60))
 }
 
 // ============================================================================
@@ -2561,15 +2342,6 @@ pub(crate) async fn query_plan_craft(
             craft_steps,
         },
     ))
-}
-
-pub(crate) async fn http_plan_craft(
-    State(state): State<WebState>,
-    Json(req): Json<PlanCraftRequest>,
-) -> Result<Response, WebError> {
-    metrics::counter!("ultros_agent_requests_total", "surface" => "rest", "tool" => "plan_craft")
-        .increment(1);
-    Ok(json_cached(query_plan_craft(&state, req).await?, 15))
 }
 
 // ============================================================================

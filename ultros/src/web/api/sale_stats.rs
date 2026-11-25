@@ -39,7 +39,8 @@ use crate::{
 const DEFAULT_WINDOW_DAYS: u16 = 7;
 const SUPPORTED_WINDOWS: [u16; 4] = [1, 7, 30, 90];
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct SaleStatsQuery {
     /// Trailing rollup window in days. Supported: 1, 7, 30, 90; defaults to 7.
     window: Option<u16>,

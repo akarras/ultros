@@ -2,6 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FloorPoint {
     pub timestamp: i64,
     /// Lowest last-observed asking price across tracked worlds/qualities.
@@ -10,6 +11,7 @@ pub struct FloorPoint {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FloorHistory {
     pub from: i64,
     pub to: i64,
@@ -19,6 +21,7 @@ pub struct FloorHistory {
 
 /// Explicit cadence for bounded analyzer batches; chart GET keeps adaptive sampling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum FloorInterval {
     Hourly,
@@ -34,6 +37,7 @@ impl FloorInterval {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]
 pub struct FloorHistoryRequest {
     pub item_ids: Vec<i32>,
@@ -59,10 +63,12 @@ impl FloorHistoryRequest {
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FloorHistoryBatch {
     pub series: Vec<ItemFloorHistory>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ItemFloorHistory {
     pub item_id: i32,
     pub hq: bool,
@@ -73,6 +79,7 @@ pub struct ItemFloorHistory {
     pub unknown_timestamps: Vec<i64>,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FloorBounds {
     pub min: Option<u32>,
     pub max: Option<u32>,

@@ -17,6 +17,7 @@ use crate::CompactSale;
 
 /// Which level of the world hierarchy the server aggregated at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum SeriesGroup {
     Region,
@@ -38,6 +39,7 @@ impl SeriesGroup {
 /// Quality filter applied server-side, replacing the old client-side
 /// `retain(|s| s.hq)`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum HqFilter {
     #[default]
@@ -58,6 +60,7 @@ impl HqFilter {
 
 /// One time bucket for one series.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PriceBucket {
     /// Bucket start, naive UTC, aligned to absolute time.
     pub ts: NaiveDateTime,
@@ -89,6 +92,7 @@ impl PriceBucket {
 /// All buckets for one series, keyed by the selector id at the response's
 /// [`SeriesGroup`] (world id, datacenter id, or region id).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PriceSeriesEntry {
     pub id: i32,
     /// Sorted by `ts` ascending. Buckets with no sales are absent, not zero —
@@ -98,6 +102,7 @@ pub struct PriceSeriesEntry {
 
 /// Response payload for `/api/v1/price_series/{world}/{itemid}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PriceSeries {
     /// Bucket width the server actually chose, so the client labels axes
     /// without re-deriving it.

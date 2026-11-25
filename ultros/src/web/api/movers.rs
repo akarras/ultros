@@ -35,7 +35,8 @@ use crate::{
     },
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct MoversQuery {
     /// `rising` (default), `falling`, `volume` (unit count), or `gil`.
     direction: Option<String>,

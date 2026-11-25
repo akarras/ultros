@@ -10,9 +10,11 @@ license = "MIT"
 # fetches `/api/v1/changelog` instead.
 default = ["history"]
 history = []
+openapi = ["dep:utoipa"]
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
+utoipa = { workspace = true, optional = true }
 
 [build-dependencies]
 serde.workspace = true

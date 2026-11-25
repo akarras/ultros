@@ -225,6 +225,7 @@ pub struct CreatePushSubscriptionRequest {
 /// Response shape for `GET /api/v1/push/vapid-public-key`. Single field so the
 /// frontend doesn't have to special-case a bare string.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct VapidPublicKey {
     pub key: String,
 }

@@ -43,8 +43,10 @@ use crate::{
     },
 };
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct ListingStatsQuery {
+    /// Optional trailing history window in days (`1`, `7`, `30`, or `90`). Omit for current-only alive listings.
     window: Option<u16>,
     /// `columnar` selects [`BulkListingStatsColumnar`]; see [`is_columnar`].
     format: Option<String>,

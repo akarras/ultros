@@ -12,6 +12,7 @@ use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ChangelogCategory {
     Features,
@@ -25,6 +26,7 @@ impl ChangelogCategory {
 
 /// Declaration order is display priority: high first, then medium, then low.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ChangelogImportance {
     High,
@@ -38,6 +40,7 @@ pub enum ChangelogImportance {
 /// generated server-side table is entirely `Cow::Borrowed` over string
 /// literals in the binary, and the client deserializes owned copies.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ChangelogEntry {
     /// ISO YYYY-MM-DD, taken from the filename.
     pub date: Cow<'static, str>,

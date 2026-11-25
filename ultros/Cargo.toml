@@ -63,10 +63,11 @@ itertools = "0.15.0"
 # convert at this one call site, so jiff is a direct dep of exactly this crate.
 sitemap-rs = "0.7.0"
 jiff = "0.2.41"
-ultros-api-types = { path = "../ultros-api-types", features = ["rkyv"] }
+ultros-api-types = { path = "../ultros-api-types", features = ["rkyv", "openapi"] }
 # The `history` feature (on by default) is what makes the full changelog
 # available to `/api/v1/changelog`; the wasm client builds without it.
-ultros-changelog = { path = "../ultros-changelog" }
+ultros-changelog = { path = "../ultros-changelog", features = ["openapi"] }
+utoipa = { workspace = true, features = ["axum_extras", "chrono"] }
 ultros-xiv-icons = { path = "../ultros-frontend/ultros-xiv-icons" }
 leptos = { workspace = true, features = ["ssr", "nightly"] }
 leptos_axum.workspace = true

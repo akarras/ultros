@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::trends::ConfidenceBand;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ItemSaleStats {
     pub item_id: i32,
     pub hq: bool,
@@ -50,6 +51,7 @@ pub struct ItemSaleStats {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct BulkSaleStats {
     pub stats: Vec<ItemSaleStats>,
 }
@@ -60,6 +62,7 @@ pub struct BulkSaleStats {
 /// field for field. Rows are emitted in `(item_id, hq)` order for
 /// compressibility; decoding does not depend on the order.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct BulkSaleStatsColumnar {
     pub item_id: Vec<i32>,
     pub hq: Vec<bool>,

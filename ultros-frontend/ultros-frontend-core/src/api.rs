@@ -84,6 +84,88 @@ pub async fn get_changelog() -> AppResult<Vec<ChangelogEntry>> {
     fetch_api("/api/v1/changelog").await
 }
 
+/// The generated OpenAPI 3.1.0 specification served by `/openapi.json`.
+/// Fetched via `SsrApi` during SSR and HTTP in the browser so the spec does
+/// not bloat the WASM bundle.
+pub async fn get_openapi_spec() -> AppResult<serde_json::Value> {
+    fetch_api("/openapi.json").await
+}
+
+/// Live response captured by the interactive `/api-docs` request runner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApiExplorerResponse {
+    pub status: u16,
+    pub ok: bool,
+    pub content_type: String,
+    pub body: String,
+    pub elapsed_ms: u32,
+}
+
+/// Executes a live same-origin GET or POST request for the interactive `/api-docs` playground.
+#[cfg(not(feature = "ssr"))]
+pub async fn execute_api_explorer_request(
+    method: &str,
+    path_and_query: &str,
+    json_body: Option<&str>,
+) -> Result<ApiExplorerResponse, String> {
+    if !path_and_query.starts_with('/') {
+        return Err("Request path must start with '/'".to_string());
+    }
+    let started = js_sys::Date::now();
+    let response = match method {
+        "POST" => {
+            let builder = gloo_net::http::Request::post(path_and_query)
+                .header("Accept", "application/json, text/plain;q=0.9");
+            let builder = if let Some(body) = json_body {
+                builder
+                    .header("Content-Type", "application/json")
+                    .body(body)
+                    .map_err(|e| format!("Failed to encode request body: {e}"))?
+            } else {
+                builder
+                    .build()
+                    .map_err(|e| format!("Failed to build request: {e}"))?
+            };
+            builder
+                .send()
+                .await
+                .map_err(|e| format!("Network error: {e}"))?
+        }
+        _ => gloo_net::http::Request::get(path_and_query)
+            .header("Accept", "application/json, text/plain;q=0.9")
+            .send()
+            .await
+            .map_err(|e| format!("Network error: {e}"))?,
+    };
+    let status = response.status();
+    let ok = response.ok();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response body: {e}"))?;
+    let elapsed_ms = (js_sys::Date::now() - started).max(0.0).round() as u32;
+    Ok(ApiExplorerResponse {
+        status,
+        ok,
+        content_type,
+        body,
+        elapsed_ms,
+    })
+}
+
+#[cfg(feature = "ssr")]
+pub async fn execute_api_explorer_request(
+    _method: &str,
+    _path_and_query: &str,
+    _json_body: Option<&str>,
+) -> Result<ApiExplorerResponse, String> {
+    Err("Interactive requests run in the browser.".to_string())
+}
+
 pub async fn get_listings(item_id: i32, world: &str) -> AppResult<CurrentlyShownItem> {
     if item_id == 0 {
         return Err(AppError::NoItem);

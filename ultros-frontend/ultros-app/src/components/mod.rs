@@ -57,7 +57,6 @@ pub use ultros_ui_market::components::market_pulse;
 pub mod meta;
 pub mod reveal_once;
 pub use ultros_ui::components::modal;
-pub use ultros_ui::components::patreon;
 pub use ultros_ui::components::relative_time;
 pub use ultros_ui::components::reorderable_list;
 pub use ultros_ui_charts::components::price_history_chart;

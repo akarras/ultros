@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 /// row with item icon + name + price + pct-change pill + inline
 /// sparkline.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MoverItem {
     pub item_id: i32,
     pub hq: bool,
@@ -31,6 +32,7 @@ pub struct MoverItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MoversResponse {
     pub world_id: i32,
     pub direction: String,
@@ -40,6 +42,7 @@ pub struct MoversResponse {
 /// Bulk sparkline-only payload. Used by surfaces that already have item
 /// IDs and just want a trace per row.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SparklineSeries {
     pub item_id: i32,
     pub hq: bool,
@@ -50,6 +53,7 @@ pub struct SparklineSeries {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SparklinesResponse {
     pub world_id: i32,
     pub series: Vec<SparklineSeries>,
@@ -57,6 +61,7 @@ pub struct SparklinesResponse {
 
 /// POST body for /api/v1/sparklines/{world}.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SparklinesRequest {
     /// Each tuple = (item_id, hq). World comes from the URL.
     pub items: Vec<(i32, bool)>,

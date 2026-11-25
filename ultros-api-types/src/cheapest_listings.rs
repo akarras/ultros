@@ -4,6 +4,7 @@ use std::fmt;
 
 /// "item_id":6605,"hq":false,"cheapest_price":6999999,"world_id":99
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CheapestListingItem {
     pub item_id: i32,
     pub hq: bool,
@@ -12,6 +13,7 @@ pub struct CheapestListingItem {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CheapestListings {
     pub cheapest_listings: Vec<CheapestListingItem>,
 }
@@ -23,6 +25,7 @@ pub struct CheapestListings {
 /// (~83 KB brotli vs ~150 KB for the row-of-objects shape on a 24k-row
 /// region), but decoding does not depend on the order.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CheapestListingsColumnar {
     pub item_id: Vec<i32>,
     pub hq: Vec<bool>,
