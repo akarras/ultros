@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 
 /// Which patch calendar a region follows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum PatchTrack {
     Global,
@@ -47,6 +48,7 @@ impl PatchTrack {
 
 /// One released patch on one track.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct GamePatch {
     pub track: PatchTrack,
     /// `PatchMark` convention: 700 = 7.0, 715 = 7.15, 655 = 6.55.

@@ -353,13 +353,13 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
         purpose: "Use this when you want an AI assistant to search FFXIV market data, tweak analyzer filters, or build a crafting shopping list using live Ultros numbers and clickable links back to Ultros.",
         inputs: &[
             "Remote MCP endpoint (Streamable HTTP): https://ultros.app/mcp",
-            "OpenAPI 3.1 spec for Custom GPTs and REST agents: https://ultros.app/openapi.json",
+            "Interactive API docs and OpenAPI 3.1 spec: https://ultros.app/api-docs and https://ultros.app/openapi.json",
             "Agent discovery guide: https://ultros.app/llms.txt and https://ultros.app/llms-full.txt",
             "Markdown view of any public tool or item page via Accept: text/markdown or ?format=md",
         ],
         assumptions: &[
-            "All public agent and MCP tools are read-only and require no login.",
-            "Public endpoints are rate-limited to 90 requests per minute per IP.",
+            "All MCP tools and documented /api/v1/* market endpoints are unauthenticated.",
+            "MCP and Markdown endpoints share a 90 requests per minute per IP rate limit.",
             "Prices are point-in-time snapshots from Ultros's live market ingest; open the returned Ultros link to verify live listings before buying in bulk.",
         ],
         results: &[

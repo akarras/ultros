@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ItemListingStats {
     pub item_id: i32,
     pub hq: bool,
@@ -40,6 +41,7 @@ pub struct ItemListingStats {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct BulkListingStats {
     pub stats: Vec<ItemListingStats>,
 }
@@ -53,6 +55,7 @@ pub struct BulkListingStats {
 /// key is absent. Rows are emitted in `(item_id, hq)` order for
 /// compressibility; decoding does not depend on the order.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct BulkListingStatsColumnar {
     pub item_id: Vec<i32>,
     pub hq: Vec<bool>,
@@ -145,6 +148,7 @@ impl From<BulkListingStatsColumnar> for BulkListingStats {
 
 /// Observed bounds are evidence, not a guarantee of uninterrupted ingestion.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct HistoryCoverage {
     pub first_observed_unix: Option<i64>,
     pub last_observed_unix: Option<i64>,
@@ -155,6 +159,7 @@ pub struct HistoryCoverage {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum StockStatus {
     #[default]
@@ -164,6 +169,7 @@ pub enum StockStatus {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ListingWindowStats {
     pub window_days: u16,
     pub from: i64,
@@ -218,6 +224,7 @@ fn hours_empty(hours: &[u32; 24]) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ListingAgeOrigin {
     #[default]
@@ -225,6 +232,7 @@ pub enum ListingAgeOrigin {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MatchedSalesStats {
     /// Conservative one-to-one matches, never every removal.
     pub matched: u64,

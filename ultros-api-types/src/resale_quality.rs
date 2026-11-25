@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::trends::ConfidenceBand;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ResaleQualityRow {
     pub item_id: i32,
     pub hq: bool,
@@ -33,6 +34,7 @@ pub struct ResaleQualityRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ResaleQualityResponse {
     pub world_id: i32,
     pub window_days: u16,
@@ -41,6 +43,7 @@ pub struct ResaleQualityResponse {
 
 /// POST body for `/api/v1/resale_quality/{world}`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ResaleQualityRequest {
     /// Each tuple is `(item_id, hq)`. World comes from the URL.
     pub items: Vec<(i32, bool)>,

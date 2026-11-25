@@ -2,12 +2,14 @@ use chrono::{DateTime, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Sales {
     pub price_per_unit: i32,
     pub sale_date: NaiveDateTime,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SaleData {
     pub item_id: i32,
     pub hq: bool,
@@ -15,6 +17,7 @@ pub struct SaleData {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RecentSales {
     pub sales: Vec<SaleData>,
 }
@@ -28,6 +31,7 @@ pub struct RecentSales {
 /// Rows are emitted in `(item_id, hq)` order, which is what makes the
 /// columns compress well; decoding does not depend on the order.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RecentSalesColumnar {
     pub item_id: Vec<i32>,
     pub hq: Vec<bool>,

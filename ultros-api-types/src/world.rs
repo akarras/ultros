@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WorldData {
     pub regions: Vec<Region>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Region {
     pub id: i32,
     pub name: String,
@@ -13,6 +15,7 @@ pub struct Region {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Datacenter {
     pub id: i32,
     pub name: String,
@@ -21,6 +24,7 @@ pub struct Datacenter {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct World {
     pub id: i32,
     pub name: String,

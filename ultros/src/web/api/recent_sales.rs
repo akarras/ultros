@@ -22,7 +22,8 @@ use crate::{
     },
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct RecentSalesQuery {
     /// `columnar` selects [`RecentSalesColumnar`]; see [`is_columnar`].
     format: Option<String>,

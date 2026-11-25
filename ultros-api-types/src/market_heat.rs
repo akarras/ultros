@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 /// the row still renders so the band layout stays consistent across
 /// worlds, but with a muted chip and no pct.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum HeatBand {
     NoData,
@@ -46,6 +47,7 @@ impl HeatBand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CategoryHeat {
     /// FFXIV ItemSearchCategory.category top-level grouping
     /// (1=Weapons, 2=Tools, 3=Armor, 4=Items, 5=Housing).
@@ -57,6 +59,7 @@ pub struct CategoryHeat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MarketHeatResponse {
     pub world_id: i32,
     pub categories: Vec<CategoryHeat>,

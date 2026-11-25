@@ -47,12 +47,13 @@ use crate::global_state::{
 use crate::{
     components::{
         app_shell::AppShell, guest_alert_evaluator::GuestAlertEvaluator, inbox_live::InboxLive,
-        on_hand_input::provide_on_hand_context, patreon::*, toast::*, update_banner::UpdateBanner,
+        on_hand_input::provide_on_hand_context, toast::*, update_banner::UpdateBanner,
     },
     routes::{
         about::*,
         alerts::Alerts,
         analyzer::*,
+        api_docs::ApiDocs,
         bot::BotGuide,
         changelog::Changelog,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
@@ -508,12 +509,12 @@ pub fn Footer() -> impl IntoView {
                     >
                         <Icon icon=i::IoLogoGithub width="1.2em" height="1.2em" /><span>{t!(i18n, github)}</span>
                     </a>
-                    <PatreonWrapper>
-                        // nobody can tell it's not real.
-                        <a class="btn-ghost cursor-pointer opacity-80 hover:opacity-100">
-                            <span>{t!(i18n, patreon)}</span>
-                        </a>
-                    </PatreonWrapper>
+                    <AppLink
+                        href="/api-docs"
+                        attr:class="btn-ghost opacity-80 hover:opacity-100"
+                    >
+                        <Icon icon=i::BsCodeSlash width="1.2em" height="1.2em" /><span>{t!(i18n, api_docs)}</span>
+                    </AppLink>
                     <AppLink
                         href="/help"
                         attr:class="btn-ghost opacity-80 hover:opacity-100"
@@ -837,6 +838,11 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                             view=Changelog
                             ssr=SsrMode::InOrder
                         />
+                        <Route
+                            path=path!("api-docs")
+                            view=ApiDocs
+                            ssr=SsrMode::InOrder
+                        />
                         <Route path=path!("profile") view=Profile />
                         <Route path=path!("privacy") view=PrivacyPolicy />
                         <Route path=path!("cookie-policy") view=CookiePolicy />
@@ -1015,6 +1021,11 @@ mod translation_boundary_tests {
             assert!(html.contains("href=\"/cookie-policy\""), "{html}");
             assert!(html.contains("Privacy Policy"), "{html}");
             assert!(html.contains("Cookie Policy"), "{html}");
+            assert!(html.contains("href=\"/api-docs\""), "{html}");
+            assert!(html.contains("API Docs"), "{html}");
+            assert!(!html.contains("Patreon"), "{html}");
+            assert!(!html.contains("leekspin"), "{html}");
+            assert!(!html.contains("ratata"), "{html}");
         });
     }
 }

@@ -44,8 +44,10 @@ pub(crate) struct CheapestPerWorld {
 /// ([`CheapestListingsColumnar`]) the site fetches. Anything else — including
 /// no `format` at all — keeps the legacy row-of-objects shape for outside
 /// consumers of the public endpoint.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct CheapestFormat {
+    /// Pass `columnar` for struct-of-arrays wire shape (`CheapestListingsColumnar`); omit for row objects (`CheapestListings`).
     pub(crate) format: Option<String>,
 }
 

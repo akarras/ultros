@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// One populated cell of the grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DensityCell {
     /// Bucket start, naive UTC, aligned like `PriceBucket::ts`.
     pub ts: NaiveDateTime,
@@ -20,6 +21,7 @@ pub struct DensityCell {
 
 /// Response payload for `/api/v1/price_density/{world}/{itemid}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PriceDensity {
     /// Bucket width the server actually chose (same ladder as
     /// `PriceSeries::bucket_seconds`).

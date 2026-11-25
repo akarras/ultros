@@ -403,26 +403,40 @@ async fn extended_sale_history(
     Ok(axum::Json(response))
 }
 
-#[derive(serde::Deserialize, Debug)]
-struct ExtendedHistoryQuery {
+#[derive(serde::Deserialize, Debug, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ExtendedHistoryQuery {
+    /// Maximum number of compact sales to return (default 1000, clamped to 1..=10000).
     limit: Option<u64>,
 }
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize, Debug, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct PriceSeriesQuery {
+    /// Start of time window (inclusive, Unix timestamp in seconds). Defaults to 12 years ago.
     pub(crate) from: Option<i64>,
+    /// End of time window (exclusive, Unix timestamp in seconds). Defaults to now.
     pub(crate) to: Option<i64>,
+    /// Desired bucket width in seconds (snapped onto the server ladder; auto-selected if omitted).
     pub(crate) bucket: Option<i64>,
+    /// Aggregation series grouping: `world` (default), `datacenter`, or `region`.
     pub(crate) group: Option<String>,
+    /// Quality filter: `any` (default), `hq`, or `nq`.
     pub(crate) hq: Option<String>,
 }
 
-#[derive(serde::Deserialize, Debug)]
-struct PriceDensityQuery {
+#[derive(serde::Deserialize, Debug, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct PriceDensityQuery {
+    /// Start of time window (inclusive, Unix timestamp in seconds). Defaults to 12 years ago.
     from: Option<i64>,
+    /// End of time window (exclusive, Unix timestamp in seconds). Defaults to now.
     to: Option<i64>,
+    /// Desired bucket width in seconds (snapped onto the server ladder; auto-selected if omitted).
     bucket: Option<i64>,
+    /// Quality filter: `any` (default), `hq`, or `nq`.
     hq: Option<String>,
+    /// Number of uniform price bins along the Y axis (default 32, clamped to 8..=96).
     price_bins: Option<u16>,
 }
 
@@ -947,11 +961,16 @@ async fn floor_history(
     Ok(cached_json(body, ttl))
 }
 
-#[derive(serde::Deserialize, Debug)]
-struct PressureQuery {
+#[derive(serde::Deserialize, Debug, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct PressureQuery {
+    /// Start of time window (Unix timestamp in seconds). Defaults to 0 (clamped to world floor anchor).
     from: Option<i64>,
+    /// End of time window (Unix timestamp in seconds). Defaults to now.
     to: Option<i64>,
+    /// Desired bucket width in seconds (snapped onto chart bucket ladder; default 3600).
     bucket: Option<i64>,
+    /// Quality filter: `any` (default), `hq`, or `nq`.
     hq: Option<String>,
 }
 
@@ -1227,8 +1246,10 @@ fn uncached_json(body: impl Into<axum::body::Bytes>) -> axum::response::Response
         .into_response()
 }
 
-#[derive(serde::Deserialize, Debug)]
-struct GameHistoryQuery {
+#[derive(serde::Deserialize, Debug, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct GameHistoryQuery {
+    /// Optional release track filter: `global`, `china`, or `korea`. Omit for all tracks.
     track: Option<String>,
 }
 
@@ -2523,8 +2544,10 @@ async fn claim_character(
     Ok(Json(character.into()))
 }
 
-#[derive(Deserialize)]
-struct SearchQuery {
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct SearchQuery {
+    /// Search text matching item names, NPCs, currencies, and Ultros tools.
     q: String,
 }
 
@@ -4199,14 +4222,18 @@ pub(crate) async fn start_web(
     // build our application with a route
     let worlds = state.world_helper.clone();
     let token = state.token.clone();
-    // Share one public agent rate limiter across REST (`/api/v1/public/*`), `/mcp`, and
+    // Share one public agent rate limiter across `/mcp` and
     // `Accept: text/markdown` / `?format=md` content-negotiated routes.
     let agent_limiter = agent::rate_limit::AgentRateLimiter::default_public();
     let api = api_router().merge(
         plugin::router(&state.key, state.db.clone(), state.token.clone())
             .expect("valid plugin configuration"),
     );
-    let ssr_api = ultros_app::ssr_api::SsrApi::new(api.clone().with_state(state.clone()));
+    let ssr_api = ultros_app::ssr_api::SsrApi::new(
+        api.clone()
+            .route("/openapi.json", get(agent::openapi::get_openapi_json))
+            .with_state(state.clone()),
+    );
     let app = api
         .route("/healthz", get(web_healthz))
         .route("/alerts/websocket", get(connect_websocket))

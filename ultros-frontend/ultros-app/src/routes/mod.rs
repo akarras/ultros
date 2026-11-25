@@ -1,6 +1,7 @@
 pub mod about;
 pub mod alerts;
 pub mod analyzer;
+pub mod api_docs;
 pub mod bot;
 pub mod changelog;
 pub mod currency_exchange;

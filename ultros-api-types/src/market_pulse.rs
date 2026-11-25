@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 /// Sales / volume KPIs for the trailing 24h plus the matching window
 /// 24-48h ago, so the frontend can render delta-vs-yesterday on each card.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MarketPulseDto {
     pub world_id: i32,
     pub sales_today: u64,

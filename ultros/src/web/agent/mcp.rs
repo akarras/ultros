@@ -5,7 +5,7 @@
 //!   JSON-RPC 2.0 batch arrays and strict `jsonrpc: "2.0"` / `id` / `MCP-Protocol-Version` checks).
 //! - `GET /mcp` returns `405 Method Not Allowed` (`Allow: POST, DELETE`) per Streamable HTTP
 //!   because this server does not open unsolicited server-to-client SSE streams. Human/agent
-//!   JSON discovery metadata lives at `GET /api/v1/public/mcp`.
+//!   documentation lives at `https://ultros.app/api-docs` and `https://ultros.app/llms.txt`.
 //! - Every tool is read-only (`readOnlyHint: true`) and returns both concise Markdown tables
 //!   and `structuredContent` carrying Ultros attribution and clickable `view_url` / `item_url` links.
 //! - Internal backend errors are logged server-side and mapped to stable public messages so
@@ -873,40 +873,20 @@ pub(crate) async fn handle_mcp_post(
 }
 
 /// Per MCP Streamable HTTP spec, servers that do not offer an unsolicited GET SSE stream
-/// MUST return `405 Method Not Allowed` on `GET /mcp`. Discovery JSON lives at `/api/v1/public/mcp`.
+/// MUST return `405 Method Not Allowed` on `GET /mcp`.
 pub(crate) async fn handle_mcp_get() -> Response {
     let mut resp = (
         StatusCode::METHOD_NOT_ALLOWED,
         Json(json!({
             "error": "method_not_allowed",
-            "message": "Ultros MCP uses Streamable HTTP via POST /mcp (no unsolicited GET SSE stream). For discovery metadata, see GET /api/v1/public/mcp or /llms.txt.",
-            "discovery_url": "https://ultros.app/api/v1/public/mcp",
+            "message": "Ultros MCP uses Streamable HTTP via POST /mcp (no unsolicited GET SSE stream). See https://ultros.app/llms.txt or https://ultros.app/api-docs for documentation.",
+            "docs_url": "https://ultros.app/api-docs",
+            "openapi_url": "https://ultros.app/openapi.json",
         })),
     )
         .into_response();
     resp.headers_mut()
         .insert(header::ALLOW, HeaderValue::from_static("POST, DELETE"));
-    resp
-}
-
-/// `GET /api/v1/public/mcp` — human/agent JSON discovery summary for the remote MCP server.
-pub(crate) async fn handle_mcp_discovery() -> Response {
-    let body = json!({
-        "name": "ultros",
-        "title": "Ultros FFXIV Market Board & Gil-Making MCP Server",
-        "transport": "streamable-http",
-        "endpoint": "https://ultros.app/mcp",
-        "supportedProtocolVersions": SUPPORTED_MCP_VERSIONS,
-        "docs": "https://ultros.app/llms.txt",
-        "openapi": "https://ultros.app/openapi.json",
-        "help": "https://ultros.app/help/ai-agents",
-        "tools": KNOWN_TOOLS,
-    });
-    let mut resp = (StatusCode::OK, Json(body)).into_response();
-    resp.headers_mut().insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=3600"),
-    );
     resp
 }
 
@@ -953,20 +933,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mcp_get_returns_405_and_discovery_lives_on_public_endpoint() {
+    async fn mcp_get_returns_405_with_allow_header() {
         let get_resp = handle_mcp_get().await;
         assert_eq!(get_resp.status(), StatusCode::METHOD_NOT_ALLOWED);
         assert_eq!(
             get_resp.headers().get(header::ALLOW).unwrap(),
             "POST, DELETE"
         );
-
-        let disc = handle_mcp_discovery().await;
-        assert_eq!(disc.status(), StatusCode::OK);
-        let bytes = disc.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(body["name"], "ultros");
-        assert_eq!(body["tools"].as_array().unwrap().len(), KNOWN_TOOLS.len());
     }
 
     #[tokio::test]

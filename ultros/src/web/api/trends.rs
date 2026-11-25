@@ -17,7 +17,8 @@ use crate::{
     web::error::WebError,
 };
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct TrendsQuery {
     /// One of 7, 30, or 90 — selects the v2 CH-backed window aggregate.
     /// When omitted the endpoint returns the legacy pre-bucketed payload

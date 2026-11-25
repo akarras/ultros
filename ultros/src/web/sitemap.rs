@@ -123,6 +123,7 @@ pub(crate) async fn generic_pages_sitemap(
         ),
         ("https://ultros.app/trends", 0.8, ChangeFrequency::Hourly),
         ("https://ultros.app/bot", 0.6, ChangeFrequency::Monthly),
+        ("https://ultros.app/api-docs", 0.6, ChangeFrequency::Weekly),
         ("https://ultros.app/about", 0.5, ChangeFrequency::Monthly),
         ("https://ultros.app/help", 0.6, ChangeFrequency::Monthly),
         ("https://ultros.app/changelog", 0.5, ChangeFrequency::Weekly),

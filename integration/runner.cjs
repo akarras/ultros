@@ -157,6 +157,10 @@ const ROUTE_ASSERTS = {
   // app-default title that carries "Ultros". Assert the page's own name instead.
   "/privacy": { titleIncludes: "Privacy Policy", bodyIncludesAny: ["privacy", "Privacy"] },
   "/cookie-policy": { titleIncludes: "Cookie Policy", bodyIncludesAny: ["cookie", "Cookie"] },
+  "/api-docs": {
+    titleIncludes: "API Docs",
+    bodyIncludesAny: ["Ultros Market API", "/api/v1/listings/{world}/{itemid}"],
+  },
 };
 
 /**
@@ -205,6 +209,7 @@ function getRoutes() {
     "/groups",
     "/help",
     "/help/flip-finder",
+    "/api-docs",
     "/privacy",
     "/cookie-policy",
   ];

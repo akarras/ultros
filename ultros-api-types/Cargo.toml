@@ -13,9 +13,11 @@ chrono = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 rkyv = { version = "0.7.42", features = ["validation", "size_32", "hashbrown"], default-features = false, optional = true }
 base64 = "0.23.1"
+utoipa = { workspace = true, features = ["chrono"], optional = true }
 
 [features]
 default = []
+openapi = ["dep:utoipa"]
 # Use `size_32` so rkyv can also compile for wasm32 (where `i64: Offset` is
 # gated on `target_pointer_width = "64"`). Must agree with the size feature
 # selected in xiv-gen and xiv-gen-db, otherwise rkyv's mutually-exclusive

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 /// How contested a bucket was. `Unknown` = before the world's floor anchor,
 /// where Ultros cannot tell a quiet board from an untracked one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PressureState {
     #[default]
@@ -15,6 +16,7 @@ pub enum PressureState {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PressureBucket {
     /// Epoch-aligned bucket start (unix seconds), same alignment as `PriceSeries`.
     pub start: i64,
@@ -31,6 +33,7 @@ pub struct PressureBucket {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WarSpan {
     pub start: i64,
     /// Exclusive end (last war bucket's start + bucket width).
@@ -42,6 +45,7 @@ pub struct WarSpan {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum WarStatus {
     #[default]
@@ -53,6 +57,7 @@ pub enum WarStatus {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PressureSummary {
     /// As-of floor now vs 24 h ago, as a fraction.
     #[serde(default)]
@@ -82,6 +87,7 @@ pub struct PressureSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct UndercutPressure {
     pub world_id: i32,
     pub from: i64,

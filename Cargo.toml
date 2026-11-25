@@ -183,6 +183,7 @@ clickhouse = { version = "0.15.3", features = [
 # for TLS and real error messages on failure (web-push collapses isahc errors to
 # `WebPushError::Unspecified` and discards the cause).
 web-push = { version = "0.11.0", default-features = false }
+utoipa = "5"
 
 [patch.crates-io]
 ironworks = { git = "https://github.com/ackwell/ironworks", rev = "3d5db8ff" }

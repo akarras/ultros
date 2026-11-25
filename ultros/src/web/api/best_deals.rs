@@ -15,9 +15,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ultros_db::world_data::world_cache::WorldCache;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct BestDealsQuery {
+    /// Minimum post-tax profit in gil.
     pub(crate) min_profit: Option<i32>,
+    /// Require at least one sale within this window (`Day`, `Week`, or `Month`).
     pub(crate) filter_sale: Option<String>, // "Day", "Week", etc.
     /// `1` or `true` skips the cross-cutting `ResaleQualityFilter` so
     /// suspicious rows (Unusable / high-launder) appear with a chip.
@@ -37,7 +40,7 @@ pub(crate) struct BestDealsQuery {
     pub(crate) max_roi: Option<f32>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, utoipa::ToSchema)]
 pub(crate) struct ResaleStatsDto {
     /// Post-tax gil: the estimated sale price net of the 5% marketboard cut,
     /// minus the buy price. Same math as the Flip Finder with its `include_tax`

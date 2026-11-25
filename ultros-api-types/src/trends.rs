@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 /// deep-scan refines them. The frontend renders this as a neutral grey
 /// chip with a "loading…" tooltip until the second pass arrives.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum ConfidenceBand {
     /// Pass-1 result without deep-scan data yet.
@@ -26,6 +27,7 @@ pub enum ConfidenceBand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TrendItem {
     pub item_id: i32,
     pub hq: bool,
@@ -103,6 +105,7 @@ pub struct TrendItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TrendsData {
     /// Trends v2: single flat list, sorted server-side, FE applies
     /// further sort/filter/pagination locally. Empty when the legacy

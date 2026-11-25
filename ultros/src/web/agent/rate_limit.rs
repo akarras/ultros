@@ -1,5 +1,5 @@
 //! Trusted-proxy-aware per-IP rate limiter for public AI agent surfaces
-//! (`/api/v1/public/*`, `/mcp`, and `Accept: text/markdown` / `?format=md` routes).
+//! (`/mcp` and `Accept: text/markdown` / `?format=md` routes).
 //!
 //! Security & memory invariants:
 //! - Defaults to the direct TCP socket peer (`ConnectInfo<SocketAddr>`).

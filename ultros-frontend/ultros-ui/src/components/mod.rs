@@ -9,7 +9,6 @@ pub mod hover_card;
 pub mod icon;
 pub mod loading;
 pub mod modal;
-pub mod patreon;
 pub mod relative_time;
 pub mod reorderable_list;
 pub mod select;
