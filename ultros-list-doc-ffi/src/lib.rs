@@ -31,7 +31,10 @@ use std::sync::{Mutex, OnceLock};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use ultros_list_doc::{ListDocument, ListUndo, Quality, RowKey};
+use ultros_list_doc::document::{MAX_CRAFT_CHOICES, MAX_TARGETS};
+use ultros_list_doc::{
+    CraftMode, CraftOptionsSnapshot, ListDocument, ListUndo, Quality, RowKey, TargetKey,
+};
 use ultros_list_doc::{SyncPayload, client_sync::ClientSync};
 
 const MAX_SNAPSHOT: usize = 8 * 1024 * 1024;
@@ -115,7 +118,17 @@ enum Edit {
         quality: String,
         delta: i64,
     },
+    AddAcquiredOrCreate {
+        item_id: i32,
+        quality: String,
+        delta: i64,
+    },
     SetAcquired {
+        item_id: i32,
+        quality: String,
+        value: i64,
+    },
+    SetAcquiredOrCreate {
         item_id: i32,
         quality: String,
         value: i64,
@@ -128,6 +141,49 @@ enum Edit {
     Remove {
         item_id: i32,
         quality: String,
+    },
+    AddTarget {
+        recipe_id: i32,
+        count: i64,
+    },
+    SetTargetCount {
+        recipe_id: i32,
+        count: i64,
+    },
+    AddTargetCompleted {
+        recipe_id: i32,
+        delta: i64,
+    },
+    SetTargetCompleted {
+        recipe_id: i32,
+        value: i64,
+    },
+    RemoveTarget {
+        recipe_id: i32,
+    },
+    SetCraftChoice {
+        item_id: i32,
+        mode: String,
+        recipe_id: Option<i32>,
+    },
+    SetIntermediateOnHand {
+        item_id: i32,
+        on_hand: i64,
+    },
+    AddIntermediateCrafted {
+        item_id: i32,
+        delta: i64,
+    },
+    SetIntermediateCrafted {
+        item_id: i32,
+        value: i64,
+    },
+    RemoveCraftChoice {
+        item_id: i32,
+    },
+    SetCraftOptions {
+        exclude_crystals: bool,
+        include_vendors: bool,
     },
     Rename {
         name: String,
@@ -165,6 +221,7 @@ impl Document {
     }
 
     fn view(&self) -> Value {
+        let craft_options = self.document.craft_options();
         json!({
             "name": self.document.meta().name,
             "peer_id": self.document.peer_id().to_string(),
@@ -181,6 +238,20 @@ impl Document {
                 "item_id": row.key.item_id, "quality": row.key.quality.as_str(),
                 "need": row.need, "acquired": row.acquired, "target": row.target,
             })).collect::<Vec<_>>(),
+            "targets": self.document.targets().into_iter().map(|target| json!({
+                "recipe_id": target.key.recipe_id,
+                "count": target.count,
+                "completed": target.completed,
+            })).collect::<Vec<_>>(),
+            "craft_choices": self.document.craft_choices().into_iter().map(|choice| json!({
+                "item_id": choice.item_id,
+                "mode": choice.mode.as_str(),
+                "recipe_id": choice.recipe_id,
+                "on_hand": choice.on_hand,
+                "crafted": choice.crafted,
+            })).collect::<Vec<_>>(),
+            "exclude_crystals": craft_options.exclude_crystals,
+            "include_vendors": craft_options.include_vendors,
         })
     }
 
@@ -240,6 +311,23 @@ impl Document {
                 }
                 self.document.add_acquired(&key, delta)
             }
+            Edit::AddAcquiredOrCreate {
+                item_id,
+                quality,
+                delta,
+            } => {
+                quantity(delta, true)?;
+                let key = key(item_id, &quality)?;
+                if let Some(row) = self.document.row(&key) {
+                    quantity(
+                        row.acquired.checked_add(delta).ok_or("Quantity overflow")?,
+                        true,
+                    )?;
+                } else if self.document.rows().len() >= MAX_ROWS {
+                    return Err("List row limit reached".into());
+                }
+                self.document.add_acquired_or_create(key, delta)
+            }
             Edit::SetAcquired {
                 item_id,
                 quality,
@@ -247,6 +335,20 @@ impl Document {
             } => {
                 quantity(value, true)?;
                 self.document.set_acquired(&key(item_id, &quality)?, value)
+            }
+            Edit::SetAcquiredOrCreate {
+                item_id,
+                quality,
+                value,
+            } => {
+                quantity(value, true)?;
+                let key = key(item_id, &quality)?;
+                if self.document.row(&key).is_none() && self.document.rows().len() >= MAX_ROWS {
+                    return Err("List row limit reached".into());
+                }
+                let current = self.document.row(&key).map_or(0, |r| r.acquired);
+                let delta = value.checked_sub(current).ok_or("Quantity overflow")?;
+                self.document.add_acquired_or_create(key, delta)
             }
             Edit::SetQuality {
                 item_id,
@@ -257,6 +359,96 @@ impl Document {
                 .set_quality(&key(item_id, &quality)?, parse_quality(&new_quality)?)
                 .map(|_| ()),
             Edit::Remove { item_id, quality } => self.document.remove_row(&key(item_id, &quality)?),
+            Edit::AddTarget { recipe_id, count } => {
+                let tkey = target_key(recipe_id)?;
+                positive_quantity(count)?;
+                if let Some(existing) = self.document.target(&tkey) {
+                    let next = existing
+                        .count
+                        .checked_add(count)
+                        .ok_or("Quantity overflow")?;
+                    positive_quantity(next)?;
+                } else if self.document.targets().len() >= MAX_TARGETS {
+                    return Err("Craft target limit reached".into());
+                }
+                self.document.add_target(tkey, count)
+            }
+            Edit::SetTargetCount { recipe_id, count } => {
+                let tkey = target_key(recipe_id)?;
+                positive_quantity(count)?;
+                self.document.set_target_count(&tkey, count)
+            }
+            Edit::AddTargetCompleted { recipe_id, delta } => {
+                let tkey = target_key(recipe_id)?;
+                quantity(delta, true)?;
+                if let Some(existing) = self.document.target(&tkey) {
+                    quantity(
+                        existing
+                            .completed
+                            .checked_add(delta)
+                            .ok_or("Quantity overflow")?,
+                        true,
+                    )?;
+                }
+                self.document.add_target_completed(&tkey, delta)
+            }
+            Edit::SetTargetCompleted { recipe_id, value } => {
+                let tkey = target_key(recipe_id)?;
+                quantity(value, true)?;
+                self.document.set_target_completed(&tkey, value)
+            }
+            Edit::RemoveTarget { recipe_id } => {
+                self.document.remove_target(&target_key(recipe_id)?)
+            }
+            Edit::SetCraftChoice {
+                item_id,
+                mode,
+                recipe_id,
+            } => {
+                let item_id = ensure_craft_choice_capacity(&self.document, item_id)?;
+                let mode: CraftMode = mode
+                    .parse()
+                    .map_err(|e: ultros_list_doc::KeyError| e.to_string())?;
+                let recipe_id = recipe_id
+                    .map(|id| valid_id(id, "Invalid recipe ID"))
+                    .transpose()?;
+                self.document.set_craft_choice(item_id, mode, recipe_id)
+            }
+            Edit::SetIntermediateOnHand { item_id, on_hand } => {
+                let item_id = ensure_craft_choice_capacity(&self.document, item_id)?;
+                quantity(on_hand, false)?;
+                self.document.set_intermediate_on_hand(item_id, on_hand)
+            }
+            Edit::AddIntermediateCrafted { item_id, delta } => {
+                let item_id = ensure_craft_choice_capacity(&self.document, item_id)?;
+                quantity(delta, true)?;
+                if let Some(choice) = self.document.craft_choice(item_id) {
+                    quantity(
+                        choice
+                            .crafted
+                            .checked_add(delta)
+                            .ok_or("Quantity overflow")?,
+                        true,
+                    )?;
+                }
+                self.document.add_intermediate_crafted(item_id, delta)
+            }
+            Edit::SetIntermediateCrafted { item_id, value } => {
+                let item_id = ensure_craft_choice_capacity(&self.document, item_id)?;
+                quantity(value, true)?;
+                self.document.set_intermediate_crafted(item_id, value)
+            }
+            Edit::RemoveCraftChoice { item_id } => {
+                let item_id = valid_id(item_id, "Invalid item ID")?;
+                self.document.remove_craft_choice(item_id)
+            }
+            Edit::SetCraftOptions {
+                exclude_crystals,
+                include_vendors,
+            } => self.document.set_craft_options(CraftOptionsSnapshot {
+                exclude_crystals,
+                include_vendors,
+            }),
             Edit::Rename { name } => {
                 if name.chars().count() > 128 || name.chars().any(char::is_control) {
                     return Err(
@@ -276,10 +468,27 @@ impl Document {
     }
 }
 
-fn key(item_id: i32, quality: &str) -> Result<RowKey, String> {
-    if !(1..=(i32::MAX - 2) / 4).contains(&item_id) {
-        return Err("Invalid item ID".into());
+fn valid_id(id: i32, message: &'static str) -> Result<i32, String> {
+    if !(1..=(i32::MAX - 2) / 4).contains(&id) {
+        return Err(message.into());
     }
+    Ok(id)
+}
+
+fn target_key(recipe_id: i32) -> Result<TargetKey, String> {
+    valid_id(recipe_id, "Invalid recipe ID").map(TargetKey::new)
+}
+
+fn ensure_craft_choice_capacity(doc: &ListDocument, item_id: i32) -> Result<i32, String> {
+    let item_id = valid_id(item_id, "Invalid item ID")?;
+    if doc.craft_choice(item_id).is_none() && doc.craft_choices().len() >= MAX_CRAFT_CHOICES {
+        return Err("Craft choice limit reached".into());
+    }
+    Ok(item_id)
+}
+
+fn key(item_id: i32, quality: &str) -> Result<RowKey, String> {
+    let item_id = valid_id(item_id, "Invalid item ID")?;
     Ok(RowKey {
         item_id,
         quality: parse_quality(quality)?,
@@ -290,6 +499,13 @@ fn parse_quality(value: &str) -> Result<Quality, String> {
     value
         .parse()
         .map_err(|e: ultros_list_doc::KeyError| e.to_string())
+}
+
+fn positive_quantity(value: i64) -> Result<(), String> {
+    if !(1..=MAX_QUANTITY).contains(&value) {
+        return Err("List quantities must be between 1 and one million".into());
+    }
+    Ok(())
 }
 
 fn quantity(value: i64, signed: bool) -> Result<(), String> {
@@ -306,6 +522,12 @@ fn validate_size(doc: &ListDocument) -> Result<(), String> {
     }
     if doc.rows().len() > MAX_ROWS {
         return Err("Snapshot exceeds the document's 256-row limit".into());
+    }
+    if doc.targets().len() > MAX_TARGETS {
+        return Err("Snapshot exceeds the document's craft target limit".into());
+    }
+    if doc.craft_choices().len() > MAX_CRAFT_CHOICES {
+        return Err("Snapshot exceeds the document's craft choice limit".into());
     }
     Ok(())
 }
@@ -1117,6 +1339,183 @@ mod tests {
                 1
             );
         }
+    }
+
+    #[test]
+    fn schema_v2_craft_edits_view_merge_undo_and_validation() {
+        let mut s = State::default();
+        let a = open(&mut s, None);
+
+        // Add recipe target, craft choice, on-hand, craft options, and dormant leaf row.
+        assert_eq!(
+            edit(
+                &mut s,
+                a,
+                json!({"kind":"add_target","recipe_id":100,"count":2})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            edit(
+                &mut s,
+                a,
+                json!({"kind":"set_craft_choice","item_id":200,"mode":"craft","recipe_id":201})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            edit(
+                &mut s,
+                a,
+                json!({"kind":"set_intermediate_on_hand","item_id":200,"on_hand":3})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            edit(
+                &mut s,
+                a,
+                json!({"kind":"set_craft_options","exclude_crystals":true,"include_vendors":true})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            edit(
+                &mut s,
+                a,
+                json!({"kind":"add_acquired_or_create","item_id":300,"quality":"any","delta":4})
+            )["ok"],
+            true
+        );
+
+        let view = call(&mut s, json!({"op":"view","doc":a}))["view"].clone();
+        assert_eq!(view["targets"][0]["recipe_id"], 100);
+        assert_eq!(view["targets"][0]["count"], 2);
+        assert_eq!(view["targets"][0]["completed"], 0);
+        assert_eq!(view["craft_choices"][0]["item_id"], 200);
+        assert_eq!(view["craft_choices"][0]["mode"], "craft");
+        assert_eq!(view["craft_choices"][0]["recipe_id"], 201);
+        assert_eq!(view["craft_choices"][0]["on_hand"], 3);
+        assert_eq!(view["exclude_crystals"], true);
+        assert_eq!(view["include_vendors"], true);
+        assert_eq!(view["rows"][0]["item_id"], 300);
+        assert_eq!(view["rows"][0]["need"], 0);
+        assert_eq!(view["rows"][0]["acquired"], 4);
+
+        // Fork to peer B and apply concurrent counter increments.
+        let initial = snapshot(&mut s, a);
+        let b = open(&mut s, Some(&initial));
+        assert_eq!(
+            edit(
+                &mut s,
+                a,
+                json!({"kind":"add_target_completed","recipe_id":100,"delta":1})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            edit(
+                &mut s,
+                b,
+                json!({"kind":"add_target_completed","recipe_id":100,"delta":1})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            edit(
+                &mut s,
+                a,
+                json!({"kind":"add_intermediate_crafted","item_id":200,"delta":2})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            edit(
+                &mut s,
+                b,
+                json!({"kind":"add_intermediate_crafted","item_id":200,"delta":1})
+            )["ok"],
+            true
+        );
+        let from_b = snapshot(&mut s, b);
+        assert_eq!(
+            call(&mut s, json!({"op":"import","doc":a,"snapshot":from_b}))["ok"],
+            true
+        );
+        let merged = call(&mut s, json!({"op":"view","doc":a}))["view"].clone();
+        assert_eq!(merged["targets"][0]["completed"], 2);
+        assert_eq!(merged["craft_choices"][0]["crafted"], 3);
+
+        // Setters + remove + undo/redo work cleanly.
+        assert_eq!(
+            edit(
+                &mut s,
+                a,
+                json!({"kind":"set_target_count","recipe_id":100,"count":5})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            edit(
+                &mut s,
+                a,
+                json!({"kind":"set_target_completed","recipe_id":100,"value":4})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            edit(
+                &mut s,
+                a,
+                json!({"kind":"set_intermediate_crafted","item_id":200,"value":1})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            edit(
+                &mut s,
+                a,
+                json!({"kind":"set_acquired_or_create","item_id":301,"quality":"any","value":7})
+            )["ok"],
+            true
+        );
+        let updated = call(&mut s, json!({"op":"view","doc":a}))["view"].clone();
+        assert_eq!(updated["targets"][0]["count"], 5);
+        assert_eq!(updated["targets"][0]["completed"], 4);
+        assert_eq!(updated["craft_choices"][0]["crafted"], 1);
+        assert_eq!(updated["rows"][1]["item_id"], 301);
+        assert_eq!(updated["rows"][1]["acquired"], 7);
+
+        // Validation rejections leave live state intact.
+        for bad in [
+            json!({"kind":"add_target","recipe_id":0,"count":1}),
+            json!({"kind":"add_target","recipe_id":101,"count":0}),
+            json!({"kind":"set_craft_choice","item_id":200,"mode":"steal","recipe_id":null}),
+            json!({"kind":"set_intermediate_on_hand","item_id":200,"on_hand":-1}),
+            json!({"kind":"set_target_count","recipe_id":100,"count":1_000_001}),
+        ] {
+            assert_eq!(edit(&mut s, a, bad)["ok"], false);
+        }
+
+        assert_eq!(
+            edit(&mut s, a, json!({"kind":"remove_target","recipe_id":100}))["ok"],
+            true
+        );
+        assert_eq!(
+            call(&mut s, json!({"op":"view","doc":a}))["view"]["targets"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(edit(&mut s, a, json!({"kind":"undo"}))["ok"], true);
+        assert_eq!(
+            call(&mut s, json!({"op":"view","doc":a}))["view"]["targets"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }
 

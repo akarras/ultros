@@ -27,6 +27,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IGameInventory Inventory { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     private readonly ClientWorker worker;
+    private readonly GameRecipeCatalog recipeCatalog;
     private readonly RetainerCapture capture;
     private readonly InventoryAcquisition inventoryProgress;
     private readonly MainWindow window;
@@ -44,12 +45,13 @@ public sealed class Plugin : IDalamudPlugin
         var config=Interface.GetPluginConfig() as Configuration??new Configuration();
         if(!UltrosEndpoint.LocalhostAvailable&&config.Localhost){config.Localhost=false;Interface.SavePluginConfig(config);}
         var endpoint=new UltrosEndpoint(config.Localhost,config.LocalOrigin);
-        worker=new ClientWorker(Path.Combine(Interface.GetPluginConfigDirectory(),"connected"),endpoint,config.Profile);
+        recipeCatalog=new GameRecipeCatalog();
+        worker=new ClientWorker(Path.Combine(Interface.GetPluginConfigDirectory(),"connected"),endpoint,config.Profile,recipeCatalog);
         capture=new RetainerCapture(worker,config);
         inventoryProgress=new InventoryAcquisition(worker,capture,config);
-        window=new MainWindow(worker,capture,inventoryProgress,config);
+        window=new MainWindow(worker,capture,inventoryProgress,config,recipeCatalog);
         gameNotifications=new GameNotifications(worker,config,capture);
-        itemShortcuts=new ItemShortcuts(worker,window,endpoint,config);
+        itemShortcuts=new ItemShortcuts(worker,window,endpoint,config,recipeCatalog);
         bellShortcut=new BellRetainerShortcut(worker,capture,window,config);
         testNotifications=gameNotifications.Test;
         windows.AddWindow(window);

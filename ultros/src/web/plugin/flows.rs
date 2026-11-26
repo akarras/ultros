@@ -84,7 +84,7 @@ async fn estimate(
         .world_cache
         .get_all_worlds_in(&resolved)
         .ok_or(E::Invalid("invalid_list_scope"))?;
-    let rows = doc.rows();
+    let rows = ultros_db::list_doc::projected_rows(&doc, state.db.recipe_catalog());
     if rows.len() > 1000 {
         return Err(E::Invalid("list_too_large_for_estimate").into());
     }
@@ -493,5 +493,95 @@ mod version_bound_tests {
         assert_eq!(totals[0]["total"], 300);
         assert_eq!(totals[1]["world_id"], 63);
         assert_eq!(totals[1]["total"], 200);
+    }
+
+    #[test]
+    fn estimate_projects_schema_v2_craft_targets_into_consolidated_leaves() {
+        use std::collections::BTreeMap;
+        use ultros_calc::list_estimate::{LineRequest, estimate_cart};
+        use ultros_calc::recipe_planner::Recipe;
+        use ultros_db::list_doc::{RecipeCatalog, projected_rows};
+        use ultros_list_doc::{RowKey, TargetKey};
+
+        #[derive(Debug)]
+        struct TestCatalog(BTreeMap<i32, Recipe>);
+        impl RecipeCatalog for TestCatalog {
+            fn recipe(&self, recipe_id: i32) -> Option<Recipe> {
+                self.0.get(&recipe_id).cloned()
+            }
+            fn default_recipe_for_item(&self, item_id: i32) -> Option<Recipe> {
+                self.0.values().find(|r| r.output == item_id).cloned()
+            }
+            fn is_crystal(&self, item_id: i32) -> bool {
+                item_id == 8
+            }
+        }
+
+        // Target recipe 100 yields 1x item 5056 requiring 2x intermediate 200 (recipe 201, yields 1x 300 raw).
+        let mut recipes = BTreeMap::new();
+        recipes.insert(
+            100,
+            Recipe {
+                id: 100,
+                output: 5056,
+                yield_amount: 1,
+                ingredients: vec![(200, 2), (8, 5)],
+            },
+        );
+        recipes.insert(
+            201,
+            Recipe {
+                id: 201,
+                output: 200,
+                yield_amount: 1,
+                ingredients: vec![(300, 3)],
+            },
+        );
+        let catalog = TestCatalog(recipes);
+
+        let doc = ListDocument::new();
+        doc.add_target(TargetKey::new(100), 2).unwrap();
+        // 1 intermediate already on hand -> remaining 3 intermediates * 3 raw = 9x item 300 needed.
+        doc.set_intermediate_on_hand(200, 1).unwrap();
+        // Exclude crystals -> item 8 omitted.
+        doc.set_craft_options(ultros_list_doc::CraftOptionsSnapshot {
+            exclude_crystals: true,
+            include_vendors: false,
+        })
+        .unwrap();
+        // 4x item 300 already acquired on dormant/manual row -> 5x remaining to buy.
+        doc.add_acquired_or_create(RowKey::new(300, None), 4)
+            .unwrap();
+
+        let rows = projected_rows(&doc, Some(&catalog));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key, RowKey::new(300, None));
+        assert_eq!(rows[0].need, 9);
+        assert_eq!(rows[0].acquired, 4);
+
+        let listing = ultros_api_types::ActiveListing {
+            id: 1,
+            world_id: 63,
+            item_id: 300,
+            price_per_unit: 120,
+            quantity: 10,
+            hq: false,
+            timestamp: chrono::Utc::now().naive_utc(),
+            retainer_id: 1,
+        };
+        let req = LineRequest {
+            row_id: 0,
+            item_id: rows[0].key.item_id,
+            hq: rows[0].key.quality.into(),
+            requested: rows[0].need as i32,
+            acquired: rows[0].acquired as i32,
+        };
+        let result = estimate_cart([(req, &[listing][..])]);
+        let payload = estimate_payload("ver2", "Aether", chrono::Utc::now(), result);
+        assert_eq!(payload["total"], 600);
+        assert_eq!(payload["lines"][0]["item_id"], 300);
+        assert_eq!(payload["lines"][0]["remaining"], 5);
+        assert_eq!(payload["world_totals"][0]["world_id"], 63);
+        assert_eq!(payload["world_totals"][0]["total"], 600);
     }
 }

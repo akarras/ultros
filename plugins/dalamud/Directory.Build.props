@@ -1,8 +1,8 @@
 <Project>
   <PropertyGroup>
     <!-- One checked-in version for every managed assembly and release package. -->
-    <UltrosPluginVersion>1.7.0.2</UltrosPluginVersion>
-    <UltrosPluginReleaseNotes>Added Schema v2 crafting project support in the list document engine. Polished Market and Lists views with in-game item icons, resolved world names, HQ/NQ filters, sortable listings, auto-refreshed list estimates, and a world-grouped Shopping Route. Added Settings toggles for the summoning-bell shortcut and game-chat alert printing, one-click post-patch re-enable banners, tab unread badges, notification timestamps, and a 100% pure-managed WASM-to-IL list document engine (no native DLL).</UltrosPluginReleaseNotes>
+    <UltrosPluginVersion>1.7.0.3</UltrosPluginVersion>
+    <UltrosPluginReleaseNotes>Added the Live Crafting Copilot for Schema v2 crafting lists: interactive Craft checklist (Step order and By job grouping, Craft vs. Buy intermediate toggles, On-hand stock, ingredient readiness, and target/sub-craft completion buttons), one-click Sync bag stock from your character's loaded inventory, automatic live progression for in-game synths and material pickups, and recipe search / right-click Add recipe shortcuts alongside consolidated Shopping Route estimates.</UltrosPluginReleaseNotes>
     <Version>$(UltrosPluginVersion)</Version>
     <AssemblyVersion>$(UltrosPluginVersion)</AssemblyVersion>
     <FileVersion>$(UltrosPluginVersion)</FileVersion>

@@ -21,6 +21,7 @@ internal static class ClientChecks
         await ConnectionUpgradeChecks.Run();
         ListEditTargetChecks.Run();
         InventoryProgressChecks.Run();
+        CraftProjectChecks.Run();
         RetainerPriceChecks.Run();
         HistoryPrivacyChecks.Run();
         CaptureUploadChecks.Run();

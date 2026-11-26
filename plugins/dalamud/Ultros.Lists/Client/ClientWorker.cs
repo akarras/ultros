@@ -30,6 +30,7 @@ public sealed class ClientWorker : IDisposable
     private readonly string root;
     private readonly UltrosEndpoint endpoint;
     private readonly string profile;
+    private readonly ICraftRecipeSource? recipeSource;
     private Connection? connection;
     private ConnectedCart? cart;
     private ListAccess[] lists = [];
@@ -66,14 +67,14 @@ public sealed class ClientWorker : IDisposable
     private int inventoryBatchReserved;
     private PendingInventory? pendingInventory;
     private DateTimeOffset nextInventory;
-    private sealed record PendingInventory(ListEditTarget Target, int Generation, InventoryBatch Batch);
+    private sealed record PendingInventory(ListEditTarget Target, int Generation, ProjectProgressBatch Batch);
     public int InventoryGeneration=>Volatile.Read(ref inventoryGeneration);
     public void CancelQueuedInventory()=>Interlocked.Increment(ref inventoryGeneration);
     private ClientView view;
     public ClientView View => Volatile.Read(ref view);
-    public ClientWorker(string root, UltrosEndpoint endpoint, string profile)
+    public ClientWorker(string root, UltrosEndpoint endpoint, string profile, ICraftRecipeSource? recipeSource = null)
     {
-        this.root=root;this.endpoint=endpoint;this.profile=profile;
+        this.root=root;this.endpoint=endpoint;this.profile=profile;this.recipeSource=recipeSource;
         view=new(false,status,"",null,endpoint.At("/plugin/verify").AbsoluteUri,null,[],null,null,false,[],[],null,[],null,[]);
         running=Task.Run(Run);
     }
@@ -151,6 +152,64 @@ public sealed class ClientWorker : IDisposable
             return Task.CompletedTask;
         });
     }
+    public bool AddTarget(ListEditTarget target,int recipeId,int count=1)
+    {
+        if(!target.Matches(View)||recipeId<=0||count is <1 or >1_000_000)return false;
+        return Offer(()=>{
+            if(!target.Matches(connection?.Session,cart?.Id,CanEdit(),cart?.InstanceId)) {
+                status="The list or account changed. Choose the destination and add the recipe again.";
+                return Task.CompletedTask;
+            }
+            cart!.Edit(new{kind="add_target",recipe_id=recipeId,count});
+            nextCart=DateTimeOffset.MinValue;ScheduleEstimate(2);
+            status="Recipe added to the selected list. Saved locally; synchronizing…";
+            return Task.CompletedTask;
+        });
+    }
+    public bool SyncBagStock(CartCommandTarget? target, IReadOnlyDictionary<InventoryKey, long> bagTotals)
+    {
+        if (target is null || bagTotals.Count > 4096 || bagTotals.Any(p => p.Key.ItemId <= 0 || p.Value < 0)) return false;
+        var totalsCopy = new Dictionary<InventoryKey, long>(bagTotals);
+        return Offer(() =>
+        {
+            if (!CanEdit() || !target.Matches(connection?.Session, cart))
+            {
+                RejectChangedDestination();
+                return Task.CompletedTask;
+            }
+            var activeCart = cart!;
+            var updatedIntermediates = 0;
+            var updatedRows = 0;
+            var plan = CraftProject.Build(activeCart.Document.View, recipeSource);
+            if (plan.HasTargets)
+            {
+                foreach (var upd in InventoryProgress.PlanBagStockPhase1Intermediates(plan, totalsCopy))
+                {
+                    activeCart.Edit(new { kind = "set_intermediate_on_hand", item_id = upd.ItemId, on_hand = upd.OnHand });
+                    updatedIntermediates++;
+                }
+                if (updatedIntermediates > 0)
+                    plan = CraftProject.Build(activeCart.Document.View, recipeSource);
+            }
+            var rows = plan.HasTargets ? plan.ConsolidatedRows : activeCart.Document.View.Rows;
+            foreach (var upd in InventoryProgress.PlanBagStockPhase2Rows(rows, plan.ConsumedByItem, totalsCopy))
+            {
+                activeCart.Edit(new { kind = "set_acquired_or_create", item_id = upd.ItemId, quality = upd.Quality, value = upd.Acquired });
+                updatedRows++;
+            }
+            if (updatedIntermediates == 0 && updatedRows == 0)
+            {
+                status = "Bag stock already matches this list.";
+            }
+            else
+            {
+                nextCart = DateTimeOffset.MinValue;
+                ScheduleEstimate(2);
+                status = $"Synced bag stock ({updatedIntermediates} sub-craft{(updatedIntermediates == 1 ? "" : "s")}, {updatedRows} material{(updatedRows == 1 ? "" : "s")}). Saved locally; synchronizing…";
+            }
+            return Task.CompletedTask;
+        });
+    }
     public bool ApplyInventoryGains(ListEditTarget target,int generation,InventoryGain[] gains)
     {
         if(generation!=InventoryGeneration||!target.Matches(View)||gains.Length>4096
@@ -160,7 +219,13 @@ public sealed class ClientWorker : IDisposable
             if(generation!=InventoryGeneration||!MatchesDestination(target)||!CanTrackInventory()) {
                 Interlocked.Exchange(ref inventoryBatchReserved,0);return Task.CompletedTask;
             }
-            pendingInventory=new(target,generation,new InventoryBatch(InventoryProgress.Allocate(cart!.Document.View.Rows,gainsCopy)));
+            var currentView=cart!.Document.View;
+            var plan=currentView.Targets.Length>0&&recipeSource is not null?CraftProject.Build(currentView,recipeSource):null;
+            var deltas=InventoryProgress.AllocateProject(currentView,plan,gainsCopy);
+            if(deltas.Length==0){
+                Interlocked.Exchange(ref inventoryBatchReserved,0);return Task.CompletedTask;
+            }
+            pendingInventory=new(target,generation,new ProjectProgressBatch(deltas));
             ResumeInventory();
             return Task.CompletedTask;
         });
@@ -181,12 +246,27 @@ public sealed class ClientWorker : IDisposable
             if(activeCart.Document.View.AwaitingPersist)activeCart.Save();
             // Persist an already-mutated delta before attempting any later delta.
             pending.Batch.Resume(
-                delta=>activeCart.Document.Edit(new{kind="add_acquired",item_id=delta.ItemId,quality=delta.Quality,delta=delta.Quantity}),
+                delta=>{
+                    object edit=delta.Kind switch{
+                        ProgressDeltaKind.TargetCompleted=>new{kind="add_target_completed",recipe_id=delta.RecipeId,delta=delta.Quantity},
+                        ProgressDeltaKind.IntermediateCrafted=>new{kind="add_intermediate_crafted",item_id=delta.ItemId,delta=delta.Quantity},
+                        _=>new{kind="add_acquired_or_create",item_id=delta.ItemId,quality=delta.Quality,delta=delta.Quantity},
+                    };
+                    activeCart.Document.Edit(edit);
+                },
                 ()=>activeCart.Save(),
                 ()=>pending.Generation==InventoryGeneration&&MatchesDestination(pending.Target)&&CanEdit(),
-                delta=>InventoryProgress.ClampToRemaining(activeCart.Document.View.Rows,delta));
-            nextCart=DateTimeOffset.MinValue;ScheduleEstimate(2);
-            status=$"Marked {pending.Batch.Applied:N0} units acquired from inventory. Saved locally; synchronizing...";
+                delta=>{
+                    var latest=activeCart.Document.View;
+                    var latestPlan=latest.Targets.Length>0&&recipeSource is not null?CraftProject.Build(latest,recipeSource):null;
+                    return InventoryProgress.ClampProjectDelta(latest,latestPlan,delta);
+                });
+            if(pending.Batch.Applied>0){
+                nextCart=DateTimeOffset.MinValue;ScheduleEstimate(2);
+                status=pending.Batch.AppliedCraftSteps>0
+                    ? $"Updated crafting & shopping progress from inventory ({pending.Batch.Applied:N0}). Saved locally; synchronizing..."
+                    : $"Marked {pending.Batch.Applied:N0} units acquired from inventory. Saved locally; synchronizing...";
+            }
             if(pending.Batch.Complete){pendingInventory=null;Interlocked.Exchange(ref inventoryBatchReserved,0);}
         }
         catch(Exception) when(pending.Batch.AwaitingPersist||activeCart.Document.View.AwaitingPersist) {

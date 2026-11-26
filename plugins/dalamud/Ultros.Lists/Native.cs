@@ -349,6 +349,8 @@ public static class Native
 }
 
 public sealed record CartRow(int ItemId, string Quality, long Need, long Acquired, long? Target);
+public sealed record CartTarget(int RecipeId, long Count, long Completed);
+public sealed record CartCraftChoice(int ItemId, string Mode, int? RecipeId, long OnHand, long Crafted);
 public sealed record CartView(string Name, string PeerId, bool CanUndo, bool CanRedo, CartRow[] Rows)
 {
     public string Version { get; init; } = "";
@@ -358,6 +360,10 @@ public sealed record CartView(string Name, string PeerId, bool CanUndo, bool Can
     public bool RecoveryReview { get; init; }
     public bool HasServerCopy { get; init; }
     public JsonElement? Scope { get; init; }
+    public CartTarget[] Targets { get; init; } = [];
+    public CartCraftChoice[] CraftChoices { get; init; } = [];
+    public bool ExcludeCrystals { get; init; }
+    public bool IncludeVendors { get; init; }
 }
 public sealed record SyncRequest(string Version, string? Update);
 public sealed record SyncReply(string Version, string Kind, string Payload);
