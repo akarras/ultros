@@ -28,9 +28,15 @@ pub mod snapshot;
 pub mod undo;
 mod validation;
 
-pub use document::{DocError, ImportReport, ListDocument, SCHEMA_VERSION, SyncPayload};
-pub use key::{KeyError, Quality, RowKey};
-pub use snapshot::{MetaSnapshot, RowChange, RowSnapshot, diff_rows, encode_scope, parse_scope};
+pub use document::{
+    DocError, ImportReport, ListDocument, SCHEMA_VERSION, SCHEMA_VERSION_CRAFT, SyncPayload,
+};
+pub use key::{CraftChoiceKey, KeyError, Quality, RowKey, TargetKey};
+pub use snapshot::{
+    CraftChoiceChange, CraftChoiceSnapshot, CraftMode, CraftOptionsSnapshot, MetaSnapshot,
+    RowChange, RowSnapshot, TargetChange, TargetSnapshot, diff_craft_choices, diff_rows,
+    diff_targets, encode_scope, parse_scope,
+};
 pub use undo::ListUndo;
 
 /// Re-exported so consumers can hold subscriptions without depending on

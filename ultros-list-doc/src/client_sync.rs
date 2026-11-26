@@ -36,7 +36,10 @@ pub fn import_server_snapshot(
     bytes: &[u8],
 ) -> Result<ImportReport, DocError> {
     let server = ListDocument::from_snapshot(bytes)?;
-    if (!local.rows().is_empty() || !local.meta().name.is_empty())
+    if (!local.rows().is_empty()
+        || !local.targets().is_empty()
+        || !local.craft_choices().is_empty()
+        || !local.meta().name.is_empty())
         && local
             .common_base(&server)
             .is_none_or(|base| !base.shares_history(&server))

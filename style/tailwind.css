@@ -3780,3 +3780,90 @@ dialog.nav-dialog { position: fixed; inset: 0 auto 0 0; margin: 0; padding: 0; b
 .recipe-breakdown-table th:nth-child(n+3),
 .recipe-breakdown-table td:nth-child(n+3) { min-width: 5.5rem; }
 .recipe-breakdown-scroll .recipe-breakdown-body { overflow: visible; }
+
+/* ----- Crafting project workspace (Build | Craft | Shop) ----- */
+.craft-card,
+.craft-step-card {
+    min-width: 0;
+    border: 1px solid var(--color-outline);
+    border-radius: 0.75rem;
+    background-color: var(--color-background-panel);
+    padding: 0.875rem;
+    transition: border-color 150ms ease, background-color 150ms ease;
+}
+.craft-card:hover,
+.craft-step-card:hover {
+    border-color: var(--color-outline-strong);
+}
+.craft-step-card[data-craft-mode="buy"] {
+    background-color: color-mix(in srgb, var(--surface) 60%, var(--color-background));
+}
+.craft-step-card[data-ready="done"] {
+    border-color: color-mix(in srgb, var(--status-success) 38%, var(--color-outline));
+}
+.craft-kpi {
+    min-width: 0;
+    border: 1px solid var(--color-outline);
+    border-radius: 0.625rem;
+    background-color: var(--color-background-elevated);
+    padding: 0.625rem 0.75rem;
+}
+.craft-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: 9999px;
+    border: 1px solid var(--color-outline);
+    background-color: var(--surface);
+    color: var(--color-text-muted);
+    padding: 0.125rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.25;
+    white-space: nowrap;
+}
+.craft-pill-ready {
+    border-color: color-mix(in srgb, var(--brand-ring) 45%, var(--color-outline));
+    background-color: color-mix(in srgb, var(--brand-ring) 16%, transparent);
+    color: var(--brand-fg);
+}
+.craft-pill-done {
+    border-color: color-mix(in srgb, var(--status-success) 45%, var(--color-outline));
+    background-color: color-mix(in srgb, var(--status-success) 16%, transparent);
+    color: var(--status-success);
+}
+.craft-pill-warn {
+    border-color: color-mix(in srgb, var(--status-warning) 45%, var(--color-outline));
+    background-color: color-mix(in srgb, var(--status-warning) 16%, transparent);
+    color: var(--status-warning);
+}
+.craft-pill-buy {
+    border-color: var(--color-outline-strong);
+    background-color: color-mix(in srgb, var(--color-outline) 35%, transparent);
+    color: var(--color-text-muted);
+}
+.craft-progress-track {
+    width: 100%;
+    height: 0.45rem;
+    border-radius: 9999px;
+    overflow: hidden;
+    background-color: color-mix(in srgb, var(--color-outline) 55%, transparent);
+}
+.craft-progress-fill {
+    height: 100%;
+    border-radius: 9999px;
+    background-color: var(--brand-ring);
+    transition: width 180ms ease;
+}
+.craft-progress-fill[data-complete="true"] {
+    background-color: var(--status-success);
+}
+.craft-ingredients-details > summary {
+    cursor: pointer;
+    color: var(--color-text-muted);
+    font-size: 0.8125rem;
+    font-weight: 500;
+}
+.craft-ingredients-details > summary:hover {
+    color: var(--color-text);
+}

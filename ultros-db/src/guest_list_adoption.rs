@@ -63,14 +63,14 @@ pub fn validate_adoption(request: &AdoptGuestList) -> Result<(), ListError> {
 fn prepare_online(
     owner: i64,
     request: &ultros_api_types::list::MakeListOnline,
+    catalog: Option<&dyn crate::list_doc::RecipeCatalog>,
 ) -> anyhow::Result<(AdoptGuestList, ListDocument)> {
     if request.snapshot.len() > 512 * 1024 {
         return Err(ListError::BadRequest("list document exceeds the size limit").into());
     }
     let doc = ListDocument::from_snapshot(&request.snapshot)?;
     let scope = doc.meta().scope.unwrap_or(request.wdr_filter);
-    let items = doc
-        .rows()
+    let items = crate::list_doc::projected_rows(&doc, catalog)
         .into_iter()
         .map(|row| {
             Ok(ultros_api_types::list::GuestListItem {
@@ -123,7 +123,7 @@ impl UltrosDb {
         owner: i64,
         request: &ultros_api_types::list::MakeListOnline,
     ) -> anyhow::Result<AdoptionOutcome> {
-        let (adoption, doc) = prepare_online(owner, request)?;
+        let (adoption, doc) = prepare_online(owner, request, self.recipe_catalog.as_deref())?;
         let mut outcome = self.adopt_document(owner, adoption, Some(doc)).await?;
         outcome.response.device_list_id = request.device_list_id.clone();
         // The web handler acknowledges this revision only after its merge commits.
@@ -307,7 +307,7 @@ mod tests {
             wdr_filter: AnySelector::Region(1),
             snapshot: source.export_snapshot().unwrap(),
         };
-        let (projection, destination) = prepare_online(1, &request).unwrap();
+        let (projection, destination) = prepare_online(1, &request, None).unwrap();
         assert_eq!(projection.items[0].acquired, 2);
         assert_eq!(destination.meta().scope, Some(AnySelector::Region(1)));
         // The online editor and the still-open local editor change the same
@@ -334,13 +334,13 @@ mod tests {
             wdr_filter: AnySelector::Region(1),
             snapshot: vec![0; 512 * 1024 + 1],
         };
-        assert!(prepare_online(1, &request).is_err());
+        assert!(prepare_online(1, &request, None).is_err());
         request.snapshot = vec![1, 2, 3];
-        assert!(prepare_online(1, &request).is_err());
+        assert!(prepare_online(1, &request, None).is_err());
         let doc = ListDocument::new();
         doc.rename(" ").unwrap();
         request.snapshot = doc.export_snapshot().unwrap();
-        assert!(prepare_online(1, &request).is_err());
+        assert!(prepare_online(1, &request, None).is_err());
     }
 
     fn request() -> AdoptGuestList {

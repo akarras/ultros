@@ -69,14 +69,19 @@ mod browser {
     use crate::components::app_link::use_query_map_or_default;
     use crate::components::cart::ListCart;
     use crate::components::list::sort::SortSpec;
+    use crate::components::list_craft::ListCraft;
     use crate::list_doc::{
         adapter::{self, Edit},
+        craft_project::{
+            CraftProjectState, apply_optimize_choices, build_craft_project, compute_optimize_plan,
+            consolidated_effective_need,
+        },
         guest::GuestListHandle,
     };
-    use crate::routes::list_view_sync::ListWorkspaceSource;
+    use crate::routes::list_view_sync::{ListWorkspaceSource, WorkspaceMode};
     use leptos::either::Either;
     use leptos_router::hooks::{use_navigate, use_params_map};
-    use std::collections::{BTreeSet, HashSet};
+    use std::collections::{BTreeSet, HashMap, HashSet};
     use ultros_api_types::world_helper::AnySelector;
     use ultros_calc::list_estimate::{LookupTicket, MissingReason, PriceFeed};
     use ultros_calc::list_travel::TravelPolicy;
@@ -571,11 +576,21 @@ mod browser {
         let busy = RwSignal::new(false);
         let pending_scope = RwSignal::new(None);
         let ticket = StoredValue::new(LookupTicket::default());
-        // `?buy=true` reopens Shop after a sign-in round trip, the same way
-        // the account editor reads it, so the handoff keeps the player's mode.
-        let shop = RwSignal::new(query.with_untracked(|q| q.get("buy").as_deref() == Some("true")));
+        // `?buy=true` / `?mode=craft` preserve view mode across sign-in round trips.
+        let mode = RwSignal::new(query.with_untracked(|q| {
+            if q.get("buy").as_deref() == Some("true") {
+                WorkspaceMode::Shop
+            } else if q.get("mode").as_deref() == Some("craft") {
+                WorkspaceMode::Craft
+            } else {
+                WorkspaceMode::Build
+            }
+        }));
+        let craft_mounted = Memo::new(move |previous: Option<&bool>| {
+            mode.get() == WorkspaceMode::Craft || previous.copied().unwrap_or(false)
+        });
         let shop_mounted = Memo::new(move |previous: Option<&bool>| {
-            shop.get() || previous.copied().unwrap_or(false)
+            mode.get() == WorkspaceMode::Shop || previous.copied().unwrap_or(false)
         });
         // Editor-owned travel limit and exclusions (#1480): device lists have
         // no other exclusion filter, so the policy alone narrows served rows.
@@ -601,6 +616,17 @@ mod browser {
                 error.set(e);
             }
         };
+        let device_price_item_ids = |h: &GuestListHandle| -> BTreeSet<i32> {
+            let rows = h.rows();
+            let targets = h.targets();
+            let choices = h.craft_choices();
+            let options = h.craft_options();
+            if targets.is_empty() {
+                return rows.into_iter().map(|row| row.key.item_id).collect();
+            }
+            build_craft_project(0, &rows, &targets, &choices, options, &HashMap::new())
+                .all_price_item_ids
+        };
         // One lookup for both the button and the eager fetch below. Neither
         // writes the scope to the document: only the picker does, so the
         // default can keep following the price zone until the player picks.
@@ -620,9 +646,8 @@ mod browser {
                 return;
             };
             let ids: HashSet<_> = handle
-                .with_value(|h| h.rows())
+                .with_value(device_price_item_ids)
                 .into_iter()
-                .map(|row| row.key.item_id)
                 .collect();
             let request = ticket
                 .try_update_value(|ticket| ticket.begin())
@@ -691,11 +716,7 @@ mod browser {
                 return;
             };
             revision.track();
-            let ids: BTreeSet<i32> = handle
-                .with_value(|h| h.rows())
-                .into_iter()
-                .map(|row| row.key.item_id)
-                .collect();
+            let ids = handle.with_value(device_price_item_ids);
             if ids.is_empty() {
                 return;
             }
@@ -777,7 +798,7 @@ mod browser {
                 {
                     navigate.try_with_value(|go| {
                         go(
-                            &travel.online_href(id, shop.get_untracked()),
+                            &travel.online_href(id, mode.get_untracked()),
                             Default::default(),
                         )
                     });
@@ -851,25 +872,42 @@ mod browser {
         let sort = RwSignal::new(None::<SortSpec>);
         // In-memory: device lists have no URL-carried filters.
         let hide_acquired = RwSignal::new(false);
-        let guest_rows = Signal::derive(move || {
-            revision.track();
+        let filtered_offers = Memo::new(move |_| {
             let policy = travel.policy.get();
+            let mut map = offers.get();
+            if policy.narrows() {
+                for listings in map.values_mut() {
+                    *listings = policy.filter_listings(listings);
+                }
+            }
+            map
+        });
+        let craft_project = Memo::new(move |_| {
+            revision.track();
+            let listings = filtered_offers.get();
             handle.with_value(|h| {
-                h.rows()
-                    .iter()
-                    .filter_map(|row| adapter::to_list_item(0, row))
-                    .map(|item| {
-                        let prices = offers
-                            .with(|offers| offers.get(&item.item_id).cloned().unwrap_or_default());
-                        let prices = if policy.narrows() {
-                            policy.filter_listings(&prices)
-                        } else {
-                            prices
-                        };
-                        (item, prices)
-                    })
-                    .collect::<Vec<_>>()
+                build_craft_project(
+                    0,
+                    &h.rows(),
+                    &h.targets(),
+                    &h.craft_choices(),
+                    h.craft_options(),
+                    &listings,
+                )
             })
+        });
+        Effect::new(move |_| {
+            if mode.get() == WorkspaceMode::Craft && !craft_project.with(|p| p.has_targets) {
+                mode.set(WorkspaceMode::Build);
+            }
+        });
+        let guest_rows = Signal::derive(move || craft_project.with(|p| p.manual_rows.clone()));
+        let shop_rows = Signal::derive(move || craft_project.with(|p| p.consolidated_rows.clone()));
+        let set_target_count_cb = Callback::new(move |(recipe_id, count)| {
+            apply.run(Edit::SetTargetCount { recipe_id, count });
+        });
+        let remove_target_cb = Callback::new(move |recipe_id| {
+            apply.run(Edit::RemoveTarget(recipe_id));
         });
         let source = ListWorkspaceSource {
             hide_acquired: hide_acquired.into(),
@@ -878,6 +916,16 @@ mod browser {
             list_id: Signal::derive(|| 0),
             add: Callback::new(move |item| apply.run(Edit::Add(item))),
             add_many: Callback::new(move |items| apply.run(Edit::AddMany(items))),
+            add_target: Callback::new(move |(recipe_id, count)| {
+                apply.run(Edit::AddTarget { recipe_id, count });
+            }),
+            craft_targets: Signal::derive(move || craft_project.with(|p| p.targets.clone())),
+            craft_summary: Signal::derive(move || {
+                craft_project.with(|p| p.has_targets.then_some(p.summary.clone()))
+            }),
+            set_target_count: set_target_count_cb,
+            remove_target: remove_target_cb,
+            open_craft: Callback::new(move |()| mode.set(WorkspaceMode::Craft)),
             undo,
             redo,
             history_revision: history_revision.into(),
@@ -897,7 +945,7 @@ mod browser {
             rows: guest_rows,
             estimate_available: Signal::derive(|| true),
             estimate: Memo::new(move |_| {
-                guest_rows.with(|rows| {
+                shop_rows.with(|rows| {
                     fetched_items.with(|fetched| {
                         ultros_calc::list_estimate::estimate_list_items_with_coverage(rows, fetched)
                     })
@@ -942,7 +990,7 @@ mod browser {
                     status
                     status_testid="device-list-status"
                     primary=move || view! {
-                        <Show when=move || !recovery.get()><crate::routes::guest_list_adoption::DeviceListAdoption handle=handle.get_value() continuation=Signal::derive(move || travel.device_continue_href(&device_id.get_value(), shop.get())) /></Show>
+                        <Show when=move || !recovery.get()><crate::routes::guest_list_adoption::DeviceListAdoption handle=handle.get_value() continuation=Signal::derive(move || travel.device_continue_href(&device_id.get_value(), mode.get())) /></Show>
                         <Show when=move || handle.with_value(|h| h.needs_save_retry())>
                         <button type="button" class="btn-secondary" on:click=move |_| {
                             let h = handle.get_value();
@@ -997,8 +1045,10 @@ mod browser {
                         <Show when=move || !recovery.get() && !price_error.get().is_empty()><p role="alert" class="text-sm text-negative" data-testid="device-prices-error">{move || price_error.get()}</p></Show>
                     }
                     show_controls=Signal::derive(move || !recovery.get())
-                    shop
-                    set_shop=Callback::new(move |value| shop.set(value))
+                    mode
+                    set_mode=Callback::new(move |value| mode.set(value))
+                    show_craft=Signal::derive(move || craft_project.with(|p| p.has_targets))
+                    craft_badge=Signal::derive(move || craft_project.with(|p| (!p.targets.is_empty()).then(|| p.targets.len().to_string())))
                     scope
                     set_scope=Callback::new(set_scope)
                     can_set_scope=Signal::derive(|| true)
@@ -1013,10 +1063,66 @@ mod browser {
                 >
                     // Mounted on first use and then only hidden, so a return to
                     // Build keeps the chosen trip and its recorded stacks.
-                    <div class:hidden=move || !shop.get()>
-                        <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() source travel_policy=travel.policy trip_active /></Show>
+                    <div class:hidden=move || mode.get() != WorkspaceMode::Craft>
+                        <Show when=move || craft_mounted.get()>
+                            <ListCraft
+                                project=craft_project.into()
+                                can_write=Signal::derive(move || !recovery.get())
+                                on_set_target_count=set_target_count_cb
+                                on_add_target_completed=Callback::new(move |(recipe_id, delta)| {
+                                    apply.run(Edit::AddTargetCompleted { recipe_id, delta });
+                                })
+                                on_set_target_completed=Callback::new(move |(recipe_id, completed)| {
+                                    apply.run(Edit::SetTargetCompleted { recipe_id, completed });
+                                })
+                                on_remove_target=remove_target_cb
+                                on_set_craft_choice=Callback::new(move |(item_id, mode, recipe_id)| {
+                                    apply.run(Edit::SetCraftChoice { item_id, mode, recipe_id });
+                                })
+                                on_set_on_hand=Callback::new(move |(item_id, on_hand)| {
+                                    apply.run(Edit::SetIntermediateOnHand { item_id, on_hand });
+                                })
+                                on_add_step_crafted=Callback::new(move |(item_id, delta)| {
+                                    apply.run(Edit::AddIntermediateCrafted { item_id, delta });
+                                })
+                                on_set_step_crafted=Callback::new(move |(item_id, crafted)| {
+                                    apply.run(Edit::SetIntermediateCrafted { item_id, crafted });
+                                })
+                                on_set_options=Callback::new(move |(exclude_crystals, include_vendors)| {
+                                    apply.run(Edit::SetCraftOptions { exclude_crystals, include_vendors });
+                                })
+                                on_optimize=Callback::new(move |()| {
+                                    if recovery.get_untracked() {
+                                        return;
+                                    }
+                                    let listings = filtered_offers.get_untracked();
+                                    let result = handle.with_value(|h| {
+                                        let choices = h.craft_choices();
+                                        let plan = compute_optimize_plan(
+                                            &h.targets(),
+                                            &choices,
+                                            h.craft_options(),
+                                            &listings,
+                                        )?;
+                                        Ok::<_, String>(apply_optimize_choices(&choices, &plan))
+                                    });
+                                    match result {
+                                        Ok(updates) => apply.run(Edit::ApplyOptimizedChoices(updates)),
+                                        Err(err) => error.set(err),
+                                    }
+                                })
+                                on_go_shop=Callback::new(move |()| mode.set(WorkspaceMode::Shop))
+                                on_open_add_recipe=Callback::new(move |()| {
+                                    recipe_open.set(true);
+                                    mode.set(WorkspaceMode::Build);
+                                })
+                            />
+                        </Show>
                     </div>
-                    <div class:hidden=move || shop.get()>
+                    <div class:hidden=move || mode.get() != WorkspaceMode::Shop>
+                        <Show when=move || shop_mounted.get()><DeviceShop handle=handle.get_value() source shop_rows craft_project travel_policy=travel.policy trip_active /></Show>
+                    </div>
+                    <div class:hidden=move || mode.get() != WorkspaceMode::Build>
                     <ListCart source selected_items=selected highlighted />
                     </div>
                 </crate::components::list_workspace_shell::ListWorkspaceShell>
@@ -1028,6 +1134,13 @@ mod browser {
     fn DeviceShop(
         handle: GuestListHandle,
         source: ListWorkspaceSource,
+        shop_rows: Signal<
+            Vec<(
+                ultros_api_types::list::ListItem,
+                Vec<ultros_api_types::ActiveListing>,
+            )>,
+        >,
+        craft_project: Memo<CraftProjectState>,
         travel_policy: Signal<TravelPolicy>,
         /// Raised while a trip is adopted, so the editor's eager price
         /// lookups pause instead of repricing the stacks being followed.
@@ -1057,8 +1170,7 @@ mod browser {
                 price_feed: source.market.get(),
                 build_estimate: source.estimate.get(),
                 estimate_available: source.estimate_available.get(),
-                rows: source
-                    .rows
+                rows: shop_rows
                     .get()
                     .into_iter()
                     .map(|(item, listings)| ShopRow {
@@ -1091,8 +1203,19 @@ mod browser {
                 <ListShop input on_purchase=Callback::new(move |(key, delta): (String, i32)| {
                     if let Ok(id) = key.parse::<i32>()
                         && let Some(key) = adapter::key_of(id)
-                        && let Err(e) = handle.with_value(|h| h.apply(Edit::RecordPurchase { key, quantity: i64::from(delta) })) {
-                        error.set(e);
+                    {
+                        let effective_need = craft_project.with_untracked(|p| {
+                            consolidated_effective_need(p, &key)
+                        });
+                        if let Err(e) = handle.with_value(|h| {
+                            h.apply(Edit::RecordPurchase {
+                                key,
+                                quantity: i64::from(delta),
+                                effective_need,
+                            })
+                        }) {
+                            error.set(e);
+                        }
                     }
                 }) on_undo=Callback::new(move |()| {
                     if let Err(e) = handle.with_value(|h| h.apply(Edit::UndoPurchase)) { error.set(e); }

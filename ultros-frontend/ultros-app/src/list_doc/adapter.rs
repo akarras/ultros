@@ -5,9 +5,12 @@
 use std::collections::HashMap;
 
 use ultros_api_types::ActiveListing;
-use ultros_api_types::list::{ListItem, ListWithPermission};
+use ultros_api_types::list::{AddCraftTargetsRequest, ListItem, ListWithPermission};
 use ultros_api_types::world_helper::AnySelector;
-use ultros_list_doc::{DocError, ListDocument, ListUndo, Quality, RowKey, RowSnapshot};
+use ultros_list_doc::{
+    CraftMode, CraftOptionsSnapshot, DocError, ListDocument, ListUndo, Quality, RowKey,
+    RowSnapshot, TargetKey,
+};
 
 /// A stable, reversible `i32` id for `<For>` keys and row callbacks. FFXIV
 /// item ids are far below `2^29`, so `item_id * 4 + code` fits comfortably in
@@ -127,8 +130,49 @@ pub enum Edit {
     RecordPurchase {
         key: RowKey,
         quantity: i64,
+        effective_need: Option<i64>,
     },
     UndoPurchase,
+    AddTarget {
+        recipe_id: i32,
+        count: i64,
+    },
+    AddTargets(AddCraftTargetsRequest),
+    SetTargetCount {
+        recipe_id: i32,
+        count: i64,
+    },
+    AddTargetCompleted {
+        recipe_id: i32,
+        delta: i64,
+    },
+    SetTargetCompleted {
+        recipe_id: i32,
+        completed: i64,
+    },
+    RemoveTarget(i32),
+    SetCraftChoice {
+        item_id: i32,
+        mode: CraftMode,
+        recipe_id: Option<i32>,
+    },
+    SetIntermediateOnHand {
+        item_id: i32,
+        on_hand: i64,
+    },
+    AddIntermediateCrafted {
+        item_id: i32,
+        delta: i64,
+    },
+    SetIntermediateCrafted {
+        item_id: i32,
+        crafted: i64,
+    },
+    SetCraftOptions {
+        exclude_crystals: bool,
+        include_vendors: bool,
+    },
+    ApplyOptimizedChoices(Vec<(i32, CraftMode, Option<i32>)>),
     /// The caller must keep the ORIGINAL `id` on the mutated `ListItem`: ids
     /// are derived from the row key (see `row_id`/`find_key`), so an id that
     /// reflects the edit's new `hq`/`item_id` would fail to locate the row
@@ -196,8 +240,137 @@ fn apply_edit(doc: &ListDocument, before: &RowSnapshot, item: &ListItem) -> Resu
 
 pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), DocError> {
     match edit {
-        Edit::RecordPurchase { key, quantity } => undo.record_purchase(key, quantity),
+        Edit::RecordPurchase {
+            key,
+            quantity,
+            effective_need,
+        } => match effective_need {
+            Some(need) => undo.record_purchase_for_need(key, quantity, need),
+            None => undo.record_purchase(key, quantity),
+        },
         Edit::UndoPurchase => undo.undo_purchase().map(|_| ()),
+        Edit::AddTarget { recipe_id, count } => {
+            undo.group(|doc| doc.add_target(TargetKey::new(recipe_id), count.clamp(1, 9999)))
+        }
+        Edit::AddTargets(req) => {
+            if req.targets.is_empty() {
+                return Ok(());
+            }
+            undo.group(|doc| {
+                for target in &req.targets {
+                    doc.add_target(
+                        TargetKey::new(target.recipe_id),
+                        i64::from(target.count.clamp(1, 9999)),
+                    )?;
+                }
+                for choice in &req.craft_choices {
+                    let mode = if choice.buy {
+                        CraftMode::Buy
+                    } else {
+                        CraftMode::Craft
+                    };
+                    doc.set_craft_choice(choice.item_id, mode, choice.recipe_id)?;
+                    if choice.on_hand > 0 {
+                        doc.set_intermediate_on_hand(choice.item_id, choice.on_hand)?;
+                    }
+                }
+                if req.exclude_crystals.is_some() || req.include_vendors.is_some() {
+                    let mut opts = doc.craft_options();
+                    if let Some(exc) = req.exclude_crystals {
+                        opts.exclude_crystals = exc;
+                    }
+                    if let Some(inc) = req.include_vendors {
+                        opts.include_vendors = inc;
+                    }
+                    doc.set_craft_options(opts)?;
+                }
+                Ok(())
+            })
+        }
+        Edit::SetTargetCount { recipe_id, count } => {
+            let key = TargetKey::new(recipe_id);
+            if doc.target(&key).is_none() {
+                return Ok(());
+            }
+            undo.group(|doc| doc.set_target_count(&key, count.clamp(1, 9999)))
+        }
+        Edit::AddTargetCompleted { recipe_id, delta } => {
+            let key = TargetKey::new(recipe_id);
+            if doc.target(&key).is_none() || delta == 0 {
+                return Ok(());
+            }
+            undo.group(|doc| doc.add_target_completed(&key, delta))
+        }
+        Edit::SetTargetCompleted {
+            recipe_id,
+            completed,
+        } => {
+            let key = TargetKey::new(recipe_id);
+            let Some(current) = doc.target(&key) else {
+                return Ok(());
+            };
+            let clamped = completed.max(0);
+            if current.completed == clamped {
+                return Ok(());
+            }
+            undo.group(|doc| doc.set_target_completed(&key, clamped))
+        }
+        Edit::RemoveTarget(recipe_id) => {
+            let key = TargetKey::new(recipe_id);
+            if doc.target(&key).is_none() {
+                return Ok(());
+            }
+            undo.group(|doc| doc.remove_target(&key))
+        }
+        Edit::SetCraftChoice {
+            item_id,
+            mode,
+            recipe_id,
+        } => undo.group(|doc| doc.set_craft_choice(item_id, mode, recipe_id)),
+        Edit::SetIntermediateOnHand { item_id, on_hand } => {
+            let clamped = on_hand.clamp(0, 1_000_000);
+            if doc.craft_choice(item_id).map_or(0, |c| c.on_hand) == clamped {
+                return Ok(());
+            }
+            undo.group(|doc| doc.set_intermediate_on_hand(item_id, clamped))
+        }
+        Edit::AddIntermediateCrafted { item_id, delta } => {
+            if delta == 0 {
+                return Ok(());
+            }
+            undo.group(|doc| doc.add_intermediate_crafted(item_id, delta))
+        }
+        Edit::SetIntermediateCrafted { item_id, crafted } => {
+            let clamped = crafted.max(0);
+            if doc.craft_choice(item_id).map_or(0, |c| c.crafted) == clamped {
+                return Ok(());
+            }
+            undo.group(|doc| doc.set_intermediate_crafted(item_id, clamped))
+        }
+        Edit::SetCraftOptions {
+            exclude_crystals,
+            include_vendors,
+        } => {
+            let next = CraftOptionsSnapshot {
+                exclude_crystals,
+                include_vendors,
+            };
+            if doc.craft_options() == next {
+                return Ok(());
+            }
+            undo.group(|doc| doc.set_craft_options(next))
+        }
+        Edit::ApplyOptimizedChoices(changes) => {
+            if changes.is_empty() {
+                return Ok(());
+            }
+            undo.group(|doc| {
+                for &(item_id, mode, recipe_id) in &changes {
+                    doc.set_craft_choice(item_id, mode, recipe_id)?;
+                }
+                Ok(())
+            })
+        }
         Edit::Add(item) => {
             let key = RowKey::new(item.item_id, item.hq);
             let acquired = item.acquired.unwrap_or(0) as i64;
@@ -283,12 +456,30 @@ pub fn apply(doc: &ListDocument, undo: &mut ListUndo, edit: Edit) -> Result<(), 
                 .filter(|row| row.acquired != 0)
                 .map(|row| row.key)
                 .collect();
-            if keys.is_empty() {
+            let completed_targets: Vec<TargetKey> = doc
+                .targets()
+                .into_iter()
+                .filter(|target| target.completed != 0)
+                .map(|target| target.key)
+                .collect();
+            let crafted_choices: Vec<i32> = doc
+                .craft_choices()
+                .into_iter()
+                .filter(|choice| choice.crafted != 0)
+                .map(|choice| choice.item_id)
+                .collect();
+            if keys.is_empty() && completed_targets.is_empty() && crafted_choices.is_empty() {
                 return Ok(());
             }
             undo.group(|doc| {
                 for key in &keys {
                     doc.set_acquired(key, 0)?;
+                }
+                for target_key in &completed_targets {
+                    doc.set_target_completed(target_key, 0)?;
+                }
+                for &item_id in &crafted_choices {
+                    doc.set_intermediate_crafted(item_id, 0)?;
                 }
                 Ok(())
             })
@@ -789,5 +980,99 @@ mod tests {
         assert_eq!(doc.row(&RowKey::new(10, Some(true))).unwrap().acquired, 20);
         assert_eq!(doc.row(&RowKey::new(20, None)).unwrap().acquired, 5);
         assert_eq!(doc.row(&RowKey::new(30, Some(false))).unwrap().acquired, 0);
+    }
+
+    #[test]
+    fn craft_project_edits_and_reset_undo_cleanly() {
+        use ultros_api_types::list::{AddCraftTarget, CraftChoiceInput};
+
+        let doc = ListDocument::new();
+        let mut undo = ListUndo::with_merge_interval(&doc, 0);
+
+        apply(
+            &doc,
+            &mut undo,
+            Edit::AddTargets(AddCraftTargetsRequest {
+                targets: vec![AddCraftTarget {
+                    recipe_id: 100,
+                    count: 2,
+                }],
+                exclude_crystals: Some(true),
+                include_vendors: Some(true),
+                craft_choices: vec![CraftChoiceInput {
+                    item_id: 200,
+                    buy: false,
+                    recipe_id: Some(101),
+                    on_hand: 3,
+                }],
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(doc.targets().len(), 1);
+        assert_eq!(doc.targets()[0].count, 2);
+        assert_eq!(doc.craft_choice(200).unwrap().on_hand, 3);
+        assert!(doc.craft_options().exclude_crystals);
+        assert!(doc.craft_options().include_vendors);
+
+        // Purchase a derived leaf with no explicit manual row (`need == 0`), then undo purchase.
+        let leaf_key = RowKey::new(300, None);
+        apply(
+            &doc,
+            &mut undo,
+            Edit::RecordPurchase {
+                key: leaf_key,
+                quantity: 4,
+                effective_need: Some(6),
+            },
+        )
+        .unwrap();
+        assert_eq!(doc.row(&leaf_key).unwrap().need, 0);
+        assert_eq!(doc.row(&leaf_key).unwrap().acquired, 4);
+        assert!(undo.can_undo_purchase());
+
+        // Mark target completed & intermediate crafted, plus optimize choice.
+        apply(
+            &doc,
+            &mut undo,
+            Edit::AddTargetCompleted {
+                recipe_id: 100,
+                delta: 1,
+            },
+        )
+        .unwrap();
+        apply(
+            &doc,
+            &mut undo,
+            Edit::AddIntermediateCrafted {
+                item_id: 200,
+                delta: 1,
+            },
+        )
+        .unwrap();
+        apply(
+            &doc,
+            &mut undo,
+            Edit::ApplyOptimizedChoices(vec![(200, CraftMode::Buy, None)]),
+        )
+        .unwrap();
+        assert_eq!(doc.craft_choice(200).unwrap().mode, CraftMode::Buy);
+        assert!(undo.undo().unwrap());
+        assert_eq!(doc.craft_choice(200).unwrap().mode, CraftMode::Craft);
+
+        // ResetAllAcquired clears leaf acquired, target completed, and step crafted
+        // while keeping on_hand and target count intact.
+        apply(&doc, &mut undo, Edit::ResetAllAcquired).unwrap();
+        assert_eq!(doc.row(&leaf_key).unwrap().acquired, 0);
+        assert_eq!(doc.targets()[0].completed, 0);
+        assert_eq!(doc.targets()[0].count, 2);
+        assert_eq!(doc.craft_choice(200).unwrap().crafted, 0);
+        assert_eq!(doc.craft_choice(200).unwrap().on_hand, 3);
+
+        // One undo restores all reset progress together.
+        assert!(undo.undo().unwrap());
+        assert_eq!(doc.row(&leaf_key).unwrap().acquired, 4);
+        assert_eq!(doc.targets()[0].completed, 1);
+        assert_eq!(doc.craft_choice(200).unwrap().crafted, 1);
     }
 }

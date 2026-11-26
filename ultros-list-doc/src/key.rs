@@ -100,6 +100,69 @@ impl FromStr for RowKey {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TargetKey {
+    pub recipe_id: i32,
+}
+
+impl TargetKey {
+    pub fn new(recipe_id: i32) -> Self {
+        Self { recipe_id }
+    }
+}
+
+impl fmt::Display for TargetKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "r:{}", self.recipe_id)
+    }
+}
+
+impl FromStr for TargetKey {
+    type Err = KeyError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let Some(recipe) = s.strip_prefix("r:") else {
+            return Err(KeyError::TargetShape(s.to_string()));
+        };
+        let recipe_id = recipe
+            .parse::<i32>()
+            .map_err(|_| KeyError::TargetRecipeId(recipe.to_string()))?;
+        if recipe_id <= 0 || recipe != recipe_id.to_string() {
+            return Err(KeyError::NonCanonical(s.to_string()));
+        }
+        Ok(Self { recipe_id })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CraftChoiceKey {
+    pub item_id: i32,
+}
+
+impl CraftChoiceKey {
+    pub fn new(item_id: i32) -> Self {
+        Self { item_id }
+    }
+}
+
+impl fmt::Display for CraftChoiceKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.item_id)
+    }
+}
+
+impl FromStr for CraftChoiceKey {
+    type Err = KeyError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let item_id = s
+            .parse::<i32>()
+            .map_err(|_| KeyError::CraftItemId(s.to_string()))?;
+        if item_id <= 0 || s != item_id.to_string() {
+            return Err(KeyError::NonCanonical(s.to_string()));
+        }
+        Ok(Self { item_id })
+    }
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum KeyError {
     #[error("row key `{0}` is not `item:quality`")]
@@ -110,6 +173,12 @@ pub enum KeyError {
     NonCanonical(String),
     #[error("row key quality `{0}` is not any, hq or nq")]
     Quality(String),
+    #[error("target key `{0}` is not `r:<recipe_id>`")]
+    TargetShape(String),
+    #[error("target recipe id `{0}` is not a positive integer")]
+    TargetRecipeId(String),
+    #[error("craft choice key `{0}` is not a positive integer item id")]
+    CraftItemId(String),
 }
 
 #[cfg(test)]

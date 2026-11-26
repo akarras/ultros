@@ -12,26 +12,42 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use loro::{
-    Container, ContainerTrait, ExportMode, LoroCounter, LoroDoc, LoroMap, LoroValue, Subscription,
-    ValueOrContainer, VersionVector,
+    Container, ContainerTrait, ExportMode, JsonMapOp, JsonOpContent, LoroCounter, LoroDoc, LoroMap,
+    LoroValue, Subscription, ValueOrContainer, VersionVector,
 };
 use ultros_api_types::world_helper::AnySelector;
 
-use crate::key::{Quality, RowKey};
-use crate::snapshot::{MetaSnapshot, RowSnapshot, encode_scope, parse_scope};
+use crate::key::{CraftChoiceKey, Quality, RowKey, TargetKey};
+use crate::snapshot::{
+    CraftChoiceSnapshot, CraftMode, CraftOptionsSnapshot, MetaSnapshot, RowSnapshot,
+    TargetSnapshot, encode_scope, parse_scope,
+};
 
 pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION_CRAFT: i64 = 2;
+pub const MAX_TARGETS: usize = 64;
+pub const MAX_CRAFT_CHOICES: usize = 512;
 
 const META: &str = "meta";
 const ROWS: &str = "rows";
+const TARGETS: &str = "targets";
+const CRAFT_CHOICES: &str = "craft_choices";
 const NAME: &str = "name";
 const SCOPE: &str = "scope";
 const SCHEMA: &str = "schema";
+const EXCLUDE_CRYSTALS: &str = "exclude_crystals";
+const INCLUDE_VENDORS: &str = "include_vendors";
 const ITEM: &str = "item";
 const QUALITY: &str = "quality";
 const NEED: &str = "need";
 const TARGET: &str = "target";
 const ACQUIRED: &str = "acquired";
+const RECIPE: &str = "recipe";
+const COUNT: &str = "count";
+const COMPLETED: &str = "completed";
+const MODE: &str = "mode";
+const ON_HAND: &str = "on_hand";
+const CRAFTED: &str = "crafted";
 
 #[derive(Debug, thiserror::Error)]
 pub enum DocError {
@@ -45,6 +61,10 @@ pub enum DocError {
     OutdatedDependency,
     #[error("row `{0}` is not in the document")]
     MissingRow(RowKey),
+    #[error("craft target `{0}` is not in the document")]
+    MissingTarget(TargetKey),
+    #[error("craft project exceeds {0} targets")]
+    TooManyTargets(usize),
     #[error("quantity arithmetic exceeds the supported i64 range")]
     QuantityOverflow,
     #[error(
@@ -399,8 +419,54 @@ impl ListDocument {
         self.doc.get_map(ROWS)
     }
 
+    fn targets_map(&self) -> LoroMap {
+        self.doc.get_map(TARGETS)
+    }
+
+    fn craft_choices_map(&self) -> LoroMap {
+        self.doc.get_map(CRAFT_CHOICES)
+    }
+
+    fn ensure_craft_schema(&self) -> Result<(), DocError> {
+        if self.schema().unwrap_or(1) < SCHEMA_VERSION_CRAFT {
+            self.meta_map().insert(SCHEMA, SCHEMA_VERSION_CRAFT)?;
+        }
+        Ok(())
+    }
+
+    fn value_bool(value: Option<ValueOrContainer>) -> Option<bool> {
+        match value {
+            Some(ValueOrContainer::Value(LoroValue::Bool(b))) => Some(b),
+            _ => None,
+        }
+    }
+
     fn row_container(&self, key: &RowKey) -> Option<LoroMap> {
         match self.rows_map().get(&key.to_string())? {
+            ValueOrContainer::Container(Container::Map(map)) => Some(map),
+            _ => None,
+        }
+    }
+
+    fn has_root(&self, root: &str) -> bool {
+        matches!(self.doc.get_value(), LoroValue::Map(roots) if roots.contains_key(root))
+    }
+
+    fn existing_target_container(&self, key: &TargetKey) -> Option<LoroMap> {
+        if !self.has_root(TARGETS) {
+            return None;
+        }
+        match self.targets_map().get(&key.to_string())? {
+            ValueOrContainer::Container(Container::Map(map)) => Some(map),
+            _ => None,
+        }
+    }
+
+    fn existing_craft_choice_container(&self, item_id: i32) -> Option<LoroMap> {
+        if !self.has_root(CRAFT_CHOICES) {
+            return None;
+        }
+        match self.craft_choices_map().get(&item_id.to_string())? {
             ValueOrContainer::Container(Container::Map(map)) => Some(map),
             _ => None,
         }
@@ -409,6 +475,19 @@ impl ListDocument {
     /// Distinguishes a purchased row from a later replacement at the same key.
     pub(crate) fn row_identity(&self, key: &RowKey) -> Option<loro::ContainerID> {
         self.row_container(key).map(|row| row.id())
+    }
+
+    pub(crate) fn same_target_identity(&self, other: &Self, key: &TargetKey) -> bool {
+        self.existing_target_container(key).map(|c| c.id())
+            == other.existing_target_container(key).map(|c| c.id())
+    }
+
+    pub(crate) fn same_craft_choice_identity(&self, other: &Self, item_id: i32) -> bool {
+        self.existing_craft_choice_container(item_id)
+            .map(|c| c.id())
+            == other
+                .existing_craft_choice_container(item_id)
+                .map(|c| c.id())
     }
 
     fn read_row(key: RowKey, row: &LoroMap) -> RowSnapshot {
@@ -644,6 +723,312 @@ impl ListDocument {
         self.add_acquired(key, delta)
     }
 
+    /// Add `delta` to a row's acquired counter, creating a dormant `need = 0`
+    /// row when the item is a derived crafting leaf not yet in `rows`.
+    pub fn add_acquired_or_create(&self, key: RowKey, delta: i64) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.add_acquired_or_create(key, delta))?;
+        match self.row_container(&key) {
+            Some(row) => {
+                if delta != 0 {
+                    Self::counter(&row)?.increment(delta as f64)?;
+                }
+            }
+            None => self.insert_row(key, 0, None, delta)?,
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
+    pub fn craft_options(&self) -> CraftOptionsSnapshot {
+        let meta = self.meta_map();
+        CraftOptionsSnapshot {
+            exclude_crystals: Self::value_bool(meta.get(EXCLUDE_CRYSTALS)).unwrap_or(false),
+            include_vendors: Self::value_bool(meta.get(INCLUDE_VENDORS)).unwrap_or(false),
+        }
+    }
+
+    pub fn set_craft_options(&self, options: CraftOptionsSnapshot) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.set_craft_options(options))?;
+        self.ensure_craft_schema()?;
+        let meta = self.meta_map();
+        meta.insert(EXCLUDE_CRYSTALS, options.exclude_crystals)?;
+        meta.insert(INCLUDE_VENDORS, options.include_vendors)?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    fn read_target(key: TargetKey, map: &LoroMap) -> TargetSnapshot {
+        let count = value_i64(map.get(COUNT)).unwrap_or(1).max(1);
+        let completed = match map.get(COMPLETED) {
+            Some(ValueOrContainer::Container(Container::Counter(counter))) => {
+                counter.get_value().round() as i64
+            }
+            _ => 0,
+        };
+        TargetSnapshot {
+            key,
+            count,
+            completed,
+        }
+    }
+
+    pub fn targets(&self) -> Vec<TargetSnapshot> {
+        if !self.has_root(TARGETS) {
+            return Vec::new();
+        }
+        let targets = self.targets_map();
+        let mut out: Vec<TargetSnapshot> = targets
+            .keys()
+            .filter_map(|k| {
+                let text = k.to_string();
+                let key: TargetKey = text.parse().ok()?;
+                match targets.get(&text)? {
+                    ValueOrContainer::Container(Container::Map(map)) => {
+                        Some(Self::read_target(key, &map))
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        out.sort_by_key(|t| t.key);
+        out
+    }
+
+    pub fn target(&self, key: &TargetKey) -> Option<TargetSnapshot> {
+        self.existing_target_container(key)
+            .map(|map| Self::read_target(*key, &map))
+    }
+
+    fn counter_field(map: &LoroMap, field: &str) -> Result<LoroCounter, DocError> {
+        match map.get(field) {
+            Some(ValueOrContainer::Container(Container::Counter(counter))) => Ok(counter),
+            _ => Ok(map.insert_container(field, LoroCounter::new())?),
+        }
+    }
+
+    fn insert_target_raw(
+        &self,
+        key: TargetKey,
+        count: i64,
+        completed: i64,
+    ) -> Result<(), DocError> {
+        let map = self
+            .targets_map()
+            .insert_container(&key.to_string(), LoroMap::new())?;
+        map.insert(RECIPE, i64::from(key.recipe_id))?;
+        map.insert(COUNT, count.clamp(1, 1_000_000))?;
+        let counter = map.insert_container(COMPLETED, LoroCounter::new())?;
+        if completed != 0 {
+            counter.increment(completed as f64)?;
+        }
+        Ok(())
+    }
+
+    pub fn add_target(&self, key: TargetKey, count: i64) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.add_target(key, count))?;
+        if key.recipe_id <= 0 {
+            return Err(DocError::InvalidStructure("target recipe id".into()));
+        }
+        if count <= 0 || count > 1_000_000 {
+            return Err(DocError::InvalidStructure("target count".into()));
+        }
+        self.ensure_craft_schema()?;
+        match self.existing_target_container(&key) {
+            Some(map) => {
+                let current = value_i64(map.get(COUNT)).unwrap_or(1);
+                let combined = current
+                    .checked_add(count)
+                    .filter(|&n| n <= 1_000_000)
+                    .ok_or(DocError::QuantityOverflow)?;
+                map.insert(COUNT, combined.max(1))?;
+            }
+            None => {
+                let current_len = self.targets().len();
+                if current_len >= MAX_TARGETS {
+                    return Err(DocError::TooManyTargets(MAX_TARGETS));
+                }
+                self.insert_target_raw(key, count, 0)?;
+            }
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
+    pub fn set_target_count(&self, key: &TargetKey, count: i64) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.set_target_count(key, count))?;
+        let map = self
+            .existing_target_container(key)
+            .ok_or(DocError::MissingTarget(*key))?;
+        map.insert(COUNT, count.clamp(1, 1_000_000))?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    pub fn add_target_completed(&self, key: &TargetKey, delta: i64) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.add_target_completed(key, delta))?;
+        let map = self
+            .existing_target_container(key)
+            .ok_or(DocError::MissingTarget(*key))?;
+        if delta != 0 {
+            Self::counter_field(&map, COMPLETED)?.increment(delta as f64)?;
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
+    pub fn set_target_completed(&self, key: &TargetKey, value: i64) -> Result<(), DocError> {
+        let current = self
+            .target(key)
+            .ok_or(DocError::MissingTarget(*key))?
+            .completed;
+        let delta = value
+            .checked_sub(current)
+            .ok_or(DocError::QuantityOverflow)?;
+        self.add_target_completed(key, delta)
+    }
+
+    pub fn remove_target(&self, key: &TargetKey) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.remove_target(key))?;
+        if self.existing_target_container(key).is_none() {
+            return Err(DocError::MissingTarget(*key));
+        }
+        self.targets_map().delete(&key.to_string())?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    fn read_craft_choice(item_id: i32, map: &LoroMap) -> CraftChoiceSnapshot {
+        let mode = value_string(map.get(MODE))
+            .and_then(|s| s.parse::<CraftMode>().ok())
+            .unwrap_or_default();
+        let recipe_id = value_i64(map.get(RECIPE)).and_then(|v| i32::try_from(v).ok());
+        let on_hand = value_i64(map.get(ON_HAND)).unwrap_or(0).max(0);
+        let crafted = match map.get(CRAFTED) {
+            Some(ValueOrContainer::Container(Container::Counter(counter))) => {
+                counter.get_value().round() as i64
+            }
+            _ => 0,
+        };
+        CraftChoiceSnapshot {
+            item_id,
+            mode,
+            recipe_id,
+            on_hand,
+            crafted,
+        }
+    }
+
+    pub fn craft_choices(&self) -> Vec<CraftChoiceSnapshot> {
+        if !self.has_root(CRAFT_CHOICES) {
+            return Vec::new();
+        }
+        let choices = self.craft_choices_map();
+        let mut out: Vec<CraftChoiceSnapshot> = choices
+            .keys()
+            .filter_map(|k| {
+                let text = k.to_string();
+                let key: CraftChoiceKey = text.parse().ok()?;
+                match choices.get(&text)? {
+                    ValueOrContainer::Container(Container::Map(map)) => {
+                        Some(Self::read_craft_choice(key.item_id, &map))
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        out.sort_by_key(|c| c.item_id);
+        out
+    }
+
+    pub fn craft_choice(&self, item_id: i32) -> Option<CraftChoiceSnapshot> {
+        self.existing_craft_choice_container(item_id)
+            .map(|map| Self::read_craft_choice(item_id, &map))
+    }
+
+    fn ensure_craft_choice_container(&self, item_id: i32) -> Result<LoroMap, DocError> {
+        if item_id <= 0 || item_id > (i32::MAX - 2) / 4 {
+            return Err(DocError::InvalidStructure("craft choice item id".into()));
+        }
+        self.ensure_craft_schema()?;
+        match self.existing_craft_choice_container(item_id) {
+            Some(map) => Ok(map),
+            None => {
+                if self.craft_choices().len() >= MAX_CRAFT_CHOICES {
+                    return Err(DocError::InvalidStructure(
+                        "craft choices exceed limit".into(),
+                    ));
+                }
+                let map = self
+                    .craft_choices_map()
+                    .insert_container(&item_id.to_string(), LoroMap::new())?;
+                map.insert(ITEM, i64::from(item_id))?;
+                map.insert(MODE, CraftMode::Craft.as_str())?;
+                map.insert(ON_HAND, 0_i64)?;
+                map.insert_container(CRAFTED, LoroCounter::new())?;
+                Ok(map)
+            }
+        }
+    }
+
+    pub fn set_craft_choice(
+        &self,
+        item_id: i32,
+        mode: CraftMode,
+        recipe_id: Option<i32>,
+    ) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.set_craft_choice(item_id, mode, recipe_id))?;
+        if recipe_id.is_some_and(|r| r <= 0) {
+            return Err(DocError::InvalidStructure("craft recipe id".into()));
+        }
+        let map = self.ensure_craft_choice_container(item_id)?;
+        map.insert(MODE, mode.as_str())?;
+        match recipe_id {
+            Some(r) => map.insert(RECIPE, i64::from(r))?,
+            None => {
+                if map.get(RECIPE).is_some() {
+                    map.delete(RECIPE)?;
+                }
+            }
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
+    pub fn set_intermediate_on_hand(&self, item_id: i32, on_hand: i64) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.set_intermediate_on_hand(item_id, on_hand))?;
+        let map = self.ensure_craft_choice_container(item_id)?;
+        map.insert(ON_HAND, on_hand.clamp(0, 1_000_000))?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    pub fn add_intermediate_crafted(&self, item_id: i32, delta: i64) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.add_intermediate_crafted(item_id, delta))?;
+        let map = self.ensure_craft_choice_container(item_id)?;
+        if delta != 0 {
+            Self::counter_field(&map, CRAFTED)?.increment(delta as f64)?;
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
+    pub fn set_intermediate_crafted(&self, item_id: i32, value: i64) -> Result<(), DocError> {
+        let current = self.craft_choice(item_id).map_or(0, |c| c.crafted);
+        let delta = value
+            .checked_sub(current)
+            .ok_or(DocError::QuantityOverflow)?;
+        self.add_intermediate_crafted(item_id, delta)
+    }
+
+    pub fn remove_craft_choice(&self, item_id: i32) -> Result<(), DocError> {
+        self.preflight(|candidate| candidate.remove_craft_choice(item_id))?;
+        if self.existing_craft_choice_container(item_id).is_some() {
+            self.craft_choices_map().delete(&item_id.to_string())?;
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
     /// The encoded version vector: what this document has seen. Sorted peers
     /// keep tokens stable across merge order, snapshot reload and runtimes.
     /// This remains the same postcard map accepted by Loro's decoder.
@@ -670,6 +1055,47 @@ impl ListDocument {
         let start = decode_version(version)
             .ok_or_else(|| DocError::InvalidStructure("invalid causal version".into()))?;
         Ok(self.doc.export_json_updates(&start,&self.doc.oplog_vv()).changes.iter().all(|change|change.ops.iter().all(|op|!matches!(&op.container,loro::ContainerID::Root{name,..} if name.as_ref()!="rows"))))
+    }
+
+    /// Enforce collaborator write boundaries across Schema v1 and v2:
+    /// collaborators with `Write` may edit `rows`, `targets`, `craft_choices`,
+    /// `meta.exclude_crystals`, `meta.include_vendors`, and promote
+    /// `meta.schema` to `2`, but never modify owner-only `meta.name` /
+    /// `meta.scope` or delete `meta` keys.
+    pub fn collaborative_only_since(&self, version: &[u8]) -> Result<bool, DocError> {
+        let start = decode_version(version)
+            .ok_or_else(|| DocError::InvalidStructure("invalid causal version".into()))?;
+        Ok(self
+            .doc
+            .export_json_updates(&start, &self.doc.oplog_vv())
+            .changes
+            .iter()
+            .all(|change| {
+                change.ops.iter().all(|op| match &op.container {
+                    loro::ContainerID::Root { name, .. } => match name.as_ref() {
+                        "rows" | "targets" | "craft_choices" => true,
+                        "meta" => match &op.content {
+                            JsonOpContent::Map(JsonMapOp::Insert { key, value }) => {
+                                match key.as_str() {
+                                    EXCLUDE_CRYSTALS | INCLUDE_VENDORS => {
+                                        matches!(value, LoroValue::Bool(_))
+                                    }
+                                    SCHEMA => {
+                                        matches!(value, LoroValue::I64(SCHEMA_VERSION_CRAFT))
+                                    }
+                                    _ => false,
+                                }
+                            }
+                            _ => false,
+                        },
+                        _ => false,
+                    },
+                    // Validation already rejects any container children under `meta`,
+                    // so normal container ops can only belong to `rows`, `targets`, or
+                    // `craft_choices`.
+                    _ => true,
+                })
+            }))
     }
 
     /// Reconstruct the latest causally shared state from our durable operation
@@ -1283,6 +1709,83 @@ mod tests {
             "an unreadable version gets everything"
         );
         assert!(a.is_ahead_of(&[]));
+    }
+
+    #[test]
+    fn v2_lazy_promotion_targets_choices_options_and_collaborative_permissions() {
+        let doc = ListDocument::from_rows(meta(), &[row(1, Quality::Any, 2, 0)]);
+        assert_eq!(doc.schema(), Some(SCHEMA_VERSION));
+        assert!(doc.targets().is_empty());
+        assert!(doc.craft_choices().is_empty());
+        assert_eq!(doc.craft_options(), CraftOptionsSnapshot::default());
+
+        // Plain v1 edits leave the document at schema 1.
+        doc.set_need(&RowKey::new(1, None), 4).unwrap();
+        assert_eq!(doc.schema(), Some(SCHEMA_VERSION));
+
+        let v1_version = doc.version();
+        let collab = ListDocument::from_snapshot(&doc.export_snapshot().unwrap()).unwrap();
+        collab.add_target(TargetKey::new(35001), 2).unwrap();
+        collab
+            .add_target_completed(&TargetKey::new(35001), 1)
+            .unwrap();
+        collab.set_craft_choice(5056, CraftMode::Buy, None).unwrap();
+        collab.set_intermediate_on_hand(5057, 3).unwrap();
+        collab.add_intermediate_crafted(5057, 2).unwrap();
+        collab
+            .set_craft_options(CraftOptionsSnapshot {
+                exclude_crystals: true,
+                include_vendors: true,
+            })
+            .unwrap();
+        assert_eq!(collab.schema(), Some(SCHEMA_VERSION_CRAFT));
+        assert!(collab.collaborative_only_since(&v1_version).unwrap());
+
+        doc.import(&collab.export_since(&v1_version).unwrap())
+            .unwrap();
+        assert_eq!(doc.schema(), Some(SCHEMA_VERSION_CRAFT));
+        assert_eq!(
+            doc.target(&TargetKey::new(35001)),
+            Some(TargetSnapshot {
+                key: TargetKey::new(35001),
+                count: 2,
+                completed: 1,
+            })
+        );
+        assert_eq!(
+            doc.craft_choice(5056),
+            Some(CraftChoiceSnapshot {
+                item_id: 5056,
+                mode: CraftMode::Buy,
+                recipe_id: None,
+                on_hand: 0,
+                crafted: 0,
+            })
+        );
+        assert_eq!(
+            doc.craft_choice(5057),
+            Some(CraftChoiceSnapshot {
+                item_id: 5057,
+                mode: CraftMode::Craft,
+                recipe_id: None,
+                on_hand: 3,
+                crafted: 2,
+            })
+        );
+        assert_eq!(
+            doc.craft_options(),
+            CraftOptionsSnapshot {
+                exclude_crystals: true,
+                include_vendors: true,
+            }
+        );
+
+        // An owner-only rename mixed in with craft edits MUST still be rejected.
+        let before_rename = doc.version();
+        let bad_peer = ListDocument::from_snapshot(&doc.export_snapshot().unwrap()).unwrap();
+        bad_peer.add_target(TargetKey::new(35002), 1).unwrap();
+        bad_peer.rename("Hijacked").unwrap();
+        assert!(!bad_peer.collaborative_only_since(&before_rename).unwrap());
     }
 }
 

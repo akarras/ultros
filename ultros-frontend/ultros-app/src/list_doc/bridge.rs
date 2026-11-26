@@ -3,7 +3,7 @@
 //! device. Each call opens the list, applies, waits for the IndexedDB save
 //! and closes again: a modal never keeps a document open.
 use leptos::prelude::*;
-use ultros_api_types::list::ListItem;
+use ultros_api_types::list::{AddCraftTargetsRequest, ListItem};
 use ultros_frontend_core::global_state::local_lists::{LocalListSummary, LocalLists, LocalResult};
 
 use super::{adapter::Edit, guest::GuestListHandle};
@@ -50,10 +50,24 @@ fn add_items(id: String, items: Vec<ListItem>) -> LocalResult<()> {
     })
 }
 
+fn add_targets(id: String, request: AddCraftTargetsRequest) -> LocalResult<()> {
+    Box::pin(async move {
+        let handle = GuestListHandle::open(&id).await?;
+        let result = async {
+            handle.apply(Edit::AddTargets(request))?;
+            handle.flush().await
+        }
+        .await;
+        handle.close();
+        result
+    })
+}
+
 pub fn provide_local_lists() {
     provide_context(LocalLists {
         list,
         create,
         add_items,
+        add_targets,
     });
 }

@@ -22,6 +22,7 @@ itertools.workspace = true
 yoke.workspace = true
 thiserror = { workspace = true }
 ultros-api-types = {path = "../ultros-api-types"}
+ultros-calc = { path = "../ultros-frontend/ultros-calc" }
 ultros-list-doc = { path = "../ultros-list-doc" }
 metrics = "0.24.5"
 dotenvy = "0.15.7"

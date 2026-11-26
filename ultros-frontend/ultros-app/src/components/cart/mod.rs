@@ -15,11 +15,14 @@ pub mod selection;
 
 use std::collections::{HashMap, HashSet};
 
+use icondata as i;
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
 use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
 
+use crate::components::icon::Icon;
+use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::list::sort::{SortKey, SortSpec};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -280,8 +283,28 @@ pub fn ListCart(
     // units; every visible cost, detail and total uses this same result.
     let estimate = source.estimate;
     let allocated_lines = Memo::new(move |_| estimate.with(estimate::lines_by_id));
-    // Whole-cart progress, before the filter or Hide-acquired narrows rows.
-    let progress = Memo::new(move |_| source.rows.with(|rows| estimate::progress_units(rows)));
+    // Whole-cart progress (manual rows + craft project leaves), before any filter.
+    let progress = Memo::new(move |_| {
+        let manual = source.rows.with(|rows| estimate::progress_units(rows));
+        let craft = source
+            .craft_summary
+            .get()
+            .filter(|s| s.leaves_needed > 0)
+            .map(|s| {
+                (
+                    s.leaves_acquired.clamp(0, i32::MAX as i64) as i32,
+                    s.leaves_needed.clamp(0, i32::MAX as i64) as i32,
+                )
+            });
+        match (manual, craft) {
+            (Some((a1, n1)), Some((a2, n2))) => {
+                Some((a1.saturating_add(a2), n1.saturating_add(n2)))
+            }
+            (Some(m), None) => Some(m),
+            (None, Some(c)) => Some(c),
+            (None, None) => None,
+        }
+    });
     let visible = Memo::new(
         move |previous: Option<&Vec<(ListItem, Vec<ActiveListing>)>>| {
             let query = filter.get().to_lowercase();
@@ -568,6 +591,8 @@ pub fn ListCart(
         }
     });
     let is_empty = Memo::new(move |_| source.rows.with(|rows| rows.is_empty()));
+    let has_targets = Memo::new(move |_| !source.craft_targets.with(Vec::is_empty));
+    let has_any_content = Memo::new(move |_| !is_empty.get() || has_targets.get());
     let all_visible_selected = Memo::new(move |_| {
         let ids = visible_ids.get();
         !ids.is_empty() && selected_items.with(|s| ids.iter().all(|id| s.contains(id)))
@@ -618,13 +643,135 @@ pub fn ListCart(
             <div class="space-y-3 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto" class:hidden=move || !source.can_write.get() data-testid="list-cart-composer">
             <div id="cart-composer-body" class=move || if is_empty.get() || composer_open.get() || source.recipe_open.get() { "space-y-3" } else { "hidden xl:block space-y-3" }>
             <Show when=move || source.can_write.get()>
-                <InlineListAdd list_id=source.list_id on_add=on_add on_add_many=on_add_many recipe_mode=source.recipe_open toggle_recipe=source.toggle_recipe pending=source.pending feedback=source.feedback />
+                <InlineListAdd
+                    list_id=source.list_id
+                    on_add=on_add
+                    on_add_many=on_add_many
+                    on_add_target=Some(source.add_target)
+                    recipe_mode=source.recipe_open
+                    toggle_recipe=source.toggle_recipe
+                    pending=source.pending
+                    feedback=source.feedback
+                />
             </Show>
             </div>
             </div>
             <div class="@container/cart space-y-3 min-w-0" class=("xl:col-span-2", move || !source.can_write.get()) data-testid="list-cart-rows-column">
-            <Show when=move || source.estimate_available.get() && !is_empty.get()>
-                <crate::components::list_estimate_summary::ListEstimateSummary estimate feed=source.market scope=source.scope_name progress=Signal::from(progress) can_write=source.can_write on_reset_progress />
+            <Show when=move || source.estimate_available.get() && has_any_content.get()>
+                <crate::components::list_estimate_summary::ListEstimateSummary
+                    estimate
+                    feed=source.market
+                    scope=source.scope_name
+                    progress=Signal::from(progress)
+                    can_write=source.can_write
+                    on_reset_progress
+                    craft_summary=source.craft_summary
+                />
+            </Show>
+            <Show when=move || has_targets.get()>
+                <section class="panel rounded-xl p-4 space-y-3" data-testid="build-craft-targets">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div class="space-y-0.5">
+                            <h2 class="text-sm font-semibold text-[color:var(--brand-fg)]">
+                                {t!(i18n, craft_targets_heading)}
+                            </h2>
+                            <p class="text-xs text-[color:var(--color-text-muted)]">
+                                {t!(i18n, craft_targets_manual_only_note)}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="btn-secondary min-h-9 text-xs"
+                            data-testid="build-open-craft"
+                            on:click=move |_| source.open_craft.run(())
+                        >
+                            {t!(i18n, craft_targets_open_plan)}
+                        </button>
+                    </div>
+                    <ul class="divide-y divide-[color:var(--color-outline)]">
+                        <For
+                            each=move || source.craft_targets.with(|list| list.iter().map(|t| t.recipe_id).collect::<Vec<_>>())
+                            key=|recipe_id| *recipe_id
+                            children=move |recipe_id| {
+                                let target = Memo::new(move |_| {
+                                    source.craft_targets.with(|list| {
+                                        list.iter().find(|t| t.recipe_id == recipe_id).cloned()
+                                    })
+                                });
+                                move || {
+                                    let t = target.get()?;
+                                    let href = format!("/recipe/{recipe_id}");
+                                    let abbr = t.craft_type_abbr;
+                                    let level = t.recipe_level;
+                                    let completed_text = t_string!(
+                                        i18n,
+                                        craft_targets_completed_of,
+                                        completed = t.completed,
+                                        total = t.count
+                                    )
+                                    .to_string();
+                                    Some(view! {
+                                        <li class="py-2 first:pt-0 last:pb-0 flex flex-wrap items-center justify-between gap-2" data-testid="build-craft-target-row" data-target-recipe-id=recipe_id>
+                                            <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                                                <div class="shrink-0">
+                                                    <ItemIcon item_id=t.item_id icon_size=IconSize::Small />
+                                                </div>
+                                                <div class="min-w-0 flex-1">
+                                                    <div class="flex flex-wrap items-center gap-1.5">
+                                                        <a class="text-sm font-semibold hover:underline truncate" href=href>
+                                                            {t.item_name.clone()}
+                                                        </a>
+                                                        <Show when=move || !abbr.is_empty()>
+                                                            <span class="craft-pill">{format!("{} Lv.{}", abbr, level)}</span>
+                                                        </Show>
+                                                    </div>
+                                                    <p class="text-xs text-[color:var(--color-text-muted)] tabular-nums">
+                                                        {completed_text}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div class="flex items-center gap-2 shrink-0">
+                                                <Show
+                                                    when=move || source.can_write.get()
+                                                    fallback=move || view! {
+                                                        <span class="text-sm font-medium tabular-nums">
+                                                            {format!("×{}", t.count)}
+                                                        </span>
+                                                    }
+                                                >
+                                                    <input
+                                                        type="number"
+                                                        min="1"
+                                                        max="9999"
+                                                        class="input w-20 text-sm py-1"
+                                                        aria-label=t_string!(i18n, craft_targets_count_label)
+                                                        data-testid="build-target-count-input"
+                                                        prop:value=t.count
+                                                        on:change=move |ev| {
+                                                            if let Ok(v) = event_target_value(&ev).parse::<i64>() {
+                                                                source.set_target_count.run((recipe_id, v.clamp(1, 9999)));
+                                                            }
+                                                        }
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        class="btn-ghost !p-1.5 min-h-8 min-w-8 text-[color:var(--color-text-muted)] hover:text-negative"
+                                                        data-testid="build-target-remove"
+                                                        aria-label=t_string!(i18n, craft_remove_target)
+                                                        title=t_string!(i18n, craft_remove_target)
+                                                        on:click=move |_| source.remove_target.run(recipe_id)
+                                                    >
+                                                        <Icon icon=i::BiTrashSolid aria_hidden=true />
+                                                    </button>
+                                                </Show>
+                                            </div>
+                                        </li>
+                                    })
+                                }
+                            }
+                        />
+                    </ul>
+                </section>
             </Show>
             <CartFeedback toast action_seq=action_seq.into() can_undo=source.can_undo can_write=source.can_write on_undo=undo_removal />
             <Show when=move || !is_empty.get()>
@@ -720,7 +867,13 @@ pub fn ListCart(
                     } />
                 </ul>
                 <Show when=move || is_empty.get()>
-                    <p class="px-4 py-6 text-center text-sm text-[color:var(--color-text-muted)]">{t!(i18n, cart_empty)}</p>
+                    <p class="px-4 py-6 text-center text-sm text-[color:var(--color-text-muted)]">
+                        {move || if has_targets.get() {
+                            t_string!(i18n, craft_targets_manual_only_note).to_string()
+                        } else {
+                            t_string!(i18n, cart_empty).to_string()
+                        }}
+                    </p>
                 </Show>
                 <Show when=move || !is_empty.get() && visible_ids.with(|ids| ids.is_empty())>
                     <div class="space-y-2 px-4 py-6 text-center text-sm" data-testid="cart-no-matches">

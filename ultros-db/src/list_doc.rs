@@ -9,6 +9,8 @@
 //! `project_rows`'s `Added` arm for how the two writers are kept from
 //! violating `idx_list_item_natural_key` on each other during the overlap.
 
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseTransaction,
@@ -17,13 +19,168 @@ use sea_orm::{
 };
 use ultros_api_types::list::ListPermission;
 use ultros_api_types::world_helper::AnySelector;
+use ultros_calc::recipe_planner::{ExpandLimits, Recipe, TargetDemand, expand_many};
 use ultros_list_doc::{
-    DocError, ListDocument, MetaSnapshot, RowChange, RowKey, RowSnapshot, diff_rows,
+    CraftChoiceChange, CraftMode, CraftOptionsSnapshot, DocError, ListDocument, MetaSnapshot,
+    Quality, RowChange, RowKey, RowSnapshot, TargetChange, diff_craft_choices, diff_rows,
+    diff_targets,
 };
 
 use crate::UltrosDb;
 use crate::entity::{list, list_doc, list_item};
 use crate::lists::ListError;
+
+/// Recipe lookup interface injected from the binary crate so `ultros-db` stays
+/// decoupled from `xiv-gen-db` static assets while projecting v2 craft lists.
+pub trait RecipeCatalog: Send + Sync + std::fmt::Debug {
+    fn recipe(&self, recipe_id: i32) -> Option<Recipe>;
+    fn default_recipe_for_item(&self, item_id: i32) -> Option<Recipe>;
+    fn is_crystal(&self, item_id: i32) -> bool;
+}
+
+/// Grouped inputs extracted from a Schema v2 document for project expansion.
+pub type ProjectInputs = (
+    Vec<TargetDemand>,
+    BTreeMap<i32, Recipe>,
+    BTreeMap<i32, i32>,
+    BTreeMap<i32, i64>,
+    BTreeSet<i32>,
+);
+
+/// Collect the reachable recipe subgraph, intermediate choices, on-hand stock,
+/// and excluded crystals for a Schema v2 crafting project.
+pub fn gather_project_inputs(doc: &ListDocument, catalog: &dyn RecipeCatalog) -> ProjectInputs {
+    let raw_targets = doc.targets();
+    let mut target_demands = Vec::with_capacity(raw_targets.len());
+    let mut recipes = BTreeMap::new();
+    let mut queue = VecDeque::new();
+    let mut visited_items = BTreeSet::new();
+
+    for target in raw_targets {
+        if target.count <= 0 {
+            continue;
+        }
+        target_demands.push(TargetDemand {
+            recipe_id: target.key.recipe_id,
+            count: target.count,
+        });
+        if let Some(r) = catalog.recipe(target.key.recipe_id) {
+            for &(child, amount) in &r.ingredients {
+                if amount > 0 && visited_items.insert(child) {
+                    queue.push_back(child);
+                }
+            }
+            recipes.insert(r.id, r);
+        }
+    }
+
+    let doc_choices = doc.craft_choices();
+    let choice_map: BTreeMap<i32, _> = doc_choices.iter().map(|c| (c.item_id, *c)).collect();
+    let mut choices = BTreeMap::new();
+    let mut owned = BTreeMap::new();
+    let mut excluded = BTreeSet::new();
+    let exclude_crystals = doc.craft_options().exclude_crystals;
+
+    while let Some(item_id) = queue.pop_front() {
+        if exclude_crystals && catalog.is_crystal(item_id) {
+            excluded.insert(item_id);
+            continue;
+        }
+        let explicit = choice_map.get(&item_id).copied();
+        if explicit.is_some_and(|c| c.mode == CraftMode::Buy) {
+            // Buying an intermediate prunes its sub-craft branch; preserve
+            // on_hand deduction for that intermediate if any was entered.
+            if let Some(c) = explicit
+                && c.on_hand > 0
+            {
+                owned.insert(item_id, c.on_hand);
+            }
+            continue;
+        }
+        let chosen_recipe = explicit
+            .and_then(|c| c.recipe_id.and_then(|id| catalog.recipe(id)))
+            .or_else(|| catalog.default_recipe_for_item(item_id));
+        if let Some(r) = chosen_recipe {
+            if let Some(c) = explicit
+                && c.on_hand > 0
+            {
+                owned.insert(item_id, c.on_hand);
+            }
+            choices.insert(item_id, r.id);
+            for &(child, amount) in &r.ingredients {
+                if amount > 0 && visited_items.insert(child) {
+                    queue.push_back(child);
+                }
+            }
+            recipes.insert(r.id, r);
+        }
+    }
+
+    (target_demands, recipes, choices, owned, excluded)
+}
+
+/// Project `doc`'s shopping rows: passes Schema v1 lists through verbatim,
+/// and for Schema v2 projects with targets merges consolidated derived leaf
+/// materials with explicit manual rows (`need == 0` progress-only rows stay
+/// inside `list_doc` and are omitted from `list_item`).
+pub fn projected_rows(doc: &ListDocument, catalog: Option<&dyn RecipeCatalog>) -> Vec<RowSnapshot> {
+    let raw_rows = doc.rows();
+    if doc.targets().is_empty() {
+        return raw_rows;
+    }
+    let Some(catalog) = catalog else {
+        return raw_rows;
+    };
+    let (target_demands, recipes, choices, owned, excluded) = gather_project_inputs(doc, catalog);
+    if target_demands.is_empty() {
+        return raw_rows;
+    }
+    let Ok(expansion) = expand_many(
+        &target_demands,
+        &recipes,
+        &choices,
+        &owned,
+        &excluded,
+        ExpandLimits::default(),
+    ) else {
+        return raw_rows;
+    };
+
+    let mut leaves: BTreeMap<i32, i64> = BTreeMap::new();
+    for m in expansion.materials {
+        let need = m.remaining();
+        if need > 0 {
+            let entry = leaves.entry(m.item).or_insert(0_i64);
+            *entry = entry.saturating_add(need);
+        }
+    }
+
+    let mut out = Vec::with_capacity(raw_rows.len() + leaves.len());
+    for mut row in raw_rows {
+        let extra = if row.key.quality == Quality::Any {
+            leaves.remove(&row.key.item_id).unwrap_or(0)
+        } else {
+            0
+        };
+        let combined_need = row.need.max(0).saturating_add(extra);
+        if combined_need > 0 {
+            row.need = combined_need;
+            out.push(row);
+        }
+    }
+    for (item_id, need) in leaves {
+        if need > 0 {
+            out.push(RowSnapshot {
+                key: RowKey::new(item_id, None),
+                need,
+                acquired: 0,
+                target: None,
+            });
+        }
+    }
+    out.sort_by_key(|r| r.key);
+    out
+}
 
 /// Past either bound the next store is a shallow snapshot (spec section 4.1).
 pub const COMPACT_AFTER_CHANGES: i32 = 5_000;
@@ -66,11 +223,21 @@ pub struct MergeOutcome {
     pub changes: Vec<ProjectedChange>,
     pub meta_before: MetaSnapshot,
     pub meta_after: MetaSnapshot,
+    pub target_changes: Vec<TargetChange>,
+    pub choice_changes: Vec<CraftChoiceChange>,
+    pub craft_options_before: CraftOptionsSnapshot,
+    pub craft_options_after: CraftOptionsSnapshot,
 }
 
 impl MergeOutcome {
     pub fn meta_changed(&self) -> bool {
         self.meta_before != self.meta_after
+    }
+
+    pub fn craft_changed(&self) -> bool {
+        !self.target_changes.is_empty()
+            || !self.choice_changes.is_empty()
+            || self.craft_options_before != self.craft_options_after
     }
 }
 
@@ -327,11 +494,15 @@ async fn merge_loaded(
     permission: ListPermission,
     stored: &list_doc::Model,
     update: &[u8],
+    catalog: Option<&dyn RecipeCatalog>,
 ) -> Result<MergeOutcome, ListDocError> {
     let doc = ListDocument::from_snapshot(&stored.snapshot)?;
     let version_before = doc.version();
-    let rows_before = doc.rows();
+    let rows_before = projected_rows(&doc, catalog);
     let meta_before = doc.meta();
+    let targets_before = doc.targets();
+    let choices_before = doc.craft_choices();
+    let craft_options_before = doc.craft_options();
     let report = doc.import(update).map_err(|error| match error {
         DocError::OutdatedDependency => ListDocError::MissingHistory,
         error @ (DocError::UnsupportedSchema(_)
@@ -346,10 +517,13 @@ async fn merge_loaded(
     if report.pending {
         return Err(ListDocError::MissingHistory);
     }
-    let rows_after = doc.rows();
+    let rows_after = projected_rows(&doc, catalog);
     let meta_after = doc.meta();
+    let targets_after = doc.targets();
+    let choices_after = doc.craft_choices();
+    let craft_options_after = doc.craft_options();
     if permission < ListPermission::Owner
-        && (meta_after != meta_before || !doc.row_only_since(&version_before)?)
+        && (meta_after != meta_before || !doc.collaborative_only_since(&version_before)?)
     {
         return Err(ListDocError::MetaForbidden);
     }
@@ -362,6 +536,10 @@ async fn merge_loaded(
         changes,
         meta_before,
         meta_after,
+        target_changes: diff_targets(&targets_before, &targets_after),
+        choice_changes: diff_craft_choices(&choices_before, &choices_after),
+        craft_options_before,
+        craft_options_after,
     })
 }
 
@@ -371,9 +549,10 @@ async fn merge(
     list_id: i32,
     permission: ListPermission,
     update: &[u8],
+    catalog: Option<&dyn RecipeCatalog>,
 ) -> Result<MergeOutcome, ListDocError> {
     let stored = load_or_create(txn, list_id).await?;
-    merge_loaded(txn, list_id, permission, &stored, update).await
+    merge_loaded(txn, list_id, permission, &stored, update, catalog).await
 }
 
 impl UltrosDb {
@@ -415,7 +594,15 @@ impl UltrosDb {
             return Err(ListError::Forbidden("Insufficient permissions to edit list").into());
         }
         let txn = self.db.begin().await?;
-        match merge(&txn, list_id, permission, update).await {
+        match merge(
+            &txn,
+            list_id,
+            permission,
+            update,
+            self.recipe_catalog.as_deref(),
+        )
+        .await
+        {
             Ok(outcome) => {
                 txn.commit().await?;
                 Ok(outcome)
@@ -449,7 +636,15 @@ impl UltrosDb {
             let before = doc.version();
             let value = edit(&doc)?;
             let update = doc.export_since(&before)?;
-            let outcome = merge_loaded(&txn, list_id, permission, &stored, &update).await?;
+            let outcome = merge_loaded(
+                &txn,
+                list_id,
+                permission,
+                &stored,
+                &update,
+                self.recipe_catalog.as_deref(),
+            )
+            .await?;
             Ok::<_, ListDocError>((value, outcome))
         }
         .await;
@@ -550,7 +745,14 @@ impl UltrosDb {
         if plugin_permission(&txn, list_id, principal.owner).await? < ListPermission::Write {
             return Err(ListError::Forbidden("Insufficient permissions to edit list").into());
         }
-        let outcome = merge(&txn, list_id, ListPermission::Write, update).await?;
+        let outcome = merge(
+            &txn,
+            list_id,
+            ListPermission::Write,
+            update,
+            self.recipe_catalog.as_deref(),
+        )
+        .await?;
         txn.commit().await?;
         Ok(outcome)
     }
@@ -617,7 +819,9 @@ mod tests {
 
     async fn accept_update(conn: &DatabaseConnection, update: &[u8]) -> MergeOutcome {
         let txn = conn.begin().await.unwrap();
-        let outcome = merge(&txn, 1, ListPermission::Owner, update).await.unwrap();
+        let outcome = merge(&txn, 1, ListPermission::Owner, update, None)
+            .await
+            .unwrap();
         txn.commit().await.unwrap();
         outcome
     }
@@ -710,6 +914,7 @@ mod tests {
             ListPermission::Owner,
             &stored_a,
             &peer_a.export_since(&before_a).unwrap(),
+            None,
         )
         .await
         .unwrap();
@@ -1090,5 +1295,100 @@ mod tests {
             (8, Some(true), Some(2))
         );
         db.delete_list(list_id, OWNER).await.unwrap();
+    }
+
+    #[test]
+    fn projected_rows_consolidates_v2_targets_preserves_progress_and_respects_buy_choices() {
+        #[derive(Debug)]
+        struct TestCatalog;
+        impl RecipeCatalog for TestCatalog {
+            fn recipe(&self, recipe_id: i32) -> Option<Recipe> {
+                match recipe_id {
+                    1 => Some(Recipe {
+                        id: 1,
+                        output: 100,
+                        yield_amount: 1,
+                        ingredients: vec![(200, 1), (400, 1), (58, 2)],
+                    }),
+                    2 => Some(Recipe {
+                        id: 2,
+                        output: 101,
+                        yield_amount: 1,
+                        ingredients: vec![(200, 1), (401, 3)],
+                    }),
+                    3 => Some(Recipe {
+                        id: 3,
+                        output: 200,
+                        yield_amount: 2,
+                        ingredients: vec![(300, 3)],
+                    }),
+                    _ => None,
+                }
+            }
+            fn default_recipe_for_item(&self, item_id: i32) -> Option<Recipe> {
+                match item_id {
+                    200 => self.recipe(3),
+                    _ => None,
+                }
+            }
+            fn is_crystal(&self, item_id: i32) -> bool {
+                item_id == 58
+            }
+        }
+
+        let doc = ListDocument::new();
+        // Derived-leaf acquired row (need = 0) stays suppressed if not in demand,
+        // and merges acquired count cleanly when it IS in demand.
+        doc.add_target(ultros_list_doc::TargetKey::new(1), 1)
+            .unwrap();
+        doc.add_target(ultros_list_doc::TargetKey::new(2), 1)
+            .unwrap();
+        // Record partial progress on Iron Ore (300) and a manual extra row for 400.
+        doc.add_row(RowKey::new(400, None), 2, Some(999)).unwrap();
+        doc.add_acquired_or_create(RowKey::new(300, None), 1)
+            .unwrap();
+        doc.add_acquired_or_create(RowKey::new(999, None), 5)
+            .unwrap(); // dormant need=0 row not in targets -> suppressed
+
+        let rows = projected_rows(&doc, Some(&TestCatalog));
+        let find = |id| {
+            rows.iter()
+                .find(|r| r.key == RowKey::new(id, None))
+                .copied()
+        };
+        assert_eq!(find(58).unwrap().need, 2);
+        // Combined 200 demand = 2 -> 1 craft of yield 2 -> 3 ores (with 1 acquired).
+        assert_eq!(find(300).unwrap().need, 3);
+        assert_eq!(find(300).unwrap().acquired, 1);
+        // Manual row 2 + derived leaf 1 = 3.
+        assert_eq!(find(400).unwrap().need, 3);
+        assert_eq!(find(400).unwrap().target, Some(999));
+        assert_eq!(find(401).unwrap().need, 3);
+        assert!(
+            find(999).is_none(),
+            "dormant need=0 progress rows are omitted"
+        );
+
+        // Exclude crystals & flip 200 to Buy -> 300 & 58 disappear, 200 becomes leaf.
+        doc.set_craft_options(CraftOptionsSnapshot {
+            exclude_crystals: true,
+            include_vendors: false,
+        })
+        .unwrap();
+        doc.set_craft_choice(200, CraftMode::Buy, None).unwrap();
+        let rows_buy = projected_rows(&doc, Some(&TestCatalog));
+        assert!(
+            rows_buy
+                .iter()
+                .all(|r| r.key.item_id != 58 && r.key.item_id != 300)
+        );
+        assert_eq!(
+            rows_buy
+                .iter()
+                .find(|r| r.key == RowKey::new(200, None))
+                .unwrap()
+                .need,
+            2
+        );
     }
 }

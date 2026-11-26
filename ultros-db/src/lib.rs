@@ -312,9 +312,20 @@ pub struct UltrosDb {
     /// Per-process identifier embedded in `pg_notify` payloads so a replica
     /// ignores its own echoes.
     notify_origin: Arc<str>,
+    recipe_catalog: Option<Arc<dyn list_doc::RecipeCatalog>>,
 }
 
 impl UltrosDb {
+    /// Attach the recipe catalog used to project Schema v2 crafting targets
+    /// into consolidated `list_item` rows.
+    pub fn with_recipe_catalog(mut self, catalog: Arc<dyn list_doc::RecipeCatalog>) -> Self {
+        self.recipe_catalog = Some(catalog);
+        self
+    }
+
+    pub fn recipe_catalog(&self) -> Option<&dyn list_doc::RecipeCatalog> {
+        self.recipe_catalog.as_deref()
+    }
     /// Borrow the underlying `DatabaseConnection`. Used by one-shot maintenance
     /// binaries (e.g. ClickHouse parity check) that need to run raw SQL not
     /// covered by an existing helper. Production code should prefer the typed
@@ -384,6 +395,7 @@ impl UltrosDb {
             db,
             ingest_budget: ingest_budget::IngestBudget::new(pool_max),
             notify_origin: Arc::from(wakeup::generate_notify_origin()),
+            recipe_catalog: None,
         }
     }
 

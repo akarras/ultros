@@ -5,7 +5,10 @@
 //! changes since that shared base. No acknowledgement sidecar can drift from
 //! the snapshot, including when several tabs merge their offline work.
 
-use crate::{DocError, ListDocument, RowChange, RowKey, diff_rows};
+use crate::{
+    CraftChoiceChange, DocError, ListDocument, RowChange, RowKey, TargetChange, diff_craft_choices,
+    diff_rows, diff_targets,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConflictField {
@@ -14,6 +17,13 @@ pub enum ConflictField {
     Target,
     Name,
     Scope,
+    TargetRow,
+    TargetCount,
+    CraftChoice,
+    CraftMode,
+    CraftRecipe,
+    CraftOnHand,
+    CraftOptions,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,11 +61,17 @@ pub fn recover(
         .common_base(&fresh)
         .ok_or(RecoveryError::HistoryUnavailable)?;
     // Unrelated nonempty documents are not an offline branch of this list.
-    if !local.shares_history(&fresh) && (!local.rows().is_empty() || !local.meta().name.is_empty())
+    if !local.shares_history(&fresh)
+        && (!local.rows().is_empty()
+            || !local.targets().is_empty()
+            || !local.craft_choices().is_empty()
+            || !local.meta().name.is_empty())
     {
         return Err(RecoveryError::HistoryUnavailable);
     }
     let changes = diff_rows(&base.rows(), &local.rows());
+    let target_changes = diff_targets(&base.targets(), &local.targets());
+    let choice_changes = diff_craft_choices(&base.craft_choices(), &local.craft_choices());
     let mut conflicts = Vec::new();
     for change in &changes {
         let key = change.key();
@@ -104,6 +120,101 @@ pub fn recover(
             },
             _ => {}
         }
+    }
+    for change in &target_changes {
+        let key = change.key();
+        let remote = fresh.target(&key);
+        let mut conflict = |field| conflicts.push(RecoveryConflict { key: None, field });
+        match change {
+            TargetChange::Added(_) if remote.is_some() => conflict(ConflictField::TargetRow),
+            TargetChange::Removed(before) => {
+                if remote.is_some_and(|t| t != *before)
+                    || (remote.is_some() && !base.same_target_identity(&fresh, &key))
+                {
+                    conflict(ConflictField::TargetRow);
+                }
+            }
+            TargetChange::Updated { before, after } => match remote {
+                Some(remote)
+                    if base.same_target_identity(&fresh, &key)
+                        && base.same_target_identity(local, &key) =>
+                {
+                    if clashes(before.count, after.count, remote.count) {
+                        conflict(ConflictField::TargetCount);
+                    }
+                    remote
+                        .completed
+                        .checked_add(
+                            after
+                                .completed
+                                .checked_sub(before.completed)
+                                .ok_or(DocError::QuantityOverflow)?,
+                        )
+                        .ok_or(DocError::QuantityOverflow)?;
+                }
+                _ => conflict(ConflictField::TargetRow),
+            },
+            _ => {}
+        }
+    }
+    for change in &choice_changes {
+        let item_id = change.item_id();
+        let remote = fresh.craft_choice(item_id);
+        let mut conflict = |field| conflicts.push(RecoveryConflict { key: None, field });
+        match change {
+            CraftChoiceChange::Added(_) if remote.is_some() => conflict(ConflictField::CraftChoice),
+            CraftChoiceChange::Removed(before) => {
+                if remote.is_some_and(|c| c != *before)
+                    || (remote.is_some() && !base.same_craft_choice_identity(&fresh, item_id))
+                {
+                    conflict(ConflictField::CraftChoice);
+                }
+            }
+            CraftChoiceChange::Updated { before, after } => match remote {
+                Some(remote)
+                    if base.same_craft_choice_identity(&fresh, item_id)
+                        && base.same_craft_choice_identity(local, item_id) =>
+                {
+                    if clashes(before.mode, after.mode, remote.mode) {
+                        conflict(ConflictField::CraftMode);
+                    }
+                    if clashes(before.recipe_id, after.recipe_id, remote.recipe_id) {
+                        conflict(ConflictField::CraftRecipe);
+                    }
+                    if clashes(before.on_hand, after.on_hand, remote.on_hand) {
+                        conflict(ConflictField::CraftOnHand);
+                    }
+                    remote
+                        .crafted
+                        .checked_add(
+                            after
+                                .crafted
+                                .checked_sub(before.crafted)
+                                .ok_or(DocError::QuantityOverflow)?,
+                        )
+                        .ok_or(DocError::QuantityOverflow)?;
+                }
+                _ => conflict(ConflictField::CraftChoice),
+            },
+            _ => {}
+        }
+    }
+    let base_opts = base.craft_options();
+    let local_opts = local.craft_options();
+    let remote_opts = fresh.craft_options();
+    if clashes(
+        base_opts.exclude_crystals,
+        local_opts.exclude_crystals,
+        remote_opts.exclude_crystals,
+    ) || clashes(
+        base_opts.include_vendors,
+        local_opts.include_vendors,
+        remote_opts.include_vendors,
+    ) {
+        conflicts.push(RecoveryConflict {
+            key: None,
+            field: ConflictField::CraftOptions,
+        });
     }
     let base_meta = base.meta();
     let local_meta = local.meta();
@@ -164,6 +275,84 @@ pub fn recover(
             }
         }
     }
+    for change in target_changes {
+        match change {
+            TargetChange::Added(target) => {
+                fresh.add_target(target.key, target.count)?;
+                fresh.add_target_completed(&target.key, target.completed)?;
+            }
+            TargetChange::Removed(target) => {
+                if fresh.target(&target.key).is_some() {
+                    fresh.remove_target(&target.key)?;
+                }
+            }
+            TargetChange::Updated { before, after } => {
+                if before.count != after.count
+                    && fresh
+                        .target(&after.key)
+                        .is_some_and(|t| t.count != after.count)
+                {
+                    fresh.set_target_count(&after.key, after.count)?;
+                }
+                fresh.add_target_completed(
+                    &after.key,
+                    after
+                        .completed
+                        .checked_sub(before.completed)
+                        .ok_or(DocError::QuantityOverflow)?,
+                )?;
+            }
+        }
+    }
+    for change in choice_changes {
+        match change {
+            CraftChoiceChange::Added(choice) => {
+                fresh.set_craft_choice(choice.item_id, choice.mode, choice.recipe_id)?;
+                if choice.on_hand != 0 {
+                    fresh.set_intermediate_on_hand(choice.item_id, choice.on_hand)?;
+                }
+                fresh.add_intermediate_crafted(choice.item_id, choice.crafted)?;
+            }
+            CraftChoiceChange::Removed(choice) => {
+                if fresh.craft_choice(choice.item_id).is_some() {
+                    fresh.remove_craft_choice(choice.item_id)?;
+                }
+            }
+            CraftChoiceChange::Updated { before, after } => {
+                if (before.mode != after.mode || before.recipe_id != after.recipe_id)
+                    && fresh
+                        .craft_choice(after.item_id)
+                        .is_some_and(|c| c.mode != after.mode || c.recipe_id != after.recipe_id)
+                {
+                    fresh.set_craft_choice(after.item_id, after.mode, after.recipe_id)?;
+                }
+                if before.on_hand != after.on_hand
+                    && fresh
+                        .craft_choice(after.item_id)
+                        .is_some_and(|c| c.on_hand != after.on_hand)
+                {
+                    fresh.set_intermediate_on_hand(after.item_id, after.on_hand)?;
+                }
+                fresh.add_intermediate_crafted(
+                    after.item_id,
+                    after
+                        .crafted
+                        .checked_sub(before.crafted)
+                        .ok_or(DocError::QuantityOverflow)?,
+                )?;
+            }
+        }
+    }
+    if local_opts != base_opts {
+        let mut merged_opts = remote_opts;
+        if local_opts.exclude_crystals != base_opts.exclude_crystals {
+            merged_opts.exclude_crystals = local_opts.exclude_crystals;
+        }
+        if local_opts.include_vendors != base_opts.include_vendors {
+            merged_opts.include_vendors = local_opts.include_vendors;
+        }
+        fresh.set_craft_options(merged_opts)?;
+    }
     if keep_local_meta {
         if base_meta.name != local_meta.name && remote_meta.name != local_meta.name {
             fresh.rename(&local_meta.name)?;
@@ -190,7 +379,7 @@ fn clashes<T: PartialEq>(base: T, local: T, remote: T) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MetaSnapshot, Quality, RowSnapshot};
+    use crate::{CraftMode, CraftOptionsSnapshot, MetaSnapshot, Quality, RowSnapshot, TargetKey};
     use ultros_api_types::world_helper::AnySelector;
 
     fn peers() -> (ListDocument, ListDocument, RowKey) {
@@ -451,5 +640,41 @@ mod tests {
         assert_eq!(recovered.document.meta().name, "Offline name");
         assert_eq!(recovered.document.meta().scope, Some(AnySelector::World(2)));
         assert!(!recovered.dropped_meta);
+    }
+
+    #[test]
+    fn v2_targets_craft_choices_and_options_recover_over_compaction() {
+        let (server, _, _) = peers();
+        server.add_target(TargetKey::new(100), 2).unwrap();
+        server
+            .set_craft_choice(200, CraftMode::Craft, Some(101))
+            .unwrap();
+        let local = ListDocument::from_snapshot(&server.export_snapshot().unwrap()).unwrap();
+
+        local.add_target(TargetKey::new(102), 1).unwrap();
+        local.add_intermediate_crafted(200, 1).unwrap();
+        local
+            .set_craft_options(CraftOptionsSnapshot {
+                exclude_crystals: true,
+                include_vendors: false,
+            })
+            .unwrap();
+        server
+            .add_target_completed(&TargetKey::new(100), 1)
+            .unwrap();
+        server.add_intermediate_crafted(200, 2).unwrap();
+
+        let recovered = reconnect(&server, &local, true).unwrap();
+        assert!(recovered.document.target(&TargetKey::new(102)).is_some());
+        assert_eq!(
+            recovered
+                .document
+                .target(&TargetKey::new(100))
+                .unwrap()
+                .completed,
+            1
+        );
+        assert_eq!(recovered.document.craft_choice(200).unwrap().crafted, 3);
+        assert!(recovered.document.craft_options().exclude_crystals);
     }
 }

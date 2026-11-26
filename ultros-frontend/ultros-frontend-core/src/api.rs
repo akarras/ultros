@@ -804,6 +804,13 @@ pub async fn bulk_add_item_to_list(list_id: i32, list_items: Vec<ListItem>) -> A
     post_api(&format!("/api/v1/list/{list_id}/add/items"), list_items).await
 }
 
+pub async fn add_targets_to_list(
+    list_id: i32,
+    request: ultros_api_types::list::AddCraftTargetsRequest,
+) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/{list_id}/add/targets"), request).await
+}
+
 pub async fn add_item_to_list(list_id: i32, list_item: ListItem) -> AppResult<()> {
     post_api(&format!("/api/v1/list/{list_id}/add/item"), list_item).await
 }

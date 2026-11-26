@@ -124,6 +124,37 @@ pub struct ListItem {
     pub target_price: Option<i64>,
 }
 
+/// A finished crafting recipe target added to a collaborative list project.
+#[derive(Debug, Deserialize, Serialize, Clone, Default, Eq, PartialEq)]
+pub struct AddCraftTarget {
+    pub recipe_id: i32,
+    pub count: i32,
+}
+
+/// Optional intermediate override or on-hand count saved with craft targets.
+#[derive(Debug, Deserialize, Serialize, Clone, Default, Eq, PartialEq)]
+pub struct CraftChoiceInput {
+    pub item_id: i32,
+    pub buy: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe_id: Option<i32>,
+    #[serde(default)]
+    pub on_hand: i64,
+}
+
+/// Payload for adding one or more crafting targets (with optional initial
+/// intermediate overrides and planner options) to a list.
+#[derive(Debug, Deserialize, Serialize, Clone, Default, Eq, PartialEq)]
+pub struct AddCraftTargetsRequest {
+    pub targets: Vec<AddCraftTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude_crystals: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_vendors: Option<bool>,
+    #[serde(default)]
+    pub craft_choices: Vec<CraftChoiceInput>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ListInvite {
     pub id: String,

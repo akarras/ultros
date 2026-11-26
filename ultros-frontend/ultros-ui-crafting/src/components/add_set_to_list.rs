@@ -7,7 +7,7 @@
 //! 1, and once to add every craft ingredient for the set summed across
 //! recipes.
 
-use crate::api::{bulk_add_item_to_list, get_lists};
+use crate::api::{add_targets_to_list, bulk_add_item_to_list, get_lists};
 use crate::components::icon::Icon;
 use crate::components::{
     loading::Loading, modal::Modal, small_item_display::SmallItemDisplay, toggle::Toggle,
@@ -19,7 +19,7 @@ use icondata::RiPlayListAddMediaLine;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
-use ultros_api_types::list::ListItem;
+use ultros_api_types::list::{AddCraftTarget, AddCraftTargetsRequest, ListItem};
 use ultros_frontend_core::components::account_lists_failure::AccountListsFailure;
 use ultros_frontend_core::components::local_list_targets::LocalListTargets;
 use xiv_gen::{Item, ItemId};
@@ -47,6 +47,7 @@ pub fn AddSetToList(
     #[prop(into)] modal_title: Signal<String>,
     #[prop(into)] subject: Signal<String>,
     #[prop(into)] entries: Signal<Vec<(ItemId, i32)>>,
+    #[prop(optional, into)] craft_targets: Option<Signal<Vec<(i32, i32)>>>,
     #[prop(optional)] compact: bool,
 ) -> impl IntoView {
     let (modal_visible, set_modal_visible) = signal(false);
@@ -79,6 +80,7 @@ pub fn AddSetToList(
                     modal_title=modal_title
                     subject=subject
                     entries=entries
+                    craft_targets=craft_targets
                     set_visible=set_modal_visible
                 />
             </Show>
@@ -91,6 +93,7 @@ fn AddSetToListModal(
     modal_title: Signal<String>,
     subject: Signal<String>,
     entries: Signal<Vec<(ItemId, i32)>>,
+    #[prop(default = None)] craft_targets: Option<Signal<Vec<(i32, i32)>>>,
     #[prop(into)] set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
@@ -98,6 +101,16 @@ fn AddSetToListModal(
     let items = &data.items;
     let lists = Resource::new(move || {}, move |_| get_lists());
     let (hq, set_hq) = signal(false);
+
+    let initial_targets = craft_targets
+        .map(|s| s.get_untracked())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, count)| *count > 0)
+        .collect::<Vec<_>>();
+    let has_targets = !initial_targets.is_empty();
+    let initial_targets = StoredValue::new(initial_targets);
+    let (craft_mode, set_craft_mode) = signal(has_targets);
 
     // Snapshot the entry list once at open time so edits the user makes
     // in the modal don't get clobbered if the parent's `entries` Memo
@@ -122,9 +135,16 @@ fn AddSetToListModal(
         let items = items.clone();
         bulk_add_item_to_list(*list_id, items)
     });
+    let add_targets_action = Action::new(move |(list_id, req): &(i32, AddCraftTargetsRequest)| {
+        let req = req.clone();
+        add_targets_to_list(*list_id, req)
+    });
 
     Effect::new(move |_| {
         if let Some(Ok(_)) = add_bulk_action.value().get() {
+            set_visible(false);
+        }
+        if let Some(Ok(_)) = add_targets_action.value().get() {
             set_visible(false);
         }
     });
@@ -135,6 +155,17 @@ fn AddSetToListModal(
                 s.quantity.set(s.base_amount);
             }
         });
+    };
+
+    let target_request = move || AddCraftTargetsRequest {
+        targets: initial_targets.with_value(|ts| {
+            ts.iter()
+                .map(|&(recipe_id, count)| AddCraftTarget { recipe_id, count })
+                .collect()
+        }),
+        exclude_crystals: None,
+        include_vendors: None,
+        craft_choices: Vec::new(),
     };
 
     // The rows to add at click time: every entry with a non-zero quantity,
@@ -164,6 +195,8 @@ fn AddSetToListModal(
             .collect::<Vec<_>>()
     };
     let local_items = Callback::new(move |()| items_to_add(0));
+    let local_targets =
+        Callback::new(move |()| (has_targets && craft_mode.get_untracked()).then(target_request));
     let close_on_added = Callback::new(move |()| set_visible(false));
 
     view! {
@@ -180,6 +213,37 @@ fn AddSetToListModal(
                     </div>
                 </div>
 
+                <Show when=move || has_targets>
+                    <div class="segmented-control w-fit" role="group" data-testid="add-set-mode-toggle">
+                        <button
+                            type="button"
+                            class="segmented-option"
+                            data-testid="add-set-mode-craft"
+                            aria-pressed=move || craft_mode.get().to_string()
+                            on:click=move |_| set_craft_mode.set(true)
+                        >
+                            {t!(i18n, add_set_mode_craft_full)}
+                        </button>
+                        <button
+                            type="button"
+                            class="segmented-option"
+                            data-testid="add-set-mode-buy"
+                            aria-pressed=move || (!craft_mode.get()).to_string()
+                            on:click=move |_| set_craft_mode.set(false)
+                        >
+                            {t!(i18n, add_set_mode_buy_finished)}
+                        </button>
+                    </div>
+                </Show>
+
+                <Show
+                    when=move || !(has_targets && craft_mode.get())
+                    fallback=move || view! {
+                        <p class="text-sm text-[color:var(--color-text-muted)]">
+                            {move || t_string!(i18n, add_set_craft_summary, count = initial_targets.with_value(|t| t.len())).to_string()}
+                        </p>
+                    }
+                >
                 <div class="flex flex-wrap items-center gap-3">
                     <Toggle
                         checked=hq
@@ -225,6 +289,7 @@ fn AddSetToListModal(
                         }
                     />
                 </div>
+                </Show>
 
                 <div class="rounded p-1">
                     <Suspense fallback=Loading>
@@ -243,6 +308,12 @@ fn AddSetToListModal(
                                             if let Some(Err(e)) = add_bulk_action.value().get() {
                                                 set_error(Some(e.to_string()));
                                             }
+                                            if let Some(Err(e)) = add_targets_action.value().get() {
+                                                set_error(Some(e.to_string()));
+                                            }
+                                        });
+                                        let pending = Signal::derive(move || {
+                                            add_bulk_action.pending().get() || add_targets_action.pending().get()
                                         });
                                         view! {
                                             <div class="space-y-1">
@@ -250,17 +321,21 @@ fn AddSetToListModal(
                                                     <div class="font-semibold truncate">{list.name}</div>
                                                     <button
                                                         class="btn-primary"
-                                                        disabled=add_bulk_action.pending()
+                                                        disabled=pending
                                                         on:click=move |_| {
                                                             let list_id = list.id;
-                                                            let items_to_add = items_to_add(list_id);
-                                                            if !items_to_add.is_empty() {
-                                                                add_bulk_action.dispatch((list_id, items_to_add));
+                                                            if has_targets && craft_mode.get_untracked() {
+                                                                add_targets_action.dispatch((list_id, target_request()));
+                                                            } else {
+                                                                let items_to_add = items_to_add(list_id);
+                                                                if !items_to_add.is_empty() {
+                                                                    add_bulk_action.dispatch((list_id, items_to_add));
+                                                                }
                                                             }
                                                         }
                                                     >
                                                         <Show
-                                                            when=add_bulk_action.pending()
+                                                            when=pending
                                                             fallback=move || view! { <span>{t!(i18n, add_recipe_add_button)}</span> }
                                                         >
                                                             <span>{t!(i18n, add_recipe_adding_button)}</span>
@@ -280,7 +355,7 @@ fn AddSetToListModal(
                             ))
                         }}
                     </Suspense>
-                    <LocalListTargets build_items=local_items on_added=close_on_added />
+                    <LocalListTargets build_items=local_items build_targets=local_targets on_added=close_on_added />
                 </div>
             </div>
         </Modal>

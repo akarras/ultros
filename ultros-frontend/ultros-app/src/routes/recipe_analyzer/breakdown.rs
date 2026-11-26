@@ -439,6 +439,7 @@ pub(super) fn RecipeBreakdownDrawer(
                                     <AddRecipeToListForm recipe
                                         initial_hq=require_hq.get_untracked()
                                         initial_include_crystals={shards.get_untracked() == ShardsMode::IncludeMarket}
+                                        default_craft_target=false
                                         on_added=Callback::new(move |()| close()) />
                                 </section>
                             })

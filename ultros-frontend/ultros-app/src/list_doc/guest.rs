@@ -7,7 +7,10 @@ use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
-use ultros_list_doc::{DocError, ListDocument, ListUndo, MetaSnapshot, RowSnapshot, Subscription};
+use ultros_list_doc::{
+    CraftChoiceSnapshot, CraftOptionsSnapshot, DocError, ListDocument, ListUndo, MetaSnapshot,
+    RowSnapshot, Subscription, TargetSnapshot,
+};
 use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::JsFuture;
 
@@ -348,6 +351,15 @@ impl GuestListHandle {
     }
     pub fn rows(&self) -> Vec<RowSnapshot> {
         self.inner.doc.rows()
+    }
+    pub fn targets(&self) -> Vec<TargetSnapshot> {
+        self.inner.doc.targets()
+    }
+    pub fn craft_choices(&self) -> Vec<CraftChoiceSnapshot> {
+        self.inner.doc.craft_choices()
+    }
+    pub fn craft_options(&self) -> CraftOptionsSnapshot {
+        self.inner.doc.craft_options()
     }
     pub fn meta(&self) -> MetaSnapshot {
         self.inner.doc.meta()

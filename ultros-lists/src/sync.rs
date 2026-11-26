@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use tracing::warn;
-use ultros_api_types::list::{List, ListActivity};
+use ultros_api_types::list::{List, ListActivity, ListActivityKind};
 use ultros_api_types::websocket::{ListDocPayload, ListEventData};
 use ultros_db::UltrosDb;
 use ultros_db::list_doc::{ListDocError, MergeOutcome, ProjectedChange};
@@ -147,7 +147,22 @@ impl ListSync {
         }
 
         let meta = outcome.meta_changed().then_some(&outcome.meta_after);
-        let entries = entries_for(&actor.username, &outcome.changes, meta, resolve_item_name);
+        let craft_changed = outcome.craft_changed();
+        let target_count = outcome.target_changes.len();
+        let choice_count = outcome.choice_changes.len();
+        let mut entries = entries_for(&actor.username, &outcome.changes, meta, resolve_item_name);
+        if craft_changed && entries.is_empty() {
+            entries.push(crate::lists::activity::ActivityEntry {
+                kind: ListActivityKind::ListUpdated,
+                list_item_id: None,
+                item_id: None,
+                payload: serde_json::json!({
+                    "craft_targets_changed": target_count,
+                    "craft_choices_changed": choice_count,
+                }),
+                message: format!("{} updated crafting plan", actor.username),
+            });
+        }
         // Only Discord bot commands may act for a user who has never signed in
         // on the web; browser/socket/plugin sessions already have an existing
         // `discord_user` row and must never recreate one after account deletion.

@@ -176,20 +176,34 @@ fn exclusion_catalog(worlds: Option<&WorldHelper>) -> (Vec<String>, Vec<(i32, St
 
 #[cfg(feature = "hydrate")]
 impl ListTravelState {
-    pub fn online_href(&self, list_id: i32, shop: bool) -> String {
-        online_href(list_id, shop, &self.query.get_untracked())
+    pub fn online_href(
+        &self,
+        list_id: i32,
+        mode: crate::routes::list_view_sync::WorkspaceMode,
+    ) -> String {
+        online_href(list_id, mode, &self.query.get_untracked())
     }
 
-    pub fn device_continue_href(&self, device_id: &str, shop: bool) -> String {
-        device_continue_href(device_id, shop, &self.query.get())
+    pub fn device_continue_href(
+        &self,
+        device_id: &str,
+        mode: crate::routes::list_view_sync::WorkspaceMode,
+    ) -> String {
+        device_continue_href(device_id, mode, &self.query.get())
     }
 }
 
 #[cfg(any(feature = "hydrate", test))]
-fn view_query(shop: bool, source: &ParamsMap) -> ParamsMap {
+fn view_query(mode: crate::routes::list_view_sync::WorkspaceMode, source: &ParamsMap) -> ParamsMap {
     let mut query = ParamsMap::new();
-    if shop {
-        query.replace("buy", "true".to_string());
+    match mode {
+        crate::routes::list_view_sync::WorkspaceMode::Build => {}
+        crate::routes::list_view_sync::WorkspaceMode::Craft => {
+            query.replace("mode", "craft".to_string());
+        }
+        crate::routes::list_view_sync::WorkspaceMode::Shop => {
+            query.replace("buy", "true".to_string());
+        }
     }
     // Carry only list-view settings. Device recovery/promotion flags must not
     // be replayed on the account route after the same-list handoff.
@@ -202,16 +216,24 @@ fn view_query(shop: bool, source: &ParamsMap) -> ParamsMap {
 }
 
 #[cfg(any(feature = "hydrate", test))]
-fn online_href(list_id: i32, shop: bool, source: &ParamsMap) -> String {
+fn online_href(
+    list_id: i32,
+    mode: crate::routes::list_view_sync::WorkspaceMode,
+    source: &ParamsMap,
+) -> String {
     format!(
         "/list/{list_id}{}",
-        view_query(shop, source).to_query_string()
+        view_query(mode, source).to_query_string()
     )
 }
 
 #[cfg(any(feature = "hydrate", test))]
-fn device_continue_href(device_id: &str, shop: bool, source: &ParamsMap) -> String {
-    let mut query = view_query(shop, source);
+fn device_continue_href(
+    device_id: &str,
+    mode: crate::routes::list_view_sync::WorkspaceMode,
+    source: &ParamsMap,
+) -> String {
+    let mut query = view_query(mode, source);
     query.replace("make_online", "1".to_string());
     format!("/list/device/{device_id}{}", query.to_query_string())
 }
@@ -267,7 +289,11 @@ mod tests {
         source.replace("excluded-datacenters", "Other & DC".to_string());
         source.replace("recovery", "1".to_string());
         source.replace("make_online", "1".to_string());
-        let href = online_href(42, true, &source);
+        let href = online_href(
+            42,
+            crate::routes::list_view_sync::WorkspaceMode::Shop,
+            &source,
+        );
         assert!(href.starts_with("/list/42?"));
         assert!(href.contains("travel=dc"));
         assert!(href.contains("buy=true"));
@@ -279,8 +305,26 @@ mod tests {
         );
         assert!(!href.contains("recovery"));
         assert!(!has_param(&href, "make_online", ""));
-        assert!(!online_href(42, false, &source).contains("buy="));
-        let continuation = device_continue_href("local-id", true, &source);
+        assert!(
+            !online_href(
+                42,
+                crate::routes::list_view_sync::WorkspaceMode::Build,
+                &source
+            )
+            .contains("buy=")
+        );
+        let craft_href = online_href(
+            42,
+            crate::routes::list_view_sync::WorkspaceMode::Craft,
+            &source,
+        );
+        assert!(craft_href.contains("mode=craft"));
+        assert!(!craft_href.contains("buy="));
+        let continuation = device_continue_href(
+            "local-id",
+            crate::routes::list_view_sync::WorkspaceMode::Shop,
+            &source,
+        );
         assert!(continuation.starts_with("/list/device/local-id?"));
         assert!(has_param(&continuation, "make_online", "1"));
         assert!(continuation.contains("travel=dc"));
@@ -288,6 +332,13 @@ mod tests {
         assert!(has_param(&continuation, "excluded-worlds", ""));
         assert!(continuation.contains("%26"));
         assert!(!continuation.contains("recovery"));
+        let craft_continuation = device_continue_href(
+            "local-id",
+            crate::routes::list_view_sync::WorkspaceMode::Craft,
+            &source,
+        );
+        assert!(craft_continuation.contains("mode=craft"));
+        assert!(!craft_continuation.contains("buy="));
     }
 
     #[test]

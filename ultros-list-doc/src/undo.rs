@@ -168,17 +168,37 @@ impl ListUndo {
         let Some(before) = self.doc.row(&key) else {
             return Ok(());
         };
-        if quantity <= 0 || before.acquired >= before.need {
+        self.record_purchase_for_need(key, quantity, before.need)
+    }
+
+    /// Record a Shop purchase against an explicit effective need (allowing
+    /// purchases for derived crafting leaves whose document row is absent or
+    /// has `need == 0`).
+    pub fn record_purchase_for_need(
+        &mut self,
+        key: RowKey,
+        quantity: i64,
+        effective_need: i64,
+    ) -> Result<(), DocError> {
+        if quantity <= 0 {
             return Ok(());
         }
+        let target_need = match self.doc.row(&key) {
+            Some(before) => effective_need.max(before.need),
+            None => effective_need,
+        };
+        let current_acquired = self.doc.row(&key).map_or(0, |row| row.acquired);
+        if current_acquired >= target_need {
+            return Ok(());
+        }
+        let id = self.next_purchase;
+        self.next_purchase = id.checked_add(1).ok_or(DocError::QuantityOverflow)?;
+        let _tag = self.tagged(id);
+        self.group(|doc| doc.add_acquired_or_create(key, quantity))?;
         let row = self
             .doc
             .row_identity(&key)
             .ok_or(DocError::MissingRow(key))?;
-        let id = self.next_purchase;
-        self.next_purchase = id.checked_add(1).ok_or(DocError::QuantityOverflow)?;
-        let _tag = self.tagged(id);
-        self.group(|doc| doc.add_acquired(&key, quantity))?;
         self.purchases.push_back(Purchase {
             id,
             key,
@@ -391,6 +411,23 @@ mod tests {
         assert!(undo.can_undo_purchase());
         assert!(undo.undo_purchase().unwrap());
         assert_eq!(doc.row(&key).unwrap().acquired, 0);
+    }
+
+    #[test]
+    fn derived_leaf_purchase_creates_dormant_row_and_supports_undo() {
+        let (doc, _) = doc();
+        let leaf = RowKey::new(5056, None);
+        assert!(doc.row(&leaf).is_none());
+        let mut undo = ListUndo::with_merge_interval(&doc, 0);
+        undo.record_purchase_for_need(leaf, 4, 10).unwrap();
+        let row = doc.row(&leaf).unwrap();
+        assert_eq!((row.need, row.acquired), (0, 4));
+        assert!(undo.can_undo_purchase());
+        assert!(undo.undo_purchase().unwrap());
+        assert_eq!(doc.row(&leaf).unwrap().acquired, 0);
+        assert!(undo.undo().unwrap()); // revert purchase reversal
+        assert!(undo.undo().unwrap()); // revert creation
+        assert!(doc.row(&leaf).is_none());
     }
 
     #[test]
