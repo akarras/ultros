@@ -14,7 +14,8 @@
 
 use leptos::prelude::*;
 use ultros_list_doc::{
-    DocError, ImportReport, ListDocument, ListUndo, MetaSnapshot, RowSnapshot, Subscription,
+    CraftChoiceSnapshot, CraftOptionsSnapshot, DocError, ImportReport, ListDocument, ListUndo,
+    MetaSnapshot, RowSnapshot, Subscription, TargetSnapshot,
 };
 
 use ultros_list_doc::recovery::{self, RecoveryError};
@@ -949,6 +950,24 @@ impl ListDocHandle {
     pub fn display_rows(&self) -> Vec<RowSnapshot> {
         self.display_document()
             .map(|doc| doc.rows())
+            .unwrap_or_default()
+    }
+
+    pub fn display_targets(&self) -> Vec<TargetSnapshot> {
+        self.display_document()
+            .map(|doc| doc.targets())
+            .unwrap_or_default()
+    }
+
+    pub fn display_craft_choices(&self) -> Vec<CraftChoiceSnapshot> {
+        self.display_document()
+            .map(|doc| doc.craft_choices())
+            .unwrap_or_default()
+    }
+
+    pub fn display_craft_options(&self) -> CraftOptionsSnapshot {
+        self.display_document()
+            .map(|doc| doc.craft_options())
             .unwrap_or_default()
     }
 

@@ -1,10 +1,12 @@
 //! Plain-value views of a document, and the diff between two of them.
 
 use std::collections::BTreeMap;
+use std::fmt;
+use std::str::FromStr;
 
 use ultros_api_types::world_helper::AnySelector;
 
-use crate::key::RowKey;
+use crate::key::{KeyError, RowKey, TargetKey};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RowSnapshot {
@@ -14,12 +16,156 @@ pub struct RowSnapshot {
     pub target: Option<i64>,
 }
 
+/// How an intermediate item in a crafting project is sourced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum CraftMode {
+    #[default]
+    Craft,
+    Buy,
+}
+
+impl CraftMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CraftMode::Craft => "craft",
+            CraftMode::Buy => "buy",
+        }
+    }
+}
+
+impl fmt::Display for CraftMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for CraftMode {
+    type Err = KeyError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "craft" => Ok(CraftMode::Craft),
+            "buy" => Ok(CraftMode::Buy),
+            other => Err(KeyError::Shape(other.to_string())),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TargetSnapshot {
+    pub key: TargetKey,
+    pub count: i64,
+    pub completed: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CraftChoiceSnapshot {
+    pub item_id: i32,
+    pub mode: CraftMode,
+    pub recipe_id: Option<i32>,
+    pub on_hand: i64,
+    pub crafted: i64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CraftOptionsSnapshot {
+    pub exclude_crystals: bool,
+    pub include_vendors: bool,
+}
+
 /// `scope` is `None` only for a document nobody wrote a scope into; consumers
 /// treat that as "leave the list's scope alone".
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MetaSnapshot {
     pub name: String,
     pub scope: Option<AnySelector>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TargetChange {
+    Added(TargetSnapshot),
+    Removed(TargetSnapshot),
+    Updated {
+        before: TargetSnapshot,
+        after: TargetSnapshot,
+    },
+}
+
+impl TargetChange {
+    pub fn key(&self) -> TargetKey {
+        match self {
+            TargetChange::Added(t) | TargetChange::Removed(t) => t.key,
+            TargetChange::Updated { after, .. } => after.key,
+        }
+    }
+}
+
+pub fn diff_targets(before: &[TargetSnapshot], after: &[TargetSnapshot]) -> Vec<TargetChange> {
+    let before: BTreeMap<TargetKey, TargetSnapshot> = before.iter().map(|t| (t.key, *t)).collect();
+    let after: BTreeMap<TargetKey, TargetSnapshot> = after.iter().map(|t| (t.key, *t)).collect();
+    let mut changes = Vec::new();
+    for (key, b) in &before {
+        match after.get(key) {
+            None => changes.push(TargetChange::Removed(*b)),
+            Some(a) if a != b => changes.push(TargetChange::Updated {
+                before: *b,
+                after: *a,
+            }),
+            Some(_) => {}
+        }
+    }
+    for (key, a) in &after {
+        if !before.contains_key(key) {
+            changes.push(TargetChange::Added(*a));
+        }
+    }
+    changes.sort_by_key(|c| c.key());
+    changes
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CraftChoiceChange {
+    Added(CraftChoiceSnapshot),
+    Removed(CraftChoiceSnapshot),
+    Updated {
+        before: CraftChoiceSnapshot,
+        after: CraftChoiceSnapshot,
+    },
+}
+
+impl CraftChoiceChange {
+    pub fn item_id(&self) -> i32 {
+        match self {
+            CraftChoiceChange::Added(c) | CraftChoiceChange::Removed(c) => c.item_id,
+            CraftChoiceChange::Updated { after, .. } => after.item_id,
+        }
+    }
+}
+
+pub fn diff_craft_choices(
+    before: &[CraftChoiceSnapshot],
+    after: &[CraftChoiceSnapshot],
+) -> Vec<CraftChoiceChange> {
+    let before: BTreeMap<i32, CraftChoiceSnapshot> =
+        before.iter().map(|c| (c.item_id, *c)).collect();
+    let after: BTreeMap<i32, CraftChoiceSnapshot> = after.iter().map(|c| (c.item_id, *c)).collect();
+    let mut changes = Vec::new();
+    for (item_id, b) in &before {
+        match after.get(item_id) {
+            None => changes.push(CraftChoiceChange::Removed(*b)),
+            Some(a) if a != b => changes.push(CraftChoiceChange::Updated {
+                before: *b,
+                after: *a,
+            }),
+            Some(_) => {}
+        }
+    }
+    for (item_id, a) in &after {
+        if !before.contains_key(item_id) {
+            changes.push(CraftChoiceChange::Added(*a));
+        }
+    }
+    changes.sort_by_key(|c| c.item_id());
+    changes
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -256,7 +256,7 @@ fn signed_quantity_extremes_and_negative_counter_totals_round_trip() {
 
 #[test]
 fn explicit_versions_other_than_current_are_never_treated_as_legacy() {
-    for version in [-1_i64, 0, 2, 999, i64::MAX] {
+    for version in [-1_i64, 0, 3, 999, i64::MAX] {
         let doc = seeded();
         doc.inner()
             .get_map("meta")
@@ -467,4 +467,40 @@ fn large_historical_versions_keep_full_shallow_and_collaborative_sync_working() 
     let reopened = ListDocument::from_snapshot(&receiver.export_snapshot().unwrap()).unwrap();
     assert_eq!(reopened.rows()[0].acquired, 1);
     assert_eq!(reopened.rows()[0].need, document.rows()[0].need);
+}
+
+#[test]
+fn v2_validation_rejects_malformed_craft_containers_and_v1_smuggling() {
+    let v1 = ListDocument::new();
+    let target = v1
+        .inner()
+        .get_map("targets")
+        .insert_container("r:10", loro::LoroMap::new())
+        .unwrap();
+    target.insert("recipe", 10_i64).unwrap();
+    target.insert("count", 1_i64).unwrap();
+    target
+        .insert_container("completed", loro::LoroCounter::new())
+        .unwrap();
+    v1.commit();
+    assert!(matches!(
+        ListDocument::from_snapshot(&v1.export_snapshot().unwrap()),
+        Err(DocError::InvalidStructure(_))
+    ));
+
+    let v2 = ListDocument::new();
+    v2.add_target(ultros_list_doc::TargetKey::new(10), 1)
+        .unwrap();
+    v2.set_craft_choice(20, ultros_list_doc::CraftMode::Buy, None)
+        .unwrap();
+    let choice_map = match v2.inner().get_map("craft_choices").get("20") {
+        Some(loro::ValueOrContainer::Container(loro::Container::Map(m))) => m,
+        _ => panic!("expected choice map"),
+    };
+    choice_map.insert("mode", "steal").unwrap();
+    v2.commit();
+    assert!(matches!(
+        ListDocument::from_snapshot(&v2.export_snapshot().unwrap()),
+        Err(DocError::InvalidStructure(_))
+    ));
 }

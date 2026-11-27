@@ -14,7 +14,7 @@ use crate::components::list_travel_state::{ListTravelPanel, ListTravelState};
 use crate::components::modal::Modal;
 use crate::components::world_picker::WorldPicker;
 use crate::i18n::*;
-use crate::routes::list_view_sync::ListWorkspaceModes;
+use crate::routes::list_view_sync::{ListWorkspaceModes, WorkspaceMode};
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use ultros_api_types::world_helper::AnySelector;
@@ -67,8 +67,10 @@ pub fn ListWorkspaceShell(
     /// recovery mode). The header and children stay.
     #[prop(into)]
     show_controls: Signal<bool>,
-    #[prop(into)] shop: Signal<bool>,
-    #[prop(into)] set_shop: Callback<bool>,
+    #[prop(into)] mode: Signal<WorkspaceMode>,
+    #[prop(into)] set_mode: Callback<WorkspaceMode>,
+    #[prop(default = Signal::derive(|| false))] show_craft: Signal<bool>,
+    #[prop(default = Signal::derive(|| None))] craft_badge: Signal<Option<String>>,
     #[prop(into)] scope: Signal<Option<AnySelector>>,
     #[prop(into)] set_scope: Callback<Option<AnySelector>>,
     /// False hides the scope picker only; the travel panel stays.
@@ -155,7 +157,7 @@ pub fn ListWorkspaceShell(
             </header>
             {notices.map(|notices| notices.run())}
             <Show when=move || show_controls.get()>
-                <ListWorkspaceModes shop set_shop />
+                <ListWorkspaceModes mode set_mode show_craft craft_badge />
                 <div class="flex items-start gap-3" data-testid=price_row_testid>
                     <div class="flex min-w-0 flex-1 flex-wrap items-end gap-3">
                     <Show when=move || can_set_scope.get()>
@@ -164,7 +166,7 @@ pub fn ListWorkspaceShell(
                     <ListTravelPanel state=travel />
                     {refresh.clone().map(|refresh| refresh.run())}
                     </div>
-                    <div class="shrink-0 pt-6" class:hidden=move || shop.get()>{history.clone().run()}</div>
+                    <div class="shrink-0 pt-6" class:hidden=move || mode.get() == WorkspaceMode::Shop>{history.clone().run()}</div>
                 </div>
             </Show>
             {children()}

@@ -2189,12 +2189,30 @@ pub(crate) async fn make_list_online(
     }
     let doc = ultros_list_doc::ListDocument::from_snapshot(&request.snapshot)
         .map_err(|_| ApiError::BadRequest("unsupported or damaged list document"))?;
-    if doc.rows().iter().any(|row| {
-        !xiv_gen_db::data()
-            .items
-            .contains_key(&xiv_gen::ItemId(row.key.item_id))
-    }) {
+    let data = xiv_gen_db::data();
+    if doc
+        .rows()
+        .iter()
+        .any(|row| !data.items.contains_key(&xiv_gen::ItemId(row.key.item_id)))
+    {
         return Err(ApiError::BadRequest("list contains an unknown item"));
+    }
+    if doc.targets().iter().any(|target| {
+        !data
+            .recipes
+            .contains_key(&xiv_gen::RecipeId(target.key.recipe_id))
+    }) {
+        return Err(ApiError::BadRequest("list contains an unknown recipe"));
+    }
+    if doc.craft_choices().iter().any(|choice| {
+        !data.items.contains_key(&xiv_gen::ItemId(choice.item_id))
+            || choice
+                .recipe_id
+                .is_some_and(|rid| !data.recipes.contains_key(&xiv_gen::RecipeId(rid)))
+    }) {
+        return Err(ApiError::BadRequest(
+            "list contains an unknown item or recipe",
+        ));
     }
     let owner = db
         .get_discord_user(user.id)
@@ -2287,6 +2305,72 @@ pub(crate) async fn post_items_to_list(
                 if acquired != 0 {
                     doc.add_acquired(&key, acquired)?;
                 }
+            }
+            Ok(())
+        })
+        .await?;
+    Ok(Json(()))
+}
+
+pub(crate) async fn post_targets_to_list(
+    State(list_sync): State<ListSync>,
+    Path(id): Path<i32>,
+    user: AuthDiscordUser,
+    Json(request): Json<ultros_api_types::list::AddCraftTargetsRequest>,
+) -> Result<Json<()>, ApiError> {
+    if request.targets.is_empty() || request.targets.len() > ultros_list_doc::document::MAX_TARGETS
+    {
+        return Err(ApiError::BadRequest("invalid craft target count"));
+    }
+    let data = xiv_gen_db::data();
+    for target in &request.targets {
+        if !(1..=9999).contains(&target.count)
+            || !data
+                .recipes
+                .contains_key(&xiv_gen::RecipeId(target.recipe_id))
+        {
+            return Err(ApiError::BadRequest("invalid craft target recipe or count"));
+        }
+    }
+    for choice in &request.craft_choices {
+        if choice.on_hand < 0
+            || !data.items.contains_key(&xiv_gen::ItemId(choice.item_id))
+            || choice
+                .recipe_id
+                .is_some_and(|rid| !data.recipes.contains_key(&xiv_gen::RecipeId(rid)))
+        {
+            return Err(ApiError::BadRequest("invalid craft choice item or recipe"));
+        }
+    }
+    let actor = user.actor(Origin::Rest);
+    list_sync
+        .edit_as_server(id, &actor, move |doc| {
+            for target in &request.targets {
+                doc.add_target(
+                    ultros_list_doc::TargetKey::new(target.recipe_id),
+                    i64::from(target.count),
+                )?;
+            }
+            for choice in &request.craft_choices {
+                let mode = if choice.buy {
+                    ultros_list_doc::CraftMode::Buy
+                } else {
+                    ultros_list_doc::CraftMode::Craft
+                };
+                doc.set_craft_choice(choice.item_id, mode, choice.recipe_id)?;
+                if choice.on_hand > 0 {
+                    doc.set_intermediate_on_hand(choice.item_id, choice.on_hand)?;
+                }
+            }
+            if request.exclude_crystals.is_some() || request.include_vendors.is_some() {
+                let mut opts = doc.craft_options();
+                if let Some(exc) = request.exclude_crystals {
+                    opts.exclude_crystals = exc;
+                }
+                if let Some(inc) = request.include_vendors {
+                    opts.include_vendors = inc;
+                }
+                doc.set_craft_options(opts)?;
             }
             Ok(())
         })
@@ -4076,6 +4160,7 @@ fn api_router() -> Router<WebState> {
         .route("/api/v1/list/{id}/listings", get(get_list_with_listings))
         .route("/api/v1/list/{id}/add/item", post(post_item_to_list))
         .route("/api/v1/list/{id}/add/items", post(post_items_to_list))
+        .route("/api/v1/list/{id}/add/targets", post(post_targets_to_list))
         .route("/api/v1/list/{id}/delete", delete(delete_list))
         .route("/api/v1/list/item/{id}/delete", delete(delete_list_item))
         .route("/api/v1/list/item/delete", post(delete_multiple_list_items))

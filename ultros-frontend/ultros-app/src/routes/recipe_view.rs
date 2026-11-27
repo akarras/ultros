@@ -5,10 +5,15 @@ use std::sync::Arc;
 use futures::{StreamExt, stream};
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
-use ultros_api_types::{CurrentlyShownItem, list::ListItem, world_helper::AnySelector};
+use ultros_api_types::{
+    CurrentlyShownItem,
+    list::{AddCraftTarget, AddCraftTargetsRequest, CraftChoiceInput, ListItem},
+    world_helper::AnySelector,
+};
+use ultros_frontend_core::components::local_list_targets::LocalListTargets;
 use xiv_gen::{ItemId, RecipeId, RecipeLevelTableId};
 
-use crate::api::{bulk_add_item_to_list, get_listings, get_lists, get_login};
+use crate::api::{add_targets_to_list, bulk_add_item_to_list, get_listings, get_lists, get_login};
 use crate::components::app_link::use_query_map_or_default;
 use crate::components::{
     ad::{Ad, slots as ad_slots},
@@ -1004,7 +1009,23 @@ fn RecipePage(recipe: &'static xiv_gen::Recipe) -> impl IntoView {
                 for id in &d.failed {lines.push(format!("{}: market request failed — refresh to retry",item_name(*id)));}
                 lines.into_iter().map(|line|view!{<p>{line}</p>}).collect_view()
             })}</div></details>
-            <Show when=move ||show_save.get()><SavePlan materials=materials hq=hq output=recipe.item_result output_hq=output_hq buy_output=buy_output set_visible=show_save /></Show>
+            <Show when=move ||show_save.get()>
+                <SavePlan
+                    materials=materials
+                    hq=hq
+                    recipe_id=recipe.key_id.0
+                    output=recipe.item_result
+                    count=quantity
+                    craft=craft
+                    owned=owned
+                    exclude_crystals=exclude_crystals
+                    include_vendors=include_vendors.into()
+                    output_hq=output_hq
+                    buy_output=buy_output
+                    catalog=catalog
+                    set_visible=show_save
+                />
+            </Show>
             <Show when=move ||show_settings.get()><PlannerSettings options=options set_options=set_options set_visible=show_settings /></Show>
             <div class="app-inline-ad">
                 <div class="w-full flex justify-center">
@@ -1056,22 +1077,125 @@ fn PlannerSettings(
     </div></crate::components::modal::Modal>}
 }
 
+fn recipe_project_request(
+    recipe_id: i32,
+    count: i64,
+    craft_raw: Option<String>,
+    owned_raw: Option<String>,
+    exclude_crystals: bool,
+    include_vendors: bool,
+    catalog: &BTreeMap<i32, Recipe>,
+) -> AddCraftTargetsRequest {
+    let craft_choices = pairs(craft_raw);
+    let owned_map = pairs(owned_raw);
+    let mut default_recipes: BTreeMap<i32, i32> = BTreeMap::new();
+    for (&rid, r) in catalog {
+        if r.output <= 0 {
+            continue;
+        }
+        default_recipes
+            .entry(r.output)
+            .and_modify(|existing| {
+                if rid < *existing {
+                    *existing = rid;
+                }
+            })
+            .or_insert(rid);
+    }
+
+    // BFS over all reachable craftable intermediates so `/recipe/:id`'s
+    // "Buy by default unless in ?craft=" polarity is preserved explicitly
+    // when landing in `ultros-list-doc` (whose default is Craft).
+    let mut seen_items: BTreeSet<i32> = BTreeSet::new();
+    let mut visited_recipes: BTreeSet<i32> = BTreeSet::new();
+    let mut queue: std::collections::VecDeque<i32> = std::collections::VecDeque::from([recipe_id]);
+    let root_output = catalog
+        .get(&recipe_id)
+        .map(|r| r.output)
+        .unwrap_or_default();
+
+    while let Some(rid) = queue.pop_front() {
+        if visited_recipes.len() >= 128 || !visited_recipes.insert(rid) {
+            continue;
+        }
+        let Some(recipe) = catalog.get(&rid) else {
+            continue;
+        };
+        for &(ing_id, _) in &recipe.ingredients {
+            if ing_id == root_output {
+                continue;
+            }
+            if let Some(&chosen) = craft_choices.get(&ing_id)
+                && let Ok(next_rid) = i32::try_from(chosen)
+                && catalog.contains_key(&next_rid)
+            {
+                seen_items.insert(ing_id);
+                queue.push_back(next_rid);
+            } else if let Some(&default_rid) = default_recipes.get(&ing_id) {
+                seen_items.insert(ing_id);
+                queue.push_back(default_rid);
+            }
+        }
+    }
+    for &item_id in craft_choices.keys() {
+        if item_id != root_output {
+            seen_items.insert(item_id);
+        }
+    }
+
+    let craft_inputs = seen_items
+        .into_iter()
+        .map(|item_id| {
+            let chosen = craft_choices
+                .get(&item_id)
+                .and_then(|v| i32::try_from(*v).ok());
+            let buy = chosen.is_none();
+            let rid = chosen.or_else(|| default_recipes.get(&item_id).copied());
+            let on_hand = owned_map.get(&item_id).copied().unwrap_or(0).max(0);
+            CraftChoiceInput {
+                item_id,
+                buy,
+                recipe_id: rid,
+                on_hand,
+            }
+        })
+        .collect();
+
+    AddCraftTargetsRequest {
+        targets: vec![AddCraftTarget {
+            recipe_id,
+            count: count.clamp(1, 9999) as i32,
+        }],
+        exclude_crystals: Some(exclude_crystals),
+        include_vendors: Some(include_vendors),
+        craft_choices: craft_inputs,
+    }
+}
+
 #[component]
 fn SavePlan(
     materials: Memo<Result<Vec<Material>, String>>,
     hq: Memo<Option<bool>>,
+    recipe_id: i32,
     output: i32,
+    count: Memo<i64>,
+    craft: Memo<Option<String>>,
+    owned: Memo<Option<String>>,
+    exclude_crystals: Memo<bool>,
+    include_vendors: Signal<Option<bool>>,
     output_hq: Memo<Option<bool>>,
     buy_output: Memo<bool>,
+    catalog: StoredValue<BTreeMap<i32, Recipe>>,
     set_visible: RwSignal<bool>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let lists = LocalResource::new(move || async move {
         get_login().await?;
         get_lists().await
     });
-    let action = Action::new(move |id: &i32| {
-        let id = *id;
-        let items = materials
+    let save_project = RwSignal::new(!buy_output.get_untracked());
+    let flat_items = move |id: i32| {
+        materials
             .get_untracked()
             .unwrap_or_default()
             .into_iter()
@@ -1094,15 +1218,68 @@ fn SavePlan(
                 acquired: None,
                 target_price: None,
             })
-            .collect();
+            .collect::<Vec<_>>()
+    };
+    let build_target_req = move || {
+        catalog.with_value(|c| {
+            recipe_project_request(
+                recipe_id,
+                count.get_untracked(),
+                craft.get_untracked(),
+                owned.get_untracked(),
+                exclude_crystals.get_untracked(),
+                include_vendors.get_untracked().unwrap_or(true),
+                c,
+            )
+        })
+    };
+    let action = Action::new(move |id: &i32| {
+        let id = *id;
+        let items = flat_items(id);
         async move { bulk_add_item_to_list(id, items).await }
     });
+    let target_action = Action::new(move |id: &i32| {
+        let id = *id;
+        let req = build_target_req();
+        async move { add_targets_to_list(id, req).await }
+    });
+    let local_items = Callback::new(move |()| flat_items(0));
+    let local_targets = Callback::new(move |()| {
+        (!buy_output.get_untracked() && save_project.get_untracked()).then(build_target_req)
+    });
+    let pending = Signal::derive(move || action.pending().get() || target_action.pending().get());
+
     view! {<crate::components::modal::Modal set_visible=SignalSetter::map(move |v|set_visible.set(v))><div class="space-y-4"><h2 class="text-xl font-semibold">{move ||if buy_output.get(){"Save finished items"}else{"Save remaining materials"}}</h2>
+        <Show when=move || !buy_output.get()>
+            <div class="segmented-control w-fit" role="group" data-testid="recipe-save-mode-toggle">
+                <button
+                    type="button"
+                    class="segmented-option"
+                    data-testid="recipe-save-mode-project"
+                    aria-pressed=move || save_project.get().to_string()
+                    on:click=move |_| save_project.set(true)
+                >
+                    {t!(i18n, recipe_save_mode_craft_project)}
+                </button>
+                <button
+                    type="button"
+                    class="segmented-option"
+                    data-testid="recipe-save-mode-flat"
+                    aria-pressed=move || (!save_project.get()).to_string()
+                    on:click=move |_| save_project.set(false)
+                >
+                    {t!(i18n, recipe_save_mode_flat)}
+                </button>
+            </div>
+        </Show>
         <Suspense fallback=move ||view!{<p>"Loading your lists…"</p>}>{move ||lists.get().map(|result| match result {
-            Ok(lists)=>view!{<div class="space-y-2">{lists.into_iter().map(|list|view!{<button type="button" class="btn-secondary w-full" disabled=move ||action.pending().get() on:click=move |_|{action.dispatch(list.id);}>{list.name}</button>}).collect_view()}<a href="/list" class="block text-brand-300">"Manage or create lists"</a></div>}.into_any(),
+            Ok(lists)=>view!{<div class="space-y-2">{lists.into_iter().map(|list|view!{<button type="button" class="btn-secondary w-full" disabled=move ||pending.get() on:click=move |_|{if !buy_output.get_untracked() && save_project.get_untracked() { target_action.dispatch(list.id); } else { action.dispatch(list.id); }}>{list.name}</button>}).collect_view()}<a href="/list" class="block text-brand-300">"Manage or create lists"</a></div>}.into_any(),
             Err(_)=>view!{<p>"Sign in to save this plan to a list. Your plan is preserved in its link."</p><a href="/login" rel="external" class="btn-primary">"Sign in"</a>}.into_any(),
         })}</Suspense>
-        {move ||action.value().get().map(|result|view!{<p role="status">{if result.is_ok(){"Items added to your list."}else{"Could not save items. Please try again."}}</p>})}
+        <LocalListTargets build_items=local_items build_targets=local_targets />
+        {move || action.value().get().or_else(|| target_action.value().get()).map(|result| view! {
+            <p role="status">{if result.is_ok() { "Items added to your list." } else { "Could not save items. Please try again." }}</p>
+        })}
         <button type="button" class="btn-secondary" on:click=move |_|set_visible.set(false)>"Close"</button>
     </div></crate::components::modal::Modal>}
 }

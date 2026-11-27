@@ -369,6 +369,33 @@ pub(crate) fn aggregate_materials(
     entries
 }
 
+pub(crate) fn aggregate_set_targets(
+    set: &JobSetGroup,
+    recipes: &xiv_gen::IdMap<xiv_gen::RecipeId, xiv_gen::Recipe>,
+) -> Vec<(i32, i32)> {
+    let mut by_item: BTreeMap<i32, i32> = BTreeMap::new();
+    for recipe in recipes.values() {
+        if recipe.item_result <= 0 {
+            continue;
+        }
+        by_item
+            .entry(recipe.item_result)
+            .and_modify(|existing| {
+                if recipe.key_id.0 < *existing {
+                    *existing = recipe.key_id.0;
+                }
+            })
+            .or_insert(recipe.key_id.0);
+    }
+    let mut targets: BTreeMap<i32, i32> = BTreeMap::new();
+    for piece in &set.items {
+        if let Some(&recipe_id) = by_item.get(&piece.id.0) {
+            *targets.entry(recipe_id).or_insert(0) += 1;
+        }
+    }
+    targets.into_iter().collect()
+}
+
 /// Compact row used by both the main materials grid and the shards
 /// section. Inlines an icon, name, quantity, and cheapest NQ price so
 /// the user can eyeball "how much will this set cost in ingredients?"
@@ -504,6 +531,12 @@ pub fn JobSetDetail() -> impl IntoView {
             .map(|g| g.items.into_iter().map(|i| (i.id, 1)).collect())
             .unwrap_or_default()
     });
+    let set_craft_targets: Signal<Vec<(i32, i32)>> = Signal::derive(move || {
+        group
+            .get()
+            .map(|g| aggregate_set_targets(&g, &data.recipes))
+            .unwrap_or_default()
+    });
     let material_entries: Signal<Vec<(ItemId, i32)>> = Signal::derive(move || {
         materials
             .get()
@@ -589,6 +622,7 @@ pub fn JobSetDetail() -> impl IntoView {
                                 modal_title=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_modal_title).to_string())
                                 subject=Signal::derive(move || set_stem.get())
                                 entries=set_entries
+                                craft_targets=set_craft_targets
                             />
                         </Show>
                         <Show when=move || has_materials.get()>

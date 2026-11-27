@@ -4,7 +4,7 @@
 #[cfg(any(feature = "hydrate", test))]
 use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 #[cfg(any(feature = "hydrate", test))]
 use std::rc::Rc;
 
@@ -29,7 +29,9 @@ use crate::components::{
     cart::ListCart,
     item_icon::*,
     list::{auto_mark_purchases::AutoMarkPurchases, sort::SortSpec},
+    list_craft::ListCraft,
     list_subscribe_drawer::ListSubscribeDrawer,
+    listing_filters::filter_active_listings,
     loading::*,
     make_place_importer::*,
     meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle},
@@ -39,6 +41,10 @@ use crate::components::{
 use crate::error::AppError;
 use crate::i18n::*;
 use crate::list_doc::adapter::Edit;
+use crate::list_doc::craft_project::{
+    CraftEstimateSummary, CraftProjectState, CraftTargetView, apply_optimize_choices,
+    build_craft_project, compute_optimize_plan, consolidated_effective_need,
+};
 use crate::list_doc::handle::{ListDocHandle, RecoveryState, SaveState};
 use crate::query_defaults::filter_query_signal;
 use crate::routes::list_common::{
@@ -130,6 +136,7 @@ pub fn InlineListAdd(
     list_id: Signal<i32>,
     on_add: Callback<ListItem>,
     on_add_many: Callback<Vec<ListItem>>,
+    #[prop(default = None)] on_add_target: Option<Callback<(i32, i64)>>,
     recipe_mode: Signal<bool>,
     toggle_recipe: Callback<()>,
     #[prop(default = Signal::derive(|| false))] pending: Signal<bool>,
@@ -210,7 +217,7 @@ pub fn InlineListAdd(
                     <button type="button" class="segmented-option min-w-20" data-testid="list-composer-recipes" aria-pressed=move || recipe_mode.get().to_string() on:click=move |_| set_recipe_mode(true)>{t!(i18n, lists_workspace_composer_recipes)}</button>
                 </div>
             </div>
-            <Show when=move || recipe_mode.get()><InlineRecipeAdd list_id=list_id on_add=on_add_many /></Show>
+            <Show when=move || recipe_mode.get()><InlineRecipeAdd list_id=list_id on_add=on_add_many on_add_target=on_add_target /></Show>
             <Show when=move || !recipe_mode.get()>
             <div class="flex flex-wrap gap-2">
                 <input node_ref=input id="list-cart-add-input" class="input flex-1 min-w-48" placeholder=t_string!(i18n, lists_workspace_add_placeholder) aria-label=t_string!(i18n, lists_workspace_add_item) prop:value=search data-committed="" data-handoff-committed=move || committed_search.get()
@@ -260,7 +267,11 @@ fn recipe_preview_ingredients(recipe: &xiv_gen::Recipe) -> impl Iterator<Item = 
 }
 
 #[component]
-pub fn InlineRecipeAdd(list_id: Signal<i32>, on_add: Callback<Vec<ListItem>>) -> impl IntoView {
+pub fn InlineRecipeAdd(
+    list_id: Signal<i32>,
+    on_add: Callback<Vec<ListItem>>,
+    #[prop(default = None)] on_add_target: Option<Callback<(i32, i64)>>,
+) -> impl IntoView {
     let i18n = use_i18n();
     use crate::components::crafting_cost::CRYSTAL_SEARCH_CATEGORY;
     let query = RwSignal::new(String::new());
@@ -269,6 +280,16 @@ pub fn InlineRecipeAdd(list_id: Signal<i32>, on_add: Callback<Vec<ListItem>>) ->
     let ingredients = RwSignal::new(true);
     let crystals = RwSignal::new(true);
     let quality = RwSignal::new("any".to_string());
+    let target_units = Memo::new(move |_| {
+        let recipe = selected.get()?;
+        let count = crafts
+            .get()
+            .parse::<i32>()
+            .ok()
+            .filter(|count| (1..=9999).contains(count))?;
+        let yield_amt = i64::from(recipe.amount_result.max(1));
+        Some((recipe.key_id.0, i64::from(count).saturating_mul(yield_amt)))
+    });
     let index = Memo::new(move |_| {
         let data = tracked_data();
         std::sync::Arc::new(
@@ -360,7 +381,7 @@ pub fn InlineRecipeAdd(list_id: Signal<i32>, on_add: Callback<Vec<ListItem>>) ->
                     view! { <li class="flex gap-3 items-center"><ItemIcon item_id=item.item_id icon_size=IconSize::Small /><span>{t_string!(i18n, lists_workspace_preview_row, quantity = item.quantity.unwrap_or(1), name = name, quality = if item.hq == Some(true) { format!(" {}", t_string!(i18n, lists_workspace_hq)) } else { String::new() })}</span></li> }
                 }).collect_view()}</ul>
                 <Show when=move || preview.get().is_none()>
-                    <p role="status" class="text-sm text-red-200">{move || {
+                    <p role="status" class="text-sm text-negative">{move || {
                         if !crafts.get().parse::<i32>().is_ok_and(|count| (1..=9999).contains(&count)) {
                             t_string!(i18n, lists_workspace_craft_count_error).to_string()
                         } else {
@@ -369,16 +390,50 @@ pub fn InlineRecipeAdd(list_id: Signal<i32>, on_add: Callback<Vec<ListItem>>) ->
                     }}</p>
                 </Show>
                 <p class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, lists_workspace_recipe_add_hint)}</p>
-                <button type="button" class="btn-primary" disabled=move || preview.get().is_none_or(|items| items.is_empty()) on:click=move |_| { if let Some(items) = preview.get_untracked() { on_add.run(items); } }>{t!(i18n, lists_workspace_add_preview)}</button>
+                <div class="flex flex-wrap items-center gap-2">
+                    {on_add_target.map(|add_target| view! {
+                        <button
+                            type="button"
+                            class="btn-primary"
+                            data-testid="inline-recipe-add-target"
+                            disabled=move || target_units.get().is_none()
+                            on:click=move |_| {
+                                if let Some(target) = target_units.get_untracked() {
+                                    add_target.run(target);
+                                }
+                            }
+                        >
+                            {t!(i18n, inline_recipe_add_target)}
+                        </button>
+                    })}
+                    <button
+                        type="button"
+                        class=if on_add_target.is_some() { "btn-secondary" } else { "btn-primary" }
+                        disabled=move || preview.get().is_none_or(|items| items.is_empty())
+                        on:click=move |_| { if let Some(items) = preview.get_untracked() { on_add.run(items); } }
+                    >
+                        {t!(i18n, lists_workspace_add_preview)}
+                    </button>
+                </div>
             </Show>
         </div>
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum WorkspaceMode {
+    #[default]
+    Build,
+    Craft,
+    Shop,
+}
+
 #[component]
 pub fn ListWorkspaceModes(
-    shop: Signal<bool>,
-    set_shop: Callback<bool>,
+    #[prop(into)] mode: Signal<WorkspaceMode>,
+    #[prop(into)] set_mode: Callback<WorkspaceMode>,
+    #[prop(default = Signal::derive(|| false))] show_craft: Signal<bool>,
+    #[prop(default = Signal::derive(|| None))] craft_badge: Signal<Option<String>>,
     /// Sized like a `.sticky-bar-button`, for the account page's control
     /// bar, where the full-height segmented control towered over its
     /// neighbours.
@@ -403,8 +458,40 @@ pub fn ListWorkspaceModes(
     };
     view! {
         <div class=group_class role="group" aria-label=t_string!(i18n, lists_workspace_mode)>
-            <button type="button" class=move || button_class(!shop.get()) data-testid="guest-build-mode" aria-pressed=move || (!shop.get()).to_string() on:click=move |_| set_shop.run(false)>{t!(i18n, lists_workspace_build)}</button>
-            <button type="button" class=move || button_class(shop.get()) data-testid="guest-shop-mode" aria-pressed=move || shop.get().to_string() on:click=move |_| set_shop.run(true)>{t!(i18n, lists_workspace_shop)}</button>
+            <button
+                type="button"
+                class=move || button_class(mode.get() == WorkspaceMode::Build)
+                data-testid="guest-build-mode"
+                aria-pressed=move || (mode.get() == WorkspaceMode::Build).to_string()
+                on:click=move |_| set_mode.run(WorkspaceMode::Build)
+            >
+                {t!(i18n, lists_workspace_build)}
+            </button>
+            <Show when=move || show_craft.get()>
+                <button
+                    type="button"
+                    class=move || button_class(mode.get() == WorkspaceMode::Craft)
+                    data-testid="list-craft-mode"
+                    aria-pressed=move || (mode.get() == WorkspaceMode::Craft).to_string()
+                    on:click=move |_| set_mode.run(WorkspaceMode::Craft)
+                >
+                    <span>{t!(i18n, lists_workspace_craft)}</span>
+                    {move || craft_badge.get().map(|badge| view! {
+                        <span class="ml-1.5 rounded-full bg-[color:var(--color-outline)] px-1.5 py-0.5 text-[0.7rem] font-semibold tabular-nums">
+                            {badge}
+                        </span>
+                    })}
+                </button>
+            </Show>
+            <button
+                type="button"
+                class=move || button_class(mode.get() == WorkspaceMode::Shop)
+                data-testid="guest-shop-mode"
+                aria-pressed=move || (mode.get() == WorkspaceMode::Shop).to_string()
+                on:click=move |_| set_mode.run(WorkspaceMode::Shop)
+            >
+                {t!(i18n, lists_workspace_shop)}
+            </button>
         </div>
     }
 }
@@ -416,6 +503,12 @@ pub struct ListWorkspaceSource {
     pub list_id: Signal<i32>,
     pub add: Callback<ListItem>,
     pub add_many: Callback<Vec<ListItem>>,
+    pub add_target: Callback<(i32, i64)>,
+    pub craft_targets: Signal<Vec<CraftTargetView>>,
+    pub craft_summary: Signal<Option<CraftEstimateSummary>>,
+    pub set_target_count: Callback<(i32, i64)>,
+    pub remove_target: Callback<i32>,
+    pub open_craft: Callback<()>,
     pub undo: Callback<()>,
     pub redo: Callback<()>,
     /// Changes whenever document undo/redo is requested, including shortcuts.
@@ -1733,8 +1826,35 @@ pub fn ListViewSync() -> impl IntoView {
     // sender's exact view. Query params resolve on the server too, so SSR
     // renders the same view a hydrated client shows.
     let (buying_view_param, set_buying_view_param) = filter_query_signal::<bool>("buy");
-    let buying_view = Memo::new(move |_| buying_view_param.get().unwrap_or(false));
-    // Latches once Shop has been opened; see the Shop mount below.
+    let (mode_param, set_mode_param) = filter_query_signal::<String>("mode");
+    let workspace_mode = Memo::new(move |_| {
+        if buying_view_param.get().unwrap_or(false) {
+            WorkspaceMode::Shop
+        } else if mode_param.get().as_deref() == Some("craft") {
+            WorkspaceMode::Craft
+        } else {
+            WorkspaceMode::Build
+        }
+    });
+    let buying_view = Memo::new(move |_| workspace_mode.get() == WorkspaceMode::Shop);
+    let set_workspace_mode = Callback::new(move |next: WorkspaceMode| match next {
+        WorkspaceMode::Build => {
+            set_buying_view_param.set(None);
+            set_mode_param.set(None);
+        }
+        WorkspaceMode::Craft => {
+            set_buying_view_param.set(None);
+            set_mode_param.set(Some("craft".to_string()));
+        }
+        WorkspaceMode::Shop => {
+            set_mode_param.set(None);
+            set_buying_view_param.set(Some(true));
+        }
+    });
+    // Latches once Craft / Shop has been opened; see the mode mounts below.
+    let craft_mounted = Memo::new(move |previous: Option<&bool>| {
+        workspace_mode.get() == WorkspaceMode::Craft || previous.copied().unwrap_or(false)
+    });
     let shop_mounted = Memo::new(move |previous: Option<&bool>| {
         buying_view.get() || previous.copied().unwrap_or(false)
     });
@@ -1832,39 +1952,83 @@ pub fn ListViewSync() -> impl IntoView {
         view_caps.set(next);
     });
 
-    // The cart sorts its own rows so an active editor can pin its row.
-    let build_rows = Signal::derive(move || {
+    let extra_craft_listings: RwSignal<HashMap<i32, Vec<ActiveListing>>> =
+        RwSignal::new(HashMap::new());
+    let extra_craft_fetched: RwSignal<HashSet<i32>> = RwSignal::new(HashSet::new());
+    #[cfg(feature = "hydrate")]
+    type ExtraCraftFetchKey = (i32, Option<AnySelector>, BTreeSet<i32>);
+    #[cfg(feature = "hydrate")]
+    let extra_craft_key: RwSignal<Option<ExtraCraftFetchKey>> = RwSignal::new(None);
+    let filtered_listings = Memo::new(move |_| {
+        let id = list_id.get();
+        let mut combined: HashMap<i32, Vec<ActiveListing>> = served_listings
+            .get()
+            .filter(|prices| prices.list_id == id)
+            .map(|prices| prices.listings)
+            .unwrap_or_else(|| {
+                list_view
+                    .get()
+                    .and_then(Result::ok)
+                    .filter(|(list, _)| list.list.id == id)
+                    .map(|(_, rows)| {
+                        rows.into_iter()
+                            .map(|(item, rows)| (item.item_id, rows))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            });
+        extra_craft_listings.with(|extra| {
+            for (&item_id, rows) in extra {
+                combined.entry(item_id).or_insert_with(|| rows.clone());
+            }
+        });
+        let world_helper = use_context::<LocalWorldData>().and_then(|data| data.0.ok());
+        let ex_worlds = excluded_worlds.get();
+        let ex_dcs = excluded_datacenters.get();
+        let policy = travel.policy.get();
+        if !ex_worlds.is_empty() || !ex_dcs.is_empty() || policy.narrows() {
+            for rows in combined.values_mut() {
+                let mut next = if !ex_worlds.is_empty() || !ex_dcs.is_empty() {
+                    filter_active_listings(
+                        std::mem::take(rows),
+                        world_helper.as_deref(),
+                        &ex_worlds,
+                        &ex_dcs,
+                    )
+                } else {
+                    std::mem::take(rows)
+                };
+                if policy.narrows() {
+                    next = policy.filter_listings(&next);
+                }
+                *rows = next;
+            }
+        }
+        combined
+    });
+    let craft_project = Memo::new(move |_| {
+        let id = list_id.get();
+        let listings = filtered_listings.get();
+        if let Some(doc) = handle
+            .get()
+            .filter(|doc| doc.list_id == id && !doc.is_closed_or_disposed())
+        {
+            doc.revision.track();
+            return build_craft_project(
+                id,
+                &doc.display_rows(),
+                &doc.display_targets(),
+                &doc.display_craft_choices(),
+                doc.display_craft_options(),
+                &listings,
+            );
+        }
         let snapshot = list_view
             .get()
             .and_then(Result::ok)
-            .filter(|(list, _)| list.list.id == list_id.get())
+            .filter(|(list, _)| list.list.id == id)
             .map(|(_, rows)| rows)
             .unwrap_or_default();
-        let snapshot = if let Some(doc) = handle.get().filter(|doc| doc.list_id == list_id.get()) {
-            doc.revision.track();
-            // Revalidation can deliver fresh offers without rerunning the
-            // page resource. Read the exact response that owns coverage.
-            let listings = served_listings
-                .get()
-                .filter(|prices| prices.list_id == list_id.get())
-                .map(|prices| prices.listings)
-                .unwrap_or_else(|| {
-                    snapshot
-                        .into_iter()
-                        .map(|(item, rows)| (item.item_id, rows))
-                        .collect()
-                });
-            doc.display_rows()
-                .iter()
-                .filter_map(|row| crate::list_doc::adapter::to_list_item(list_id.get(), row))
-                .map(|item| {
-                    let prices = listings.get(&item.item_id).cloned().unwrap_or_default();
-                    (item, prices)
-                })
-                .collect()
-        } else {
-            snapshot
-        };
         let world_helper = use_context::<LocalWorldData>().and_then(|data| data.0.ok());
         let mut rows = filter_excluded(
             &snapshot,
@@ -1876,7 +2040,44 @@ pub fn ListViewSync() -> impl IntoView {
         if travel_policy.narrows() {
             rows = travel_policy.filter_rows(&rows);
         }
-        rows
+        CraftProjectState {
+            has_targets: false,
+            error: None,
+            options: Default::default(),
+            targets: Vec::new(),
+            steps: Vec::new(),
+            manual_rows: rows.clone(),
+            consolidated_rows: rows,
+            all_price_item_ids: snapshot.into_iter().map(|(i, _)| i.item_id).collect(),
+            summary: Default::default(),
+        }
+    });
+    // The cart shows explicit manual rows; Shop and CartEstimate consume the
+    // consolidated (manual + craft leaves) rows.
+    let build_rows = Signal::derive(move || craft_project.with(|p| p.manual_rows.clone()));
+    let shop_rows = Signal::derive(move || craft_project.with(|p| p.consolidated_rows.clone()));
+    let add_target_cb = Callback::new(move |(recipe_id, count): (i32, i64)| {
+        let result = apply_edit(handle, Edit::AddTarget { recipe_id, count });
+        mutation_feedback.set(match result {
+            Ok(()) => t_string!(i18n, inline_recipe_target_added).to_string(),
+            Err(error) => workspace_error(i18n, &error),
+        });
+    });
+    let set_target_count_cb = Callback::new(move |(recipe_id, count): (i32, i64)| {
+        if let Err(error) = apply_edit(handle, Edit::SetTargetCount { recipe_id, count }) {
+            mutation_feedback.set(workspace_error(i18n, &error));
+        }
+    });
+    let remove_target_cb = Callback::new(move |recipe_id: i32| {
+        if let Err(error) = apply_edit(handle, Edit::RemoveTarget(recipe_id)) {
+            mutation_feedback.set(workspace_error(i18n, &error));
+        }
+    });
+    let craft_targets_sig = Signal::derive(move || craft_project.with(|p| p.targets.clone()));
+    let craft_summary_sig =
+        Signal::derive(move || craft_project.with(|p| p.has_targets.then_some(p.summary.clone())));
+    let craft_badge = Signal::derive(move || {
+        craft_project.with(|p| (!p.targets.is_empty()).then(|| p.targets.len().to_string()))
     });
     let build_source = ListWorkspaceSource {
         list_id: list_id.into(),
@@ -1890,6 +2091,12 @@ pub fn ListViewSync() -> impl IntoView {
                 Err(error) => workspace_error(i18n, &error),
             });
         }),
+        add_target: add_target_cb,
+        craft_targets: craft_targets_sig,
+        craft_summary: craft_summary_sig,
+        set_target_count: set_target_count_cb,
+        remove_target: remove_target_cb,
+        open_craft: Callback::new(move |()| set_workspace_mode.run(WorkspaceMode::Craft)),
         undo: undo_action,
         redo: redo_action,
         history_revision: history_revision.into(),
@@ -1911,14 +2118,15 @@ pub fn ListViewSync() -> impl IntoView {
         toggle_recipe: Callback::new(move |()| set_recipe_modal_open.update(|open| *open = !*open)),
         rows: build_rows,
         estimate: Memo::new(move |_| {
-            let fetched = served_listings.with(|served| {
+            let mut fetched = served_listings.with(|served| {
                 served
                     .as_ref()
                     .filter(|prices| prices.list_id == list_id.get())
-                    .map(|prices| prices.listings.keys().copied().collect())
+                    .map(|prices| prices.listings.keys().copied().collect::<HashSet<i32>>())
                     .unwrap_or_default()
             });
-            build_rows.with(|rows| {
+            extra_craft_fetched.with(|extra| fetched.extend(extra.iter().copied()));
+            shop_rows.with(|rows| {
                 ultros_calc::list_estimate::estimate_list_items_with_coverage(rows, &fetched)
             })
         })
@@ -2028,6 +2236,100 @@ pub fn ListViewSync() -> impl IntoView {
             mutation_feedback.set(workspace_error(i18n, &error));
         }
     };
+    Effect::new(move |_| {
+        let id = list_id.get();
+        let ready = handle
+            .get()
+            .is_some_and(|doc| doc.list_id == id && doc.has_readable_content());
+        if ready
+            && workspace_mode.get() == WorkspaceMode::Craft
+            && !craft_project.with(|p| p.has_targets)
+        {
+            set_workspace_mode.run(WorkspaceMode::Build);
+        }
+    });
+    #[cfg(feature = "hydrate")]
+    {
+        let extra_timer: StoredValue<Option<gloo_timers::callback::Timeout>, LocalStorage> =
+            StoredValue::new_local(None);
+        let last_scope: StoredValue<Option<(i32, Option<AnySelector>)>> = StoredValue::new(None);
+        Effect::new(move |_| {
+            let id = list_id.get();
+            let scope = served_scope.get().or_else(|| list_scope.get());
+            let current_scope_key = (id, scope);
+            if last_scope.get_value() != Some(current_scope_key) {
+                last_scope.set_value(Some(current_scope_key));
+                extra_craft_listings.set(HashMap::new());
+                extra_craft_fetched.set(HashSet::new());
+                extra_craft_key.set(None);
+            }
+            if !craft_project.with(|p| p.has_targets) {
+                extra_timer.set_value(None);
+                return;
+            }
+            let Some(scope) = scope else {
+                return;
+            };
+            let Some(scope_name) = use_context::<LocalWorldData>()
+                .and_then(|d| d.0.ok())
+                .and_then(|h| h.lookup_selector(scope).map(|r| r.get_name().to_string()))
+            else {
+                return;
+            };
+            let served_keys: HashSet<i32> = served_listings
+                .with(|s| {
+                    s.as_ref()
+                        .filter(|p| p.list_id == id)
+                        .map(|p| p.listings.keys().copied().collect())
+                })
+                .unwrap_or_default();
+            let already_extra = extra_craft_fetched.get_untracked();
+            let missing: BTreeSet<i32> = craft_project.with(|p| {
+                p.all_price_item_ids
+                    .iter()
+                    .copied()
+                    .filter(|item_id| {
+                        !served_keys.contains(item_id) && !already_extra.contains(item_id)
+                    })
+                    .collect()
+            });
+            if missing.is_empty() {
+                return;
+            }
+            let req_key = (id, Some(scope), missing.clone());
+            if extra_craft_key.get_untracked().as_ref() == Some(&req_key) {
+                return;
+            }
+            extra_craft_key.set(Some(req_key));
+            let generation = id;
+            extra_timer.set_value(Some(gloo_timers::callback::Timeout::new(300, move || {
+                leptos::task::spawn_local(async move {
+                    let Ok(data) =
+                        crate::api::get_bulk_listings(scope_name.trim(), missing.iter().copied())
+                            .await
+                    else {
+                        return;
+                    };
+                    if list_id.try_get_untracked() != Some(generation) {
+                        return;
+                    }
+                    let _ = extra_craft_listings.try_update(|map| {
+                        for item_id in &missing {
+                            let rows = data
+                                .get(item_id)
+                                .map(|v| v.iter().map(|(l, _)| l.clone()).collect())
+                                .unwrap_or_default();
+                            map.insert(*item_id, rows);
+                        }
+                    });
+                    let _ = extra_craft_fetched.try_update(|set| {
+                        set.extend(missing.iter().copied());
+                    });
+                });
+            })));
+        });
+        on_cleanup(move || extra_timer.set_value(None));
+    }
     let rename = Callback::new(move |value: String| {
         let name = value.trim().to_string();
         if name.is_empty() {
@@ -2115,7 +2417,7 @@ pub fn ListViewSync() -> impl IntoView {
             .map(|meta| meta.name.clone())
             .or_else(|| server_list.as_ref().map(|list| list.name.clone()))
             .unwrap_or_default();
-        let rows = build_source.rows.get();
+        let rows = shop_rows.get();
         let mut result = ShopInput {
             title,
             price_feed: build_source.market.get(),
@@ -2284,8 +2586,10 @@ pub fn ListViewSync() -> impl IntoView {
                     {move || open_doc().map(|doc| view! { <crate::list_doc::recovery_ui::ListRecovery doc=doc /> })}
                 }
                 show_controls=Signal::derive(|| true)
-                shop=buying_view
-                set_shop=Callback::new(move |shop: bool| set_buying_view_param.set(shop.then_some(true)))
+                mode=workspace_mode
+                set_mode=set_workspace_mode
+                show_craft=Signal::derive(move || craft_project.with(|p| p.has_targets))
+                craft_badge=craft_badge
                 scope=list_scope
                 set_scope=Callback::new(set_list_scope)
                 can_set_scope=Signal::derive(move || can_admin.get() && open_doc().is_some())
@@ -2309,11 +2613,86 @@ pub fn ListViewSync() -> impl IntoView {
                     }}
                 </Show>
 
+                // Craft mounts on first open and stays mounted for fast switching.
+                <div class:hidden=move || workspace_mode.get() != WorkspaceMode::Craft>
+                    <Show when=move || craft_mounted.get()>
+                        <ListCraft
+                            project=craft_project.into()
+                            can_write=can_write
+                            on_set_target_count=set_target_count_cb
+                            on_add_target_completed=Callback::new(move |(recipe_id, delta): (i32, i64)| {
+                                if let Err(error) = apply_edit(handle, Edit::AddTargetCompleted { recipe_id, delta }) {
+                                    mutation_feedback.set(workspace_error(i18n, &error));
+                                }
+                            })
+                            on_set_target_completed=Callback::new(move |(recipe_id, completed): (i32, i64)| {
+                                if let Err(error) = apply_edit(handle, Edit::SetTargetCompleted { recipe_id, completed }) {
+                                    mutation_feedback.set(workspace_error(i18n, &error));
+                                }
+                            })
+                            on_remove_target=remove_target_cb
+                            on_set_craft_choice=Callback::new(move |(item_id, mode, recipe_id)| {
+                                if let Err(error) = apply_edit(handle, Edit::SetCraftChoice { item_id, mode, recipe_id }) {
+                                    mutation_feedback.set(workspace_error(i18n, &error));
+                                }
+                            })
+                            on_set_on_hand=Callback::new(move |(item_id, on_hand)| {
+                                if let Err(error) = apply_edit(handle, Edit::SetIntermediateOnHand { item_id, on_hand }) {
+                                    mutation_feedback.set(workspace_error(i18n, &error));
+                                }
+                            })
+                            on_add_step_crafted=Callback::new(move |(item_id, delta)| {
+                                if let Err(error) = apply_edit(handle, Edit::AddIntermediateCrafted { item_id, delta }) {
+                                    mutation_feedback.set(workspace_error(i18n, &error));
+                                }
+                            })
+                            on_set_step_crafted=Callback::new(move |(item_id, crafted)| {
+                                if let Err(error) = apply_edit(handle, Edit::SetIntermediateCrafted { item_id, crafted }) {
+                                    mutation_feedback.set(workspace_error(i18n, &error));
+                                }
+                            })
+                            on_set_options=Callback::new(move |(exclude_crystals, include_vendors)| {
+                                if let Err(error) = apply_edit(handle, Edit::SetCraftOptions { exclude_crystals, include_vendors }) {
+                                    mutation_feedback.set(workspace_error(i18n, &error));
+                                }
+                            })
+                            on_optimize=Callback::new(move |()| {
+                                if !view_caps.with_untracked(|c| c.can_write) {
+                                    return;
+                                }
+                                let Some(doc) = handle.get_untracked().filter(|d| d.list_id == list_id.get_untracked()) else {
+                                    return;
+                                };
+                                let listings = filtered_listings.get_untracked();
+                                match compute_optimize_plan(
+                                    &doc.display_targets(),
+                                    &doc.display_craft_choices(),
+                                    doc.display_craft_options(),
+                                    &listings,
+                                ) {
+                                    Ok(plan) => {
+                                        let updates = apply_optimize_choices(&doc.display_craft_choices(), &plan);
+                                        if let Err(error) = apply_edit(handle, Edit::ApplyOptimizedChoices(updates)) {
+                                            mutation_feedback.set(workspace_error(i18n, &error));
+                                        }
+                                    }
+                                    Err(err) => mutation_feedback.set(err),
+                                }
+                            })
+                            on_go_shop=Callback::new(move |()| set_workspace_mode.run(WorkspaceMode::Shop))
+                            on_open_add_recipe=Callback::new(move |()| {
+                                set_recipe_modal_open.set(true);
+                                set_workspace_mode.run(WorkspaceMode::Build);
+                            })
+                        />
+                    </Show>
+                </div>
+
                 // Shop mounts the first time it is opened and then stays mounted
                 // but hidden, so returning to Build keeps the chosen trip, its
                 // recorded stacks and an open companion. The first server render
                 // is unchanged: without `?buy=true` nothing is mounted yet.
-                <div class:hidden=move || !buying_view.get()>
+                <div class:hidden=move || workspace_mode.get() != WorkspaceMode::Shop>
                     <Show when=move || shop_mounted.get()>
                         <Suspense fallback=move || view! { <Loading /> }>
                             <crate::components::list_shop::ListShop input=shop_input
@@ -2322,8 +2701,18 @@ pub fn ListViewSync() -> impl IntoView {
                                     if let Ok(id) = key.parse::<i32>()
                                         && let Some(key) = crate::list_doc::adapter::key_of(id)
                                         && let Some(handle) = handle.get_untracked()
-                                        && let Err(error) = handle.apply(Edit::RecordPurchase { key, quantity: i64::from(delta.max(0)) })
-                                    { mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string()))); }
+                                    {
+                                        let effective_need = craft_project.with_untracked(|p| {
+                                            consolidated_effective_need(p, &key)
+                                        });
+                                        if let Err(error) = handle.apply(Edit::RecordPurchase {
+                                            key,
+                                            quantity: i64::from(delta.max(0)),
+                                            effective_need,
+                                        }) {
+                                            mutation_feedback.set(workspace_error(i18n, &AppError::ListDoc(error.to_string())));
+                                        }
+                                    }
                                 })
                                 on_undo=Callback::new(move |()| {
                                     if let Some(handle) = handle.get_untracked()
@@ -2357,7 +2746,7 @@ pub fn ListViewSync() -> impl IntoView {
                     </Modal>
                 </Show>
 
-                <div class:hidden=move || buying_view.get()>
+                <div class:hidden=move || workspace_mode.get() != WorkspaceMode::Build>
                     <Transition fallback=move || {
                         view! {
                             <section class="panel rounded-lg overflow-hidden">

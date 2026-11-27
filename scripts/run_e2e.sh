@@ -449,6 +449,12 @@ case " ${LEPTOS_FEATURES:-} " in
         if [ "$account_ui_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$account_ui_exit"
         fi
+        log "running multi-recipe crafting projects E2E"
+        craft_project_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:list-craft-project ) || craft_project_exit=$?
+        if [ "$craft_project_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$craft_project_exit"
+        fi
         log "running browser-push smoke (test-auth feature detected)"
         push_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:push ) || push_exit=$?

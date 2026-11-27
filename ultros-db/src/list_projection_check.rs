@@ -95,6 +95,16 @@ async fn begin_snapshot(db: &DatabaseConnection) -> Result<DatabaseTransaction, 
 /// All selected lists share one PostgreSQL MVCC snapshot. READ ONLY is enforced
 /// by the database, and no migration/permission/bootstrap helper is called.
 pub async fn check(db: &DatabaseConnection, selection: Selection) -> Result<Report, DbErr> {
+    check_with_catalog(db, selection, None).await
+}
+
+/// Same snapshot consistency check, using `catalog` to project Schema v2
+/// crafting targets into consolidated `list_item` rows.
+pub async fn check_with_catalog(
+    db: &DatabaseConnection,
+    selection: Selection,
+    catalog: Option<&dyn crate::list_doc::RecipeCatalog>,
+) -> Result<Report, DbErr> {
     let txn = begin_snapshot(db).await?;
     let ids = select_ids(&txn, selection).await?;
     let mut inputs = Vec::with_capacity(ids.len());
@@ -107,7 +117,10 @@ pub async fn check(db: &DatabaseConnection, selection: Selection) -> Result<Repo
         format_version: 1,
         checked_at: chrono::Utc::now(),
         selected_ids: ids.into_iter().collect(),
-        results: inputs.into_iter().map(compare).collect(),
+        results: inputs
+            .into_iter()
+            .map(|input| compare_with_catalog(input, catalog))
+            .collect(),
     })
 }
 
@@ -134,7 +147,15 @@ fn row_json(row: &RowSnapshot) -> Value {
         "quantity": row.need, "acquired": row.acquired, "target_price": row.target})
 }
 
+#[cfg(test)]
 fn compare(input: Inputs) -> ListResult {
+    compare_with_catalog(input, None)
+}
+
+fn compare_with_catalog(
+    input: Inputs,
+    catalog: Option<&dyn crate::list_doc::RecipeCatalog>,
+) -> ListResult {
     let mut result = ListResult {
         list_id: input.id,
         status: Status::Equal,
@@ -176,7 +197,7 @@ fn compare(input: Inputs) -> ListResult {
                 .push(json!({"kind": "duplicate_key", "row": row_json(&row)}));
         }
     }
-    for mut expected in document.rows() {
+    for mut expected in crate::list_doc::projected_rows(&document, catalog) {
         // These are the very helpers used by the writer, including its legacy
         // NULL defaults above. Target prices deliberately remain signed i64.
         expected.need = i64::from(clamp_i32(expected.need));

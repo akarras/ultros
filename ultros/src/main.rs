@@ -93,6 +93,69 @@ struct BotConfig {
     discord_token: String,
 }
 
+/// Deterministic recipe lookup backed by embedded game sheets so `ultros-db`
+/// can project Schema v2 crafting lists without depending on `xiv-gen-db`.
+#[derive(Debug)]
+struct XivRecipeCatalog;
+
+impl XivRecipeCatalog {
+    fn convert(recipe: &xiv_gen::Recipe) -> ultros_calc::recipe_planner::Recipe {
+        ultros_calc::recipe_planner::Recipe {
+            id: recipe.key_id.0,
+            output: recipe.item_result,
+            yield_amount: i64::from(recipe.amount_result.max(1)),
+            ingredients: ultros_crafting::cost::IngredientsIter::new(recipe)
+                .filter(|(id, amt)| id.0 > 0 && *amt > 0)
+                .map(|(id, amt)| (id.0, i64::from(amt)))
+                .collect(),
+        }
+    }
+
+    fn default_recipe_ids() -> &'static std::collections::HashMap<i32, i32> {
+        static DEFAULTS: std::sync::OnceLock<std::collections::HashMap<i32, i32>> =
+            std::sync::OnceLock::new();
+        DEFAULTS.get_or_init(|| {
+            let mut map = std::collections::HashMap::<i32, i32>::new();
+            for (&recipe_id, recipe) in &xiv_gen_db::data().recipes {
+                if recipe.item_result <= 0 {
+                    continue;
+                }
+                map.entry(recipe.item_result)
+                    .and_modify(|existing| {
+                        if recipe_id.0 < *existing {
+                            *existing = recipe_id.0;
+                        }
+                    })
+                    .or_insert(recipe_id.0);
+            }
+            map
+        })
+    }
+}
+
+impl ultros_db::list_doc::RecipeCatalog for XivRecipeCatalog {
+    fn recipe(&self, recipe_id: i32) -> Option<ultros_calc::recipe_planner::Recipe> {
+        xiv_gen_db::data()
+            .recipes
+            .get(&xiv_gen::RecipeId(recipe_id))
+            .map(Self::convert)
+    }
+
+    fn default_recipe_for_item(&self, item_id: i32) -> Option<ultros_calc::recipe_planner::Recipe> {
+        let recipe_id = Self::default_recipe_ids().get(&item_id).copied()?;
+        self.recipe(recipe_id)
+    }
+
+    fn is_crystal(&self, item_id: i32) -> bool {
+        xiv_gen_db::data()
+            .items
+            .get(&xiv_gen::ItemId(item_id))
+            .is_some_and(|item| {
+                item.item_search_category == ultros_crafting::cost::CRYSTAL_SEARCH_CATEGORY
+            })
+    }
+}
+
 /// Stable Postgres advisory-lock id for the ClickHouse rollup scheduler.
 /// Session locks are released automatically when a process or connection
 /// dies, so another replica takes over without two replicas scanning raw
@@ -796,6 +859,7 @@ async fn main() -> Result<()> {
 
     info!("Connecting DB");
     let db = UltrosDb::connect().await?;
+    let db = db.with_recipe_catalog(Arc::new(XivRecipeCatalog));
     let (senders, receivers) = create_event_busses();
     let list_sync = lists::ListSync::new(db.clone(), senders.clone());
     let ch_client = ultros_clickhouse::ClickHouseClient::from_env();

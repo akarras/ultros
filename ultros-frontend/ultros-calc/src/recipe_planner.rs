@@ -28,6 +28,585 @@ impl Material {
     }
 }
 
+/// Desired output count for a single root recipe in a multi-recipe project.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
+pub struct TargetDemand {
+    pub recipe_id: i32,
+    pub count: i64,
+}
+
+/// Bounds that keep cyclic, deep, or oversized crafting DAGs predictable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
+pub struct ExpandLimits {
+    pub max_depth: usize,
+    pub max_nodes: usize,
+    pub max_targets: usize,
+}
+
+impl ExpandLimits {
+    pub const SINGLE_RECIPE: Self = Self {
+        max_depth: 12,
+        max_nodes: 128,
+        max_targets: 1,
+    };
+}
+
+impl Default for ExpandLimits {
+    fn default() -> Self {
+        Self {
+            max_depth: 12,
+            max_nodes: 512,
+            max_targets: 64,
+        }
+    }
+}
+
+/// Attribution showing how many units of an intermediate or material are
+/// consumed directly by a root target or parent intermediate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
+pub struct StepContribution {
+    pub target_recipe_id: i32,
+    pub target_item_id: i32,
+    pub units_used: i64,
+}
+
+/// Expanded multi-recipe project broken into targets, bottom-up sub-crafts,
+/// and consolidated buyable leaf materials.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
+pub struct Expansion {
+    /// Buyable leaves in deterministic `item` order (`recipe.is_none()`).
+    pub materials: Vec<Material>,
+    /// Crafted intermediates in bottom-up execution order (deepest sub-crafts first).
+    pub steps: Vec<Material>,
+    /// Root targets (`depth = 0`, `crafts` and `surplus` computed per target).
+    pub targets: Vec<Material>,
+    /// Maps each intermediate or leaf item to its direct consumers in deterministic order.
+    pub consumers: BTreeMap<i32, Vec<StepContribution>>,
+}
+
+/// Readiness of a crafting step or root target against acquired leaves,
+/// on-hand stock, and completed child sub-crafts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepReadiness {
+    Done,
+    Ready { craftable_now: i64 },
+    NeedMaterials { missing_kinds: usize },
+    Buying,
+}
+
+/// Result of bottom-up Craft-vs-Buy optimization over intermediate sub-crafts.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
+pub struct OptimizePlan {
+    /// Intermediate `item_id` -> `Some(recipe_id)` for Craft, `None` for Buy.
+    pub choices: BTreeMap<i32, Option<i32>>,
+    pub total_cost: i64,
+    pub total_missing: i64,
+    pub craft_all_cost: i64,
+    pub craft_all_missing: i64,
+    pub buy_all_cost: i64,
+    pub buy_all_missing: i64,
+    pub savings_vs_current: i64,
+    pub flipped_items: Vec<i32>,
+}
+
+/// Summary comparing consolidated crafting shopping cost vs buying finished targets.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "worker", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProjectCostSummary {
+    pub craft_shopping_cost: Option<i64>,
+    pub craft_missing_units: i64,
+    pub buy_finished_cost: Option<i64>,
+    pub buy_finished_missing_units: i64,
+    pub buy_finished_priced_targets: usize,
+    pub target_count: usize,
+    /// Positive means crafting saves gil over buying finished items.
+    pub savings_vs_buying_finished: Option<i64>,
+}
+
+/// Expand multiple root recipes into consolidated targets, bottom-up sub-craft
+/// steps, and deduplicated leaf materials.
+///
+/// Batch yield rounding (`ceil((needed - owned) / yield)`) and `owned`
+/// (`on_hand`) deductions happen once per shared intermediate node across all
+/// targets rather than separately per root recipe.
+pub fn expand_many(
+    targets: &[TargetDemand],
+    recipes: &BTreeMap<i32, Recipe>,
+    choices: &BTreeMap<i32, i32>,
+    owned: &BTreeMap<i32, i64>,
+    excluded: &BTreeSet<i32>,
+    limits: ExpandLimits,
+) -> Result<Expansion, String> {
+    let active_targets: BTreeMap<i32, i64> = {
+        let mut combined = BTreeMap::new();
+        for target in targets {
+            if target.count <= 0 {
+                continue;
+            }
+            let entry = combined.entry(target.recipe_id).or_insert(0_i64);
+            *entry = entry.saturating_add(target.count).clamp(1, 9999);
+        }
+        combined
+    };
+    if active_targets.len() > limits.max_targets {
+        return Err(
+            "This crafting project has too many targets. Remove some targets to simplify it."
+                .into(),
+        );
+    }
+    if active_targets.is_empty() {
+        return Ok(Expansion::default());
+    }
+
+    // Validate root target recipes upfront and seed depth-1 demand pools.
+    let mut root_recipes = Vec::with_capacity(active_targets.len());
+    let mut root_items = BTreeSet::new();
+    let mut root_demands: BTreeMap<i32, i64> = BTreeMap::new();
+    let mut consumers_map: BTreeMap<i32, BTreeMap<(i32, i32), i64>> = BTreeMap::new();
+    let mut target_materials = Vec::with_capacity(active_targets.len());
+
+    for (&recipe_id, &count) in &active_targets {
+        let recipe = recipes.get(&recipe_id).ok_or("Recipe unavailable")?;
+        if recipe.yield_amount <= 0 {
+            return Err("Invalid recipe choice".into());
+        }
+        root_items.insert(recipe.output);
+        root_recipes.push((recipe_id, recipe, count));
+    }
+
+    // Walk the intermediate DAG to check bounds, cycles (including edges back
+    // into any root output), and establish DFS postorder for parent-first vs
+    // bottom-up evaluation.
+    struct Walk<'a> {
+        recipes: &'a BTreeMap<i32, Recipe>,
+        choices: &'a BTreeMap<i32, i32>,
+        excluded: &'a BTreeSet<i32>,
+        limits: ExpandLimits,
+        active: BTreeSet<i32>,
+        seen: BTreeSet<i32>,
+        order: Vec<(i32, usize)>,
+    }
+    impl Walk<'_> {
+        fn visit(&mut self, item: i32, depth: usize) -> Result<(), String> {
+            if self.active.contains(&item) {
+                return Err(
+                    "These craft choices form a cycle. Choose Buy for one of the ingredients."
+                        .into(),
+                );
+            }
+            if self.seen.contains(&item) {
+                return Ok(());
+            }
+            if depth > self.limits.max_depth || self.seen.len() >= self.limits.max_nodes {
+                return Err(
+                    "This crafting plan is too large. Buy some intermediates to simplify it."
+                        .into(),
+                );
+            }
+            self.active.insert(item);
+            if let Some(id) = self.choices.get(&item) {
+                let recipe = self.recipes.get(id).ok_or("Recipe unavailable")?;
+                if recipe.output != item || recipe.yield_amount <= 0 {
+                    return Err("Invalid recipe choice".into());
+                }
+                for (child, amount) in &recipe.ingredients {
+                    if *amount > 0 && !self.excluded.contains(child) {
+                        self.visit(*child, depth + 1)?;
+                    }
+                }
+            }
+            self.active.remove(&item);
+            self.seen.insert(item);
+            self.order.push((item, depth));
+            Ok(())
+        }
+    }
+
+    for (recipe_id, recipe, count) in &root_recipes {
+        let crafts = (count + recipe.yield_amount - 1) / recipe.yield_amount;
+        let surplus = crafts
+            .checked_mul(recipe.yield_amount)
+            .and_then(|total| total.checked_sub(*count))
+            .ok_or("Quantity too large")?;
+        target_materials.push(Material {
+            item: recipe.output,
+            needed: *count,
+            owned: 0,
+            crafts,
+            surplus,
+            depth: 0,
+            recipe: Some(*recipe_id),
+        });
+        for (child, amount) in &recipe.ingredients {
+            if *amount <= 0 || excluded.contains(child) {
+                continue;
+            }
+            if root_items.contains(child) && choices.contains_key(child) {
+                // Allow a root target item to also appear as an intermediate,
+                // as long as expanding that intermediate cannot loop back to
+                // the same root recipe output (checked in Walk below).
+            }
+            let added = crafts.checked_mul(*amount).ok_or("Quantity too large")?;
+            let demand = root_demands.entry(*child).or_insert(0_i64);
+            *demand = demand
+                .checked_add(added)
+                .filter(|n| *n <= 1_000_000_000)
+                .ok_or("Quantity too large")?;
+            *consumers_map
+                .entry(*child)
+                .or_default()
+                .entry((*recipe_id, recipe.output))
+                .or_insert(0_i64) += added;
+        }
+    }
+
+    let mut walk = Walk {
+        recipes,
+        choices,
+        excluded,
+        limits,
+        active: BTreeSet::new(),
+        seen: BTreeSet::new(),
+        order: Vec::new(),
+    };
+    for &child in root_demands.keys() {
+        walk.visit(child, 1)?;
+    }
+
+    let mut demands = root_demands;
+    let mut node_map: BTreeMap<i32, Material> = BTreeMap::new();
+    let mut postorder_items = Vec::with_capacity(walk.order.len());
+    for &(item, _) in &walk.order {
+        postorder_items.push(item);
+    }
+
+    for (item, depth) in walk.order.into_iter().rev() {
+        let needed = demands.get(&item).copied().unwrap_or(0);
+        if needed == 0 {
+            continue;
+        }
+        let owned_amt = owned.get(&item).copied().unwrap_or(0).clamp(0, needed);
+        let mut line = Material {
+            item,
+            needed,
+            owned: owned_amt,
+            depth,
+            ..Default::default()
+        };
+        if let Some(id) = choices.get(&item) {
+            let recipe = recipes.get(id).ok_or("Recipe unavailable")?;
+            if recipe.output != item || recipe.yield_amount <= 0 {
+                return Err("Invalid recipe choice".into());
+            }
+            let remaining = needed - owned_amt;
+            let crafts = if remaining > 0 {
+                (remaining + recipe.yield_amount - 1) / recipe.yield_amount
+            } else {
+                0
+            };
+            line.recipe = Some(*id);
+            line.crafts = crafts;
+            line.surplus = crafts
+                .checked_mul(recipe.yield_amount)
+                .and_then(|total| total.checked_sub(remaining))
+                .ok_or("Quantity too large")?;
+            for (child, amount) in &recipe.ingredients {
+                if *amount <= 0 || excluded.contains(child) {
+                    continue;
+                }
+                if *child == item {
+                    return Err(
+                        "These craft choices form a cycle. Choose Buy for one of the ingredients."
+                            .into(),
+                    );
+                }
+                let added = crafts.checked_mul(*amount).ok_or("Quantity too large")?;
+                if added > 0 {
+                    let demand = demands.entry(*child).or_insert(0_i64);
+                    *demand = demand
+                        .checked_add(added)
+                        .filter(|n| *n <= 1_000_000_000)
+                        .ok_or("Quantity too large")?;
+                    *consumers_map
+                        .entry(*child)
+                        .or_default()
+                        .entry((*id, item))
+                        .or_insert(0_i64) += added;
+                }
+            }
+        }
+        node_map.insert(item, line);
+    }
+
+    // Bottom-up topological order for crafted intermediates (dependencies first).
+    let mut steps = Vec::new();
+    for item in postorder_items {
+        if let Some(line) = node_map.get(&item)
+            && line.recipe.is_some()
+        {
+            steps.push(line.clone());
+        }
+    }
+
+    // Deterministic `BTreeMap` iteration guarantees sorted buyable leaves.
+    let materials: Vec<Material> = node_map
+        .into_values()
+        .filter(|line| line.recipe.is_none() && line.remaining() > 0)
+        .collect();
+
+    let consumers = consumers_map
+        .into_iter()
+        .map(|(item, parents)| {
+            let list = parents
+                .into_iter()
+                .map(
+                    |((target_recipe_id, target_item_id), units_used)| StepContribution {
+                        target_recipe_id,
+                        target_item_id,
+                        units_used,
+                    },
+                )
+                .collect();
+            (item, list)
+        })
+        .collect();
+
+    Ok(Expansion {
+        materials,
+        steps,
+        targets: target_materials,
+        consumers,
+    })
+}
+
+/// Evaluate purchase readiness for a target or intermediate crafting step.
+///
+/// `acquired` maps buyable item ID -> units already bought/owned in Shop.
+/// `crafted_units` maps intermediate item ID -> yield units completed (or `crafted * yield`).
+/// `on_hand` maps intermediate item ID -> pre-owned intermediate stock before crafting.
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_step_readiness(
+    needed: i64,
+    completed: i64,
+    crafts: i64,
+    yield_amount: i64,
+    recipe: &Recipe,
+    excluded: &BTreeSet<i32>,
+    crafted_choices: &BTreeMap<i32, bool>,
+    acquired: &BTreeMap<i32, i64>,
+    crafted_units: &BTreeMap<i32, i64>,
+    on_hand: &BTreeMap<i32, i64>,
+) -> StepReadiness {
+    if needed <= 0 || completed >= needed {
+        return StepReadiness::Done;
+    }
+    if crafts <= 0 {
+        return StepReadiness::Done;
+    }
+    let yield_amount = yield_amount.max(1);
+    let remaining_crafts = ((needed - completed).max(0) + yield_amount - 1) / yield_amount;
+    let mut craftable_now = remaining_crafts;
+    let mut missing_kinds = 0_usize;
+    for &(child, per_craft) in &recipe.ingredients {
+        if per_craft <= 0 || excluded.contains(&child) {
+            continue;
+        }
+        let available = if crafted_choices.get(&child).copied().unwrap_or(false) {
+            on_hand.get(&child).copied().unwrap_or(0).max(0)
+                + crafted_units.get(&child).copied().unwrap_or(0).max(0)
+        } else {
+            on_hand.get(&child).copied().unwrap_or(0).max(0)
+                + acquired.get(&child).copied().unwrap_or(0).max(0)
+        };
+        let can_cover = available / per_craft;
+        if can_cover == 0 {
+            missing_kinds += 1;
+        }
+        craftable_now = craftable_now.min(can_cover);
+    }
+    if missing_kinds > 0 || craftable_now == 0 {
+        StepReadiness::NeedMaterials { missing_kinds }
+    } else {
+        StepReadiness::Ready { craftable_now }
+    }
+}
+
+/// Optimize `Craft` vs `Buy` decisions across all intermediate sub-crafts using
+/// whole-stack market board and optional NPC vendor pricing.
+#[allow(clippy::too_many_arguments)]
+pub fn optimize_craft_choices(
+    targets: &[TargetDemand],
+    recipes: &BTreeMap<i32, Recipe>,
+    default_recipes: &BTreeMap<i32, i32>,
+    current_choices: &BTreeMap<i32, Option<i32>>,
+    owned: &BTreeMap<i32, i64>,
+    excluded: &BTreeSet<i32>,
+    market: &BTreeMap<i32, Vec<Offer>>,
+    vendors: &BTreeMap<i32, i64>,
+    limits: ExpandLimits,
+) -> Result<OptimizePlan, String> {
+    // Resolve every intermediate's preferred craft recipe ID (explicit choice
+    // if `Some`, otherwise `default_recipes`). Root target outputs themselves are
+    // not candidates unless used as an intermediate.
+    let mut candidate_recipe: BTreeMap<i32, i32> = default_recipes.clone();
+    for (&item_id, choice) in current_choices {
+        if let Some(recipe_id) = choice {
+            candidate_recipe.insert(item_id, *recipe_id);
+        }
+    }
+
+    let baseline_craft_exp =
+        expand_many(targets, recipes, &candidate_recipe, owned, excluded, limits)?;
+
+    let mut purchase_cache: BTreeMap<(i32, i64), (i64, i64)> = BTreeMap::new();
+    let mut eval_cost = |choices_map: &BTreeMap<i32, i32>| -> Result<(i64, i64), String> {
+        let exp = expand_many(targets, recipes, choices_map, owned, excluded, limits)?;
+        let mut total_missing = 0_i64;
+        let mut total_cost = 0_i64;
+        for m in &exp.materials {
+            let need = m.remaining();
+            if need <= 0 {
+                continue;
+            }
+            let (missing, cost) = *purchase_cache.entry((m.item, need)).or_insert_with(|| {
+                let offers = market.get(&m.item).map(Vec::as_slice).unwrap_or(&[]);
+                let p = purchase(need, offers, vendors.get(&m.item).copied());
+                (p.missing(), p.cost)
+            });
+            total_missing = total_missing.saturating_add(missing);
+            total_cost = total_cost.saturating_add(cost);
+        }
+        Ok((total_missing, total_cost))
+    };
+
+    let (craft_all_missing, craft_all_cost) = eval_cost(&candidate_recipe)?;
+    let (buy_all_missing, buy_all_cost) = eval_cost(&BTreeMap::new())?;
+
+    let mut current_eval_choices = candidate_recipe.clone();
+    for (&item_id, choice) in current_choices {
+        if choice.is_none() {
+            current_eval_choices.remove(&item_id);
+        }
+    }
+    let (current_missing, current_cost) = eval_cost(&current_eval_choices)?;
+
+    // Work bottom-up across the full-craft dependency list (deepest steps first).
+    // When there are <= 64 intermediates (every normal FFXIV project), compare
+    // exact project totals so batch yield rounding and shared-node interactions
+    // are priced accurately; if a step has no remaining demand (covered by
+    // on_hand or pruned by an earlier parent switch), keep Craft cleanly.
+    let mut working = candidate_recipe.clone();
+    for step in baseline_craft_exp.steps.iter().take(64) {
+        let Some(&step_recipe) = candidate_recipe.get(&step.item) else {
+            continue;
+        };
+        let mut with_craft = working.clone();
+        with_craft.insert(step.item, step_recipe);
+        let mut with_buy = working.clone();
+        with_buy.remove(&step.item);
+
+        let craft_score = eval_cost(&with_craft)?;
+        let buy_score = eval_cost(&with_buy)?;
+
+        // Prefer Craft on exact ties; pick Buy only when buying is strictly
+        // better (fewer missing units, or equal missing units and strictly cheaper).
+        if (buy_score.0, buy_score.1) < (craft_score.0, craft_score.1) {
+            working = with_buy;
+        } else {
+            working = with_craft;
+        }
+    }
+
+    let (total_missing, total_cost) = eval_cost(&working)?;
+    let savings_vs_current = if total_missing <= current_missing && current_cost > total_cost {
+        current_cost.saturating_sub(total_cost)
+    } else {
+        0
+    };
+
+    let mut result_choices = BTreeMap::new();
+    let mut flipped_items = Vec::new();
+    for step in &baseline_craft_exp.steps {
+        let chosen = working.get(&step.item).copied();
+        let previous = current_choices
+            .get(&step.item)
+            .copied()
+            .unwrap_or_else(|| candidate_recipe.get(&step.item).copied());
+        if chosen.is_some() != previous.is_some() {
+            flipped_items.push(step.item);
+        }
+        result_choices.insert(step.item, chosen);
+    }
+
+    Ok(OptimizePlan {
+        choices: result_choices,
+        total_cost,
+        total_missing,
+        craft_all_cost,
+        craft_all_missing,
+        buy_all_cost,
+        buy_all_missing,
+        savings_vs_current,
+        flipped_items,
+    })
+}
+
+/// Compare consolidated material shopping cost against buying each target item finished.
+pub fn project_cost_summary(
+    targets: &[TargetDemand],
+    recipes: &BTreeMap<i32, Recipe>,
+    craft_shopping_cost: Option<i64>,
+    craft_missing_units: i64,
+    market: &BTreeMap<i32, Vec<Offer>>,
+    vendors: &BTreeMap<i32, i64>,
+) -> ProjectCostSummary {
+    let mut target_count = 0_usize;
+    let mut priced_targets = 0_usize;
+    let mut buy_finished_cost = 0_i64;
+    let mut buy_finished_missing = 0_i64;
+
+    for target in targets {
+        if target.count <= 0 {
+            continue;
+        }
+        let Some(recipe) = recipes.get(&target.recipe_id) else {
+            continue;
+        };
+        target_count += 1;
+        let offers = market.get(&recipe.output).map(Vec::as_slice).unwrap_or(&[]);
+        let p = purchase(target.count, offers, vendors.get(&recipe.output).copied());
+        if p.missing() == 0 {
+            priced_targets += 1;
+        } else {
+            buy_finished_missing = buy_finished_missing.saturating_add(p.missing());
+        }
+        buy_finished_cost = buy_finished_cost.saturating_add(p.cost);
+    }
+
+    let finished_opt = (target_count > 0 && priced_targets > 0).then_some(buy_finished_cost);
+    let savings_vs_buying_finished = match (craft_shopping_cost, finished_opt) {
+        (Some(craft), Some(finished)) if craft_missing_units == 0 && buy_finished_missing == 0 => {
+            Some(finished.saturating_sub(craft))
+        }
+        _ => None,
+    };
+
+    ProjectCostSummary {
+        craft_shopping_cost,
+        craft_missing_units,
+        buy_finished_cost: finished_opt,
+        buy_finished_missing_units: buy_finished_missing,
+        buy_finished_priced_targets: priced_targets,
+        target_count,
+        savings_vs_buying_finished,
+    }
+}
+
 /// Parent-first order means every demand for a shared intermediate is known
 /// before rounding its batch count. Reverse this order for crafting instructions.
 pub fn expand(
@@ -1654,5 +2233,240 @@ mod tests {
             saving_line(&plans, Some(2), 2),
             Some(SavingLine::Basis { alone: false })
         );
+    }
+
+    #[test]
+    fn expand_many_consolidates_shared_intermediates_before_yield_rounding() {
+        // Both Sword (recipe 1, item 100) and Shield (recipe 2, item 101)
+        // need 1x Iron Ingot (item 200, yield 2 per craft, needs 3x Ore 300).
+        // Combined intermediate demand = 2 ingots => ONLY 1 ingot craft (3 ores),
+        // NOT 2 separate rounds totaling 6 ores!
+        let recipes = BTreeMap::from([
+            (1, recipe(1, 100, 1, &[(200, 1), (400, 1)])),
+            (2, recipe(2, 101, 1, &[(200, 1), (401, 2)])),
+            (3, recipe(3, 200, 2, &[(300, 3)])),
+        ]);
+        let choices = BTreeMap::from([(200, 3)]);
+        let exp = expand_many(
+            &[
+                TargetDemand {
+                    recipe_id: 1,
+                    count: 1,
+                },
+                TargetDemand {
+                    recipe_id: 2,
+                    count: 1,
+                },
+            ],
+            &recipes,
+            &choices,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            ExpandLimits::default(),
+        )
+        .unwrap();
+
+        assert_eq!(exp.targets.len(), 2);
+        assert_eq!(exp.steps.len(), 1);
+        assert_eq!(exp.steps[0].item, 200);
+        assert_eq!(exp.steps[0].needed, 2);
+        assert_eq!(exp.steps[0].crafts, 1);
+        assert_eq!(exp.steps[0].surplus, 0);
+
+        let mat = |id| exp.materials.iter().find(|m| m.item == id).unwrap().needed;
+        assert_eq!(mat(300), 3, "shared ingot batched to 1 craft of 3 ores");
+        assert_eq!(mat(400), 1);
+        assert_eq!(mat(401), 2);
+        assert_eq!(exp.consumers[&200].len(), 2);
+    }
+
+    #[test]
+    fn expand_many_orders_steps_bottom_up_deducts_on_hand_and_prunes_buy() {
+        // Target 10 -> Step A (20, yield 1 -> 2x Step B) -> Step B (30, yield 1 -> 4x Ore 40)
+        // On hand: 1x Step B -> only 1 craft of Step B needed -> 4x Ore.
+        let recipes = BTreeMap::from([
+            (1, recipe(1, 10, 1, &[(20, 1), (58, 2)])),
+            (2, recipe(2, 20, 1, &[(30, 2)])),
+            (3, recipe(3, 30, 1, &[(40, 4)])),
+        ]);
+        let choices = BTreeMap::from([(20, 2), (30, 3)]);
+        let exp = expand_many(
+            &[TargetDemand {
+                recipe_id: 1,
+                count: 1,
+            }],
+            &recipes,
+            &choices,
+            &BTreeMap::from([(30, 1)]),
+            &BTreeSet::from([58]),
+            ExpandLimits::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            exp.steps.iter().map(|s| s.item).collect::<Vec<_>>(),
+            vec![30, 20],
+            "deepest dependency (30) must appear before parent step (20)"
+        );
+        assert_eq!(exp.steps[0].owned, 1);
+        assert_eq!(exp.steps[0].crafts, 1);
+        assert_eq!(exp.materials.len(), 1);
+        assert_eq!((exp.materials[0].item, exp.materials[0].needed), (40, 4));
+
+        // Flip 20 to Buy (remove from choices): Step 30 & Ore 40 disappear, item 20 becomes a leaf.
+        let exp_buy = expand_many(
+            &[TargetDemand {
+                recipe_id: 1,
+                count: 1,
+            }],
+            &recipes,
+            &BTreeMap::new(),
+            &BTreeMap::from([(30, 1)]),
+            &BTreeSet::from([58]),
+            ExpandLimits::default(),
+        )
+        .unwrap();
+        assert!(exp_buy.steps.is_empty());
+        assert_eq!(exp_buy.materials.len(), 1);
+        assert_eq!(
+            (exp_buy.materials[0].item, exp_buy.materials[0].needed),
+            (20, 1)
+        );
+    }
+
+    #[test]
+    fn expand_many_detects_cycles_and_enforces_limits() {
+        let cyclic = BTreeMap::from([
+            (1, recipe(1, 10, 1, &[(20, 1)])),
+            (2, recipe(2, 20, 1, &[(10, 1)])),
+        ]);
+        let err = expand_many(
+            &[TargetDemand {
+                recipe_id: 1,
+                count: 1,
+            }],
+            &cyclic,
+            &BTreeMap::from([(10, 1), (20, 2)]),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            ExpandLimits::default(),
+        )
+        .unwrap_err();
+        assert!(err.contains("cycle"), "{err}");
+
+        let wide_err = expand_many(
+            &[
+                TargetDemand {
+                    recipe_id: 1,
+                    count: 1,
+                },
+                TargetDemand {
+                    recipe_id: 2,
+                    count: 1,
+                },
+            ],
+            &cyclic,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            ExpandLimits::SINGLE_RECIPE,
+        )
+        .unwrap_err();
+        assert!(wide_err.contains("too many targets"), "{wide_err}");
+    }
+
+    #[test]
+    fn optimize_craft_choices_flips_cheaper_buy_keeps_craft_and_respects_missing_supply() {
+        // Target 10 needs 2x CheapSub (20) + 1x DearSub (30).
+        // CheapSub (20): mats cost 100 gil, MB buy costs 500 -> keep Craft!
+        // DearSub (30): mats cost 1000 gil, MB buy costs 200 -> flip to Buy!
+        // MissingSub (40): mats cost 50 gil, MB buy has NO offers -> keep Craft (never treat missing as 0 gil)!
+        let recipes = BTreeMap::from([
+            (1, recipe(1, 10, 1, &[(20, 2), (30, 1), (40, 1)])),
+            (2, recipe(2, 20, 1, &[(21, 2)])),
+            (3, recipe(3, 30, 1, &[(31, 5)])),
+            (4, recipe(4, 40, 1, &[(41, 1)])),
+        ]);
+        let defaults = BTreeMap::from([(20, 2), (30, 3), (40, 4)]);
+        // Whole-stack market listings (price per unit * stack quantity):
+        let market = BTreeMap::from([
+            (20, vec![offer(1, 1, 2, 500)]), // stack of 2 = 1000 gil
+            (21, vec![offer(2, 1, 4, 50)]),  // stack of 4 = 200 gil (< 1000 -> keep Craft)
+            (30, vec![offer(3, 1, 1, 200)]), // stack of 1 = 200 gil (< 1000 -> flip to Buy)
+            (31, vec![offer(4, 1, 5, 200)]), // stack of 5 = 1000 gil
+            (41, vec![offer(5, 1, 1, 50)]),  // stack of 1 = 50 gil
+                                             // note item 40 has NO offers!
+        ]);
+        let plan = optimize_craft_choices(
+            &[TargetDemand {
+                recipe_id: 1,
+                count: 1,
+            }],
+            &recipes,
+            &defaults,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &market,
+            &BTreeMap::new(),
+            ExpandLimits::default(),
+        )
+        .unwrap();
+
+        assert_eq!(plan.choices[&20], Some(2));
+        assert_eq!(plan.choices[&30], None);
+        assert_eq!(plan.choices[&40], Some(4));
+        assert_eq!(plan.total_missing, 0);
+        // 200 (item 21) + 200 (item 30 bought) + 50 (item 41) = 450
+        assert_eq!(plan.total_cost, 450);
+        assert_eq!(plan.craft_all_cost, 1250);
+        assert_eq!(plan.savings_vs_current, 800);
+        assert_eq!(plan.flipped_items, vec![30]);
+    }
+
+    #[test]
+    fn step_readiness_tracks_acquired_and_child_crafts() {
+        let ingot = recipe(2, 20, 1, &[(30, 2)]);
+        let missing = evaluate_step_readiness(
+            2,
+            0,
+            2,
+            1,
+            &ingot,
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &BTreeMap::from([(30, 1)]),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
+        assert_eq!(missing, StepReadiness::NeedMaterials { missing_kinds: 1 });
+
+        let one_ready = evaluate_step_readiness(
+            2,
+            0,
+            2,
+            1,
+            &ingot,
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &BTreeMap::from([(30, 3)]),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
+        assert_eq!(one_ready, StepReadiness::Ready { craftable_now: 1 });
+
+        let done = evaluate_step_readiness(
+            2,
+            2,
+            2,
+            1,
+            &ingot,
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
+        assert_eq!(done, StepReadiness::Done);
     }
 }

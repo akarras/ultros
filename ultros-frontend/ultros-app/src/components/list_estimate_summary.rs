@@ -157,6 +157,9 @@ pub fn ListEstimateSummary(
     /// Resets every row's owned count back to zero in one undoable step.
     #[prop(optional)]
     on_reset_progress: Option<Callback<()>>,
+    /// Optional crafting project metrics shown when the list has recipe targets.
+    #[prop(optional)]
+    craft_summary: Option<Signal<Option<crate::list_doc::craft_project::CraftEstimateSummary>>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let confirming_reset = RwSignal::new(false);
@@ -276,6 +279,28 @@ pub fn ListEstimateSummary(
                         </p>
                         {reset_button}
                     </div>
+                }
+            })}
+            {move || craft_summary.and_then(|sig| sig.get()).map(|summary| {
+                let savings_view = summary.savings.map(|diff| {
+                    let positive = diff >= 0;
+                    let negative = diff < 0;
+                    let text = if positive {
+                        t_string!(i18n, estimate_craft_saves, gil = crate::list_doc::craft_project::format_gil(diff)).to_string()
+                    } else {
+                        t_string!(i18n, estimate_craft_costs_more, gil = crate::list_doc::craft_project::format_gil(-diff)).to_string()
+                    };
+                    view! {
+                        <span class:text-positive=positive class:text-negative=negative>
+                            {text}
+                        </span>
+                    }
+                });
+                view! {
+                    <p class="flex flex-wrap items-center gap-x-2 text-xs text-[color:var(--color-text-muted)]" data-testid="list-estimate-craft-summary">
+                        <span>{t_string!(i18n, estimate_craft_progress, done = summary.steps_done, total = summary.steps_total).to_string()}</span>
+                        {savings_view.map(|s| view! { <span>"· "</span>{s} })}
+                    </p>
                 }
             })}
             <Show when=move || feed.get().has_prices()>

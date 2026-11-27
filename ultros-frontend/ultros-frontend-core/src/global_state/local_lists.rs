@@ -10,7 +10,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use leptos::prelude::*;
-use ultros_api_types::list::ListItem;
+use ultros_api_types::list::{AddCraftTargetsRequest, ListItem};
 
 /// A browser-local future: the runtime talks to IndexedDB, so nothing here is
 /// `Send`. The error is the runtime's already-translated message.
@@ -44,6 +44,9 @@ pub struct LocalLists {
     /// Merges `items` into the list as one undo step and waits for the save.
     /// `ListItem::list_id` is ignored: a device list has no numeric id.
     pub add_items: fn(String, Vec<ListItem>) -> LocalResult<()>,
+    /// Merges craft targets and optional choices/options into the list as one
+    /// undo step and waits for the save.
+    pub add_targets: fn(String, AddCraftTargetsRequest) -> LocalResult<()>,
 }
 
 /// The bridge, when the browser runtime has been provided.

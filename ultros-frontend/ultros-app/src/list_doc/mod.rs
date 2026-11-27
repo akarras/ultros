@@ -14,6 +14,7 @@
 #![cfg_attr(not(feature = "hydrate"), allow(dead_code))]
 
 pub mod adapter;
+pub mod craft_project;
 pub mod handle;
 pub mod recovery_ui;
 pub mod store;

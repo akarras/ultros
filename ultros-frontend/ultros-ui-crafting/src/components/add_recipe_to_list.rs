@@ -1,4 +1,4 @@
-use crate::api::{bulk_add_item_to_list, get_lists};
+use crate::api::{add_targets_to_list, bulk_add_item_to_list, get_lists};
 use crate::components::crafting_cost::IngredientsIter;
 use crate::components::icon::Icon;
 use crate::components::{
@@ -11,7 +11,7 @@ use icondata::RiPlayListAddMediaLine;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
-use ultros_api_types::list::ListItem;
+use ultros_api_types::list::{AddCraftTarget, AddCraftTargetsRequest, ListItem};
 use ultros_frontend_core::components::account_lists_failure::AccountListsFailure;
 use ultros_frontend_core::components::local_list_targets::LocalListTargets;
 use xiv_gen::{Item, ItemId, Recipe};
@@ -85,6 +85,7 @@ pub fn AddRecipeToListForm(
     recipe: &'static Recipe,
     #[prop(optional)] initial_hq: bool,
     #[prop(default = true)] initial_include_crystals: bool,
+    #[prop(default = true)] default_craft_target: bool,
     #[prop(into)] on_added: Callback<()>,
     #[prop(optional)] show_header: bool,
 ) -> impl IntoView {
@@ -93,8 +94,9 @@ pub fn AddRecipeToListForm(
     let items = &data.items;
     let result_item = move || items.get(&ItemId(recipe.item_result));
     let lists = Resource::new(move || {}, move |_| get_lists());
+    let (craft_target_mode, set_craft_target_mode) = signal(default_craft_target);
     let (hq, set_hq) = signal(initial_hq);
-    let (craft_quantity, set_craft_quantity) = signal(1);
+    let (craft_quantity, set_craft_quantity) = signal(1_i32);
     let (include_crystals, set_include_crystals) = signal(initial_include_crystals);
     let selected_list = RwSignal::new(None::<i32>);
 
@@ -121,6 +123,23 @@ pub fn AddRecipeToListForm(
         let items = items.clone();
         bulk_add_item_to_list(*list_id, items)
     });
+    let add_targets_action = Action::new(move |(list_id, req): &(i32, AddCraftTargetsRequest)| {
+        let req = req.clone();
+        add_targets_to_list(*list_id, req)
+    });
+
+    let target_request = move || AddCraftTargetsRequest {
+        targets: vec![AddCraftTarget {
+            recipe_id: recipe.key_id.0,
+            count: craft_quantity
+                .get_untracked()
+                .max(1)
+                .saturating_mul(recipe.amount_result.max(1)),
+        }],
+        exclude_crystals: Some(!include_crystals.get_untracked()),
+        include_vendors: None,
+        craft_choices: Vec::new(),
+    };
 
     // The rows to add at click time: every ingredient with a non-zero
     // quantity, HQ only where the item can be. Shared by the account-list
@@ -142,10 +161,15 @@ pub fn AddRecipeToListForm(
             .collect::<Vec<_>>()
     };
     let local_items = Callback::new(move |()| items_to_add(0));
+    let local_targets =
+        Callback::new(move |()| craft_target_mode.get_untracked().then(target_request));
     let close_on_added = on_added;
 
     Effect::new(move |_| {
         if let Some(Ok(_)) = add_bulk_action.value().get() {
+            on_added.run(());
+        }
+        if let Some(Ok(_)) = add_targets_action.value().get() {
             on_added.run(());
         }
     });
@@ -186,7 +210,33 @@ pub fn AddRecipeToListForm(
                 </div>
 
                 </Show>
-                <h3 class="recipe-breakdown-heading">{t!(i18n, analyzer_add_ingredients)}</h3>
+                <div class="segmented-control w-fit" role="group" data-testid="add-recipe-mode-toggle">
+                    <button
+                        type="button"
+                        class="segmented-option"
+                        data-testid="add-recipe-mode-target"
+                        aria-pressed=move || craft_target_mode.get().to_string()
+                        on:click=move |_| set_craft_target_mode.set(true)
+                    >
+                        {t!(i18n, add_recipe_mode_craft_target)}
+                    </button>
+                    <button
+                        type="button"
+                        class="segmented-option"
+                        data-testid="add-recipe-mode-flat"
+                        aria-pressed=move || (!craft_target_mode.get()).to_string()
+                        on:click=move |_| set_craft_target_mode.set(false)
+                    >
+                        {t!(i18n, add_recipe_mode_flat_items)}
+                    </button>
+                </div>
+                <h3 class="recipe-breakdown-heading">
+                    {move || if craft_target_mode.get() {
+                        t_string!(i18n, add_recipe_mode_craft_target).to_string()
+                    } else {
+                        t_string!(i18n, analyzer_add_ingredients).to_string()
+                    }}
+                </h3>
                 <div class="flex flex-wrap items-center gap-3">
                     <label class="text-sm text-[color:var(--color-text-muted)]" for=format!("craft-qty-{}", recipe.key_id.0)>{t!(i18n, add_recipe_number_of_crafts)}</label>
                     <input
@@ -200,13 +250,15 @@ pub fn AddRecipeToListForm(
                             set_craft_quantity(q.max(1));
                         }
                     />
-                    <div class="h-6 w-px bg-[color:var(--color-outline)] mx-1"></div>
-                    <Toggle
-                        checked=hq
-                        set_checked=set_hq
-                        checked_label=t_string!(i18n, add_recipe_hq_ingredients).to_string()
-                        unchecked_label=t_string!(i18n, add_recipe_hq_ingredients).to_string()
-                    />
+                    <Show when=move || !craft_target_mode.get()>
+                        <div class="h-6 w-px bg-[color:var(--color-outline)] mx-1"></div>
+                        <Toggle
+                            checked=hq
+                            set_checked=set_hq
+                            checked_label=t_string!(i18n, add_recipe_hq_ingredients).to_string()
+                            unchecked_label=t_string!(i18n, add_recipe_hq_ingredients).to_string()
+                        />
+                    </Show>
                     <div class="h-6 w-px bg-[color:var(--color-outline)] mx-1"></div>
                     <Toggle
                         checked=include_crystals
@@ -230,6 +282,14 @@ pub fn AddRecipeToListForm(
                         .to_string()
                     }}
                 </p>
+                <Show
+                    when=move || !craft_target_mode.get()
+                    fallback=move || view! {
+                        <p class="text-sm text-[color:var(--color-text-muted)]">
+                            {t!(i18n, add_recipe_craft_hint)}
+                        </p>
+                    }
+                >
                 <div class="flex flex-col gap-2">
                     <For
                         each=move || ingredients.get_value()
@@ -260,6 +320,7 @@ pub fn AddRecipeToListForm(
                         }
                     />
                 </div>
+                </Show>
 
                 <div class="rounded p-1">
                     <Suspense fallback=Loading>
@@ -285,10 +346,18 @@ pub fn AddRecipeToListForm(
                             Some(Either::Left(Either::Right(view! {
                                 <form class="space-y-2" on:submit=move |ev| {
                                     ev.prevent_default();
-                                    if add_bulk_action.pending().get_untracked() { return; }
+                                    if add_bulk_action.pending().get_untracked() || add_targets_action.pending().get_untracked() {
+                                        return;
+                                    }
                                     if let Some(list_id) = selected_list.get_untracked() {
-                                        let items = items_to_add(list_id);
-                                        if !items.is_empty() { add_bulk_action.dispatch((list_id, items)); }
+                                        if craft_target_mode.get_untracked() {
+                                            add_targets_action.dispatch((list_id, target_request()));
+                                        } else {
+                                            let items = items_to_add(list_id);
+                                            if !items.is_empty() {
+                                                add_bulk_action.dispatch((list_id, items));
+                                            }
+                                        }
                                     }
                                 }>
                                     <label class="block text-sm" for=format!("recipe-list-{}", recipe.key_id.0)>{t!(i18n, add_recipe_destination_list)}</label>
@@ -299,18 +368,36 @@ pub fn AddRecipeToListForm(
                                         {lists.into_iter().map(|list| view! { <option value=list.id.to_string()>{list.name}</option> }).collect_view()}
                                     </select>
                                     <button type="submit" class="btn-primary w-full justify-center"
-                                        disabled=move || selected_list().is_none() || add_bulk_action.pending().get()
-                                            || ingredients.with_value(|items| !items.iter().any(|i| i.quantity.get() > 0 && (!i.is_crystal || include_crystals())))>
-                                        {move || if add_bulk_action.pending().get() { t_string!(i18n, add_recipe_adding_button).to_string() } else { t_string!(i18n, analyzer_add_ingredients).to_string() }}
+                                        disabled=move || {
+                                            selected_list().is_none()
+                                                || add_bulk_action.pending().get()
+                                                || add_targets_action.pending().get()
+                                                || (!craft_target_mode.get()
+                                                    && ingredients.with_value(|items| !items.iter().any(|i| i.quantity.get() > 0 && (!i.is_crystal || include_crystals()))))
+                                        }>
+                                        {move || if add_bulk_action.pending().get() || add_targets_action.pending().get() {
+                                            t_string!(i18n, add_recipe_adding_button).to_string()
+                                        } else if craft_target_mode.get() {
+                                            t_string!(i18n, add_recipe_add_button).to_string()
+                                        } else {
+                                            t_string!(i18n, analyzer_add_ingredients).to_string()
+                                        }}
                                     </button>
                                     <div role="alert" class="text-sm text-negative">
-                                        {move || add_bulk_action.value().get().and_then(Result::err).map(|e| e.to_string())}
+                                        {move || {
+                                            add_bulk_action
+                                                .value()
+                                                .get()
+                                                .and_then(Result::err)
+                                                .or_else(|| add_targets_action.value().get().and_then(Result::err))
+                                                .map(|e| e.to_string())
+                                        }}
                                     </div>
                                 </form>
                             })))
                         }}
                     </Suspense>
-                    <LocalListTargets build_items=local_items on_added=close_on_added />
+                    <LocalListTargets build_items=local_items build_targets=local_targets on_added=close_on_added />
                 </div>
             </div>
 
