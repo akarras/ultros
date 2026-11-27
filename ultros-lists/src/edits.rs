@@ -21,20 +21,44 @@ pub fn apply_list_item_edit(
 ) -> Result<RowKey, DocError> {
     let old_key = RowKey::new(before.item_id, before.hq);
     let new_quality = Quality::from(item.hq);
+    let old_need = before.quantity.unwrap_or(1) as i64;
+    let new_need = item.quantity.unwrap_or(1) as i64;
+    let old_acquired = before.acquired.unwrap_or(0) as i64;
+    let new_acquired = item.acquired.unwrap_or(0) as i64;
+
     let key = if new_quality != old_key.quality {
         doc.set_quality(&old_key, new_quality)?
     } else {
         old_key
     };
 
-    let old_need = before.quantity.unwrap_or(1) as i64;
-    let new_need = item.quantity.unwrap_or(1) as i64;
+    // Schema v2 craft projects project derived leaf demand into `list_item`
+    // (`ultros_db::list_doc::projected_rows`): the row's `quantity` is the
+    // manual `need` plus the derived need, and a pure leaf has no document
+    // row at all. Edit the manual part only, creating a dormant `need = 0`
+    // row for a derived-only leaf, so a quantity edit doesn't double-count
+    // the derived demand and an acquired edit doesn't fail with `MissingRow`.
+    let derived_need = if key == old_key && !doc.targets().is_empty() {
+        match doc.row(&key) {
+            Some(row) => (old_need - row.need.max(0)).max(0),
+            None => {
+                let changed = new_need != old_need
+                    || new_acquired != old_acquired
+                    || item.target_price != before.target_price;
+                if changed {
+                    doc.add_acquired_or_create(key, 0)?;
+                }
+                old_need.max(0)
+            }
+        }
+    } else {
+        0
+    };
+
     if new_need != old_need {
-        doc.set_need(&key, new_need)?;
+        doc.set_need(&key, (new_need - derived_need).max(0))?;
     }
 
-    let old_acquired = before.acquired.unwrap_or(0) as i64;
-    let new_acquired = item.acquired.unwrap_or(0) as i64;
     if new_acquired != old_acquired {
         doc.set_acquired(&key, new_acquired)?;
     }
@@ -139,5 +163,40 @@ mod tests {
         let key = apply_list_item_edit(&doc, &before, &item).unwrap();
         let row = doc.row(&key).unwrap();
         assert_eq!(row.target, Some(100));
+    }
+
+    /// (e) Craft project: a derived-only leaf (no document row) takes an
+    /// acquired edit by creating a dormant `need = 0` row instead of failing
+    /// with `MissingRow` (the auto-mark-purchases path).
+    #[test]
+    fn derived_leaf_acquired_edit_creates_dormant_row() {
+        let doc = ListDocument::new();
+        doc.add_target(ultros_list_doc::TargetKey::new(100), 1)
+            .unwrap();
+
+        let before = model(300, None, 9, 0);
+        let item = edit(300, None, 9, 4);
+
+        let key = apply_list_item_edit(&doc, &before, &item).unwrap();
+        let row = doc.row(&key).unwrap();
+        assert_eq!(row.need, 0, "derived demand stays derived");
+        assert_eq!(row.acquired, 4);
+    }
+
+    /// (f) Craft project: a quantity edit on a merged manual + derived row
+    /// changes only the manual part, so the projection doesn't double-count.
+    #[test]
+    fn merged_row_quantity_edit_changes_manual_part_only() {
+        let doc = ListDocument::new();
+        doc.add_target(ultros_list_doc::TargetKey::new(100), 1)
+            .unwrap();
+        doc.add_row(RowKey::new(300, None), 2, None).unwrap();
+
+        // Projected quantity 3 = manual 2 + derived 1; the user asks for 4.
+        let before = model(300, None, 3, 0);
+        let item = edit(300, None, 4, 0);
+
+        let key = apply_list_item_edit(&doc, &before, &item).unwrap();
+        assert_eq!(doc.row(&key).unwrap().need, 3);
     }
 }
