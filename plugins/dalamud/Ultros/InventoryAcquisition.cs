@@ -29,6 +29,19 @@ internal sealed unsafe class InventoryAcquisition : IDisposable
     private Dictionary<InventoryKey,long>? candidate;
     private InventoryGain[] pending=[];
     internal string Status { get; private set; }="Automatic inventory progress is off.";
+    internal bool CanSnapshot => reader.Compatible && reader.GameBuild is not null
+        && Plugin.Player.IsLoaded && Plugin.Player.ContentId != 0
+        && !Plugin.Condition[ConditionFlag.BetweenAreas];
+
+    internal bool TrySnapshotTotals(out Dictionary<InventoryKey, long> totals)
+    {
+        if (!CanSnapshot)
+        {
+            totals = [];
+            return false;
+        }
+        return TryTotals(out totals);
+    }
 
     internal InventoryAcquisition(ClientWorker worker,RetainerCapture reader,Configuration config)
     {

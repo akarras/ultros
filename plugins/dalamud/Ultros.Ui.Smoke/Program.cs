@@ -50,11 +50,56 @@ var estimate = new CartEstimate("v1", "Aether", now, 377260, false, 0,
     new(73, 376660, 2, 1),
     new(63, 600, 6, 1),
 ]);
-var lists = new[] { new ListAccess(new(1, 123, "Raid Prep Cart", default), "Owner", null) };
+var lists = new[]
+{
+    new ListAccess(new(1, 123, "Raid Prep Cart", default), "Owner", null),
+    new ListAccess(new(2, 123, "Raid Gear Craft Plan", default), "Owner", null),
+};
 var view = new ClientView(true, "Connected.", "Credentials protected by Windows.", null, "https://ultros.app/plugin/verify", session,
     lists, 1, cartView, true, [], deliveries, marketView, sales, estimate, scopes,
     PriceRegion: "Aether", NotificationTransport: "Live alerts", ReadNotificationIds: ["1"],
     CartInstance: Guid.NewGuid(), ListTransport: "Live updates", NotificationReceivedAt: receivedTimes);
+
+var craftCartView = new CartView("Raid Gear Craft Plan", "peer-craft", true, false,
+[
+    new(9201, "any", 0, 4, null),  // Claro Walnut Log (acquired -> Claro Walnut Thread is Ready)
+    new(9202, "any", 0, 2, null),  // Ra'Kaznar Ore (2/6 acquired -> Ra'Kaznar Ingot Needs mats, rest to buy)
+    new(9203, "any", 0, 4, null),  // Cobalt Ore (4/4 acquired for Silver Thread)
+])
+{
+    Version = "v2-craft",
+    Connected = true,
+    Ready = true,
+    ExcludeCrystals = true,
+    Targets =
+    [
+        new(1001, 1, 0), // Courtly Lover's Shoes of Healing (WVR 100)
+        new(1002, 2, 1), // Courtly Lover's Earring of Healing (GSM 100), 1/2 made
+    ],
+    CraftChoices =
+    [
+        new(9104, "craft", 2004, 0, 2), // Silver Thread (2/2 crafts DONE -> consumes 4 Cobalt Ore)
+        new(9101, "craft", 2001, 0, 0), // Claro Walnut Thread (READY)
+        new(9102, "craft", 2002, 1, 1), // Ra'Kaznar Ingot (1 on hand + 1 crafted, needs 4 ore more -> NEED 1 MAT; Used by both targets!)
+        new(9103, "buy", 2003, 0, 0),   // Black Star (switched to BUYING)
+    ],
+};
+var craftEstimate = new CartEstimate("v2-craft", "Aether", now, 118400, false, 0,
+[
+    new(9202, null, 4, 4, 4800, "Priced", 1200, [new(63, 1200, false, 4)]),
+    new(9103, null, 2, 2, 113600, "Priced", 56800, [new(73, 56800, false, 2)]),
+],
+[
+    new(73, 113600, 2, 1),
+    new(63, 4800, 4, 1),
+]);
+var craftView = view with
+{
+    SelectedList = 2,
+    Cart = craftCartView,
+    Estimate = craftEstimate,
+};
+
 var retainerView = view with
 {
     Characters = [new("1", "Mira Example", 63, true, false, true, 1, now, [new("1", "Copper Finch", 1, true, 1, now, false, 1)])],
@@ -71,6 +116,10 @@ foreach (var width in new[] { 960, 650 })
     Render("market", width, Page.Market, view);
     Render("lists", width, Page.Lists, view);
     Render("lists-route", width, Page.Lists, view);
+    Render("lists-craft", width, Page.Lists, craftView);
+    Render("lists-craft-subcrafts", width, Page.Lists, craftView);
+    Render("lists-craft-by-job", width, Page.Lists, craftView);
+    Render("lists-craft-route", width, Page.Lists, craftView);
     Render("history", width, Page.Notifications, view);
     Render("retainers", width, Page.Retainers, retainerView);
     Render("retainers-with-disabled", width, Page.Retainers, disabledView);
@@ -87,6 +136,7 @@ Render("account-large-font", 650, Page.Account, view, 22);
 Render("market-large-font", 650, Page.Market, view, 22);
 Render("lists-large-font", 650, Page.Lists, view, 22);
 Render("lists-route-large-font", 650, Page.Lists, view, 22);
+Render("lists-craft-large-font", 650, Page.Lists, craftView, 22);
 Render("retainers-large-font", 650, Page.Retainers, retainerView, 22);
 Render("retainer-management-large-font", 650, Page.Retainers, disabledView, 22);
 Console.WriteLine($"Native ImGui previews rendered to {Path.GetFullPath(output)}");
@@ -95,6 +145,14 @@ static string FixtureItemName(int id) => id switch
 {
     8 => "Ice Crystal",
     5056 => "Courtly Lover's Shoes of Healing",
+    9002 => "Courtly Lover's Earring of Healing",
+    9101 => "Claro Walnut Thread",
+    9102 => "Ra'Kaznar Ingot",
+    9103 => "Black Star",
+    9104 => "Silver Thread",
+    9201 => "Claro Walnut Bark",
+    9202 => "Ra'Kaznar Ore",
+    9203 => "Cobalt Ore",
     10386 => "Grade 8 Dark Matter",
     _ => $"Item #{id}",
 };
@@ -124,13 +182,27 @@ unsafe void Render(string name, int width, Page selected, ClientView state, floa
         var pixels = new byte[aw * ah * 4];
         Marshal.Copy((IntPtr)atlas, pixels, 0, pixels.Length);
 
+        var recipes = new FixtureRecipeCatalog();
         var account = new AccountPanel();
         var marketPanel = new MarketPanel { ItemName = FixtureItemName, WorldName = FixtureWorldName, Marketable = _ => true };
-        var listsPanel = new ListsPanel { ItemName = FixtureItemName, WorldName = FixtureWorldName };
-        if (name is "lists-route" or "lists-route-large-font")
+        var listsPanel = new ListsPanel
         {
-            typeof(ListsPanel).GetField("showRoute", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(listsPanel, true);
-        }
+            ItemName = FixtureItemName,
+            WorldName = FixtureWorldName,
+            RecipeCatalog = recipes,
+            SearchRecipes = recipes.SearchRecipes,
+            CanSyncBagStock = () => true,
+            SyncBagStock = _ => { },
+        };
+        if (name is "lists-route" or "lists-route-large-font")
+            listsPanel.SetPreviewState(ListsPanel.ListsSubView.Route, false, state.SelectedList);
+        else if (name is "lists-craft-route")
+            listsPanel.SetPreviewState(ListsPanel.ListsSubView.Route, false, state.SelectedList);
+        else if (name is "lists-craft-by-job")
+            listsPanel.SetPreviewState(ListsPanel.ListsSubView.Craft, true, state.SelectedList, "2/step/9102");
+        else if (name is "lists-craft" or "lists-craft-subcrafts" or "lists-craft-large-font")
+            listsPanel.SetPreviewState(ListsPanel.ListsSubView.Craft, false, state.SelectedList, name == "lists-craft-subcrafts" ? "2/step/9102" : null);
+
         var history = new NotificationPanel();
         var retainers = new RetainerListingsPanel { ItemName = FixtureItemName, WorldName = FixtureWorldName, Marketable = _ => true };
         var bell = new BellRetainerPanel();
@@ -155,6 +227,7 @@ unsafe void Render(string name, int width, Page selected, ClientView state, floa
             else if (selected == Page.Market) marketPanel.Draw(state);
             else if (selected == Page.Lists)
             {
+                if (name is "lists-craft-by-job" or "lists-craft-subcrafts" && frame > 0) ImGui.SetScrollY(340 * UiKit.Scale);
                 listsPanel.Draw(state, name == "lists-banner" ? ("Inventory tracking paused after a game update", "FFXIV updated to build 2026.11.03. Confirm to resume.", "Resume inventory tracking for this build", () => { }) : null);
             }
             else if (name.StartsWith("bell-", StringComparison.Ordinal))
@@ -193,6 +266,14 @@ unsafe void Render(string name, int width, Page selected, ClientView state, floa
             throw new Exception("Lists view did not render estimate totals or Shopping Route count.");
         if (name == "lists-route" && (!drawn.Contains("Adamantoise", StringComparison.Ordinal) || !drawn.Contains("Gilgamesh", StringComparison.Ordinal)))
             throw new Exception("Shopping Route view did not group stops by world.");
+        if (name == "lists-craft" && (!drawn.Contains("Finished targets", StringComparison.Ordinal) || !drawn.Contains("Sub-crafts", StringComparison.Ordinal)
+            || !drawn.Contains("Used by:", StringComparison.Ordinal) || !drawn.Contains("Sync bag stock", StringComparison.Ordinal)
+            || !drawn.Contains("READY", StringComparison.Ordinal) || !drawn.Contains("BUYING", StringComparison.Ordinal)))
+            throw new Exception("Craft Copilot view did not render targets, sub-crafts, Used by attribution, or readiness badges.");
+        if (name == "lists-craft-by-job" && (!drawn.Contains("WVR", StringComparison.Ordinal) || !drawn.Contains("ARM", StringComparison.Ordinal)))
+            throw new Exception("Craft Copilot By job grouping did not render job sections.");
+        if (name == "lists-craft-route" && (!drawn.Contains("Black Star", StringComparison.Ordinal) || !drawn.Contains("Ra'Kaznar Ore", StringComparison.Ordinal)))
+            throw new Exception("Craft Copilot Shopping Route did not surface consolidated craft leaves and bought intermediates.");
         if (name == "history" && !drawn.Contains("Notifications (1)", StringComparison.Ordinal))
             throw new Exception("Unread notification count did not appear on the Notifications tab.");
         if (name == "retainers-with-disabled" && (!drawn.Contains("Show disabled retainers", StringComparison.Ordinal) || drawn.Contains("Silver Wren", StringComparison.Ordinal)))
@@ -248,3 +329,35 @@ static unsafe void WritePng(ImDrawDataPtr data, byte[] atlas, int aw, int ah, in
     bitmap.Save(path, ImageFormat.Png);
 }
 static float Cross(Vector2 a, Vector2 b) => a.X * b.Y - a.Y * b.X;
+
+file sealed class FixtureRecipeCatalog : ICraftRecipeSource
+{
+    private readonly Dictionary<int, RecipeInfo> recipes = new()
+    {
+        [1001] = new(1001, 5056, 1, "WVR", 100, [new(9101, 2), new(9102, 2), new(8, 2)]),
+        [1002] = new(1002, 9002, 1, "GSM", 100, [new(9102, 1), new(9103, 1), new(8, 2)]),
+        [2001] = new(2001, 9101, 1, "WVR", 98, [new(9104, 1), new(9201, 2)]),
+        [2002] = new(2002, 9102, 1, "ARM", 98, [new(9202, 2)]),
+        [2003] = new(2003, 9103, 1, "GSM", 96, [new(9202, 2)]),
+        [2004] = new(2004, 9104, 1, "WVR", 94, [new(9203, 2)]),
+    };
+
+    public RecipeInfo? GetRecipe(int recipeId) => recipes.GetValueOrDefault(recipeId);
+    public RecipeInfo? GetDefaultRecipeForItem(int itemId) =>
+        recipes.Values.Where(r => r.OutputItemId == itemId).OrderBy(r => r.RecipeId).FirstOrDefault();
+    public bool IsCrystal(int itemId) => itemId == 8;
+
+    public (int RecipeId, int ItemId, string Name, string JobAbbr, int Level)[] SearchRecipes(string term) =>
+        recipes.Values
+            .Select(r => (r.RecipeId, r.OutputItemId, Name: r.OutputItemId switch
+            {
+                5056 => "Courtly Lover's Shoes of Healing",
+                9002 => "Courtly Lover's Earring of Healing",
+                9101 => "Claro Walnut Thread",
+                9102 => "Ra'Kaznar Ingot",
+                9103 => "Black Star",
+                _ => "Silver Thread",
+            }, r.JobAbbr, r.RecipeLevel))
+            .Where(r => r.Name.Contains(term, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+}

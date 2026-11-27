@@ -28,7 +28,7 @@ internal sealed class MainWindow : Window
     private string uiStatus = "";
     private string? browserError;
 
-    internal MainWindow(ClientWorker worker, RetainerCapture capture, InventoryAcquisition inventoryProgress, Configuration config)
+    internal MainWindow(ClientWorker worker, RetainerCapture capture, InventoryAcquisition inventoryProgress, Configuration config, GameRecipeCatalog recipeCatalog)
         : base($"Ultros v{ClientBuild.Version.ToString(4)}###UltrosConnected")
     {
         this.worker = worker;
@@ -63,6 +63,16 @@ internal sealed class MainWindow : Window
             HasItem = HasItem,
             SearchAllItems = SearchAllItems,
             ItemIcon = ItemIcon,
+            RecipeCatalog = recipeCatalog,
+            SearchRecipes = recipeCatalog.SearchRecipes,
+            CanSyncBagStock = () => inventoryProgress.CanSnapshot,
+            SyncBagStock = target =>
+            {
+                if (inventoryProgress.TrySnapshotTotals(out var totals))
+                    Submit(worker.SyncBagStock(target, totals));
+                else
+                    uiStatus = "Waiting for a loaded character and compatible inventory reader.";
+            },
             Refresh = () => Submit(worker.Refresh()),
             SelectList = id => Submit(worker.SelectList(id)),
             RetrySave = target => Submit(worker.RetrySave(target)),
@@ -70,6 +80,7 @@ internal sealed class MainWindow : Window
             RetryRecovery = target => Submit(worker.RetryRecovery(target)),
             UseServerCopy = target => Submit(worker.UseServerCopy(target)),
             AddItem = (dest, id, quality, qty) => Submit(worker.AddItem(dest, id, quality, qty)),
+            AddTarget = (dest, recipeId, count) => Submit(worker.AddTarget(dest, recipeId, count)),
             Edit = (target, edit) => Submit(worker.Edit(target, edit)),
             OpenItem = id => ShowItem(id),
             Notify = msg => uiStatus = msg,
@@ -171,6 +182,16 @@ internal sealed class MainWindow : Window
         uiStatus = destination is not null && worker.AddItem(destination, id, quality, quantity)
             ? ""
             : "Choose a writable list, then add the selected item. Enable list editing in Account if needed.";
+    }
+
+    internal void AddRecipeToList(int recipeId, ListEditTarget? destination, int count = 1)
+    {
+        openItem = false;
+        openLists = true;
+        IsOpen = true;
+        uiStatus = destination is not null && worker.AddTarget(destination, recipeId, count)
+            ? ""
+            : "Choose a writable list, then add the selected recipe. Enable list editing in Account if needed.";
     }
 
     public override void OnClose() => account.Reset();

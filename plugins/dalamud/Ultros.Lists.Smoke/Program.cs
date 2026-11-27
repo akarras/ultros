@@ -14,8 +14,10 @@ catch (InvalidOperationException) { }
 Native.Configure(args[0]);
 await Ultros.Lists.Smoke.WorkerChecks.LiveLists();
 await Ultros.Lists.Smoke.WorkerChecks.CartLifecycle();
+await Ultros.Lists.Smoke.WorkerChecks.CraftCopilotLifecycle();
 Ultros.Lists.Smoke.CartCommandChecks.Run();
 Ultros.Lists.Smoke.InventoryProgressChecks.NativeDeltas();
+Ultros.Lists.Smoke.CraftProjectChecks.NativeSchemaV2();
 static void Require(bool condition, string message)
 {
     if (!condition) throw new Exception(message);

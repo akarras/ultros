@@ -192,7 +192,7 @@ internal static class WorkerChecks
         internal Connection Connection=null!;
         internal DeviceSession Session=null!;
         internal readonly Handler Handler=new();
-        internal Fixture()=>Worker=new(Root,new(false),"worker");
+        internal Fixture(ICraftRecipeSource? recipeSource=null)=>Worker=new(Root,new(false),"worker",recipeSource);
         internal async Task OnWorker(Action action)
         {
             var completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -362,5 +362,65 @@ internal static class WorkerChecks
         using(var reopened=new ConnectedCart(fixture.Connection.Directory,"https://ultros.app/","123",1))
             Require(reopened.Document.View.Rows.Single().Acquired==3,"Account replacement lost the old account's unsaved edit.");
         Console.WriteLine("PASS: acknowledged/retryable captures and cart preservation across disconnect, persistent save failure and account replacement.");
+    }
+
+    private sealed class WorkerRecipeSource : ICraftRecipeSource
+    {
+        private readonly Dictionary<int, RecipeInfo> recipes = new()
+        {
+            [100] = new(100, 5056, 1, "BSM", 100, [new(200, 2), new(301, 1)]),
+            [101] = new(101, 5057, 1, "ARM", 100, [new(200, 2)]),
+            [200] = new(200, 200, 2, "BSM", 98, [new(300, 2)]),
+        };
+        public RecipeInfo? GetRecipe(int recipeId) => recipes.GetValueOrDefault(recipeId);
+        public RecipeInfo? GetDefaultRecipeForItem(int itemId) => recipes.Values.FirstOrDefault(r => r.OutputItemId == itemId);
+        public bool IsCrystal(int itemId) => false;
+    }
+
+    internal static async Task CraftCopilotLifecycle()
+    {
+        using var fixture = new Fixture(new WorkerRecipeSource());
+        await fixture.Connect();
+        using var server = Document.Open();
+        server.Edit(new { kind = "add_target", recipe_id = 100, count = 1 });
+        var handler = fixture.Handler;
+        handler.Lists = [new(new(1, 123, "Craft Copilot", JsonSerializer.SerializeToElement<object?>(null)), "Owner", null)];
+        handler.SyncReplies[1] = new(server.View.Version, "snapshot", Convert.ToBase64String(server.Export()));
+        await fixture.OnWorker(() => Set(fixture.Worker, "lists", handler.Lists));
+        Require(fixture.Worker.SelectList(1), "Craft copilot list selection failed.");
+        await Until(() => fixture.Worker.View.Cart?.Targets.Length == 1 && fixture.Worker.View.CanEdit);
+        // Simulate periodic server silence rather than re-serving the stale initial snapshot over local edits.
+        await fixture.OnWorker(() =>
+        {
+            handler.SyncReplies[1] = new(server.View.Version, "up_to_date", "");
+            Set(fixture.Worker, "nextCart", DateTimeOffset.UtcNow.AddHours(1));
+        });
+
+        var dest = ListEditTarget.Capture(fixture.Worker.View)!;
+        Require(fixture.Worker.AddTarget(dest, 101, 1), "AddTarget did not queue.");
+        await fixture.OnWorker(() => Set(fixture.Worker, "nextCart", DateTimeOffset.UtcNow.AddHours(1)));
+        await Until(() => fixture.Worker.View.Cart?.Targets.Length == 2);
+
+        // Bag sync: 1 intermediate 200 in bags -> sets on_hand = 1 (leaving 3 remaining -> 2 crafts -> 4x 300 ore needed) + 1 ore in bags.
+        var cartTarget = CartCommandTarget.Capture(fixture.Worker.View);
+        Require(fixture.Worker.SyncBagStock(cartTarget, new Dictionary<InventoryKey, long>
+        {
+            [new(200, false)] = 1,
+            [new(300, false)] = 1,
+        }), "SyncBagStock did not queue.");
+        await fixture.OnWorker(() => Set(fixture.Worker, "nextCart", DateTimeOffset.UtcNow.AddHours(1)));
+        await Until(() =>
+            fixture.Worker.View.Cart?.CraftChoices.Any(c => c.ItemId == 200 && c.OnHand == 1) == true
+            && fixture.Worker.View.Cart?.Rows.Any(r => r.ItemId == 300 && r.Acquired == 1) == true);
+
+        // Live inventory gains: craft 1x target 5056, craft 2x yield-2 intermediate 200 (+1 crafted), acquire 1x leaf 301.
+        Require(fixture.Worker.ApplyInventoryGains(dest, fixture.Worker.InventoryGeneration,
+            [new(5056, true, 1), new(200, false, 2), new(301, false, 1)]), "ApplyInventoryGains failed.");
+        await Until(() =>
+            fixture.Worker.View.Cart?.Targets.Any(t => t.RecipeId == 100 && t.Completed == 1) == true
+            && fixture.Worker.View.Cart?.CraftChoices.Any(c => c.ItemId == 200 && c.Crafted == 1) == true
+            && fixture.Worker.View.Cart?.Rows.Any(r => r.ItemId == 301 && r.Acquired == 1) == true);
+
+        Console.WriteLine("PASS: ClientWorker AddTarget, idempotent SyncBagStock, and live Craft Copilot synthesis auto-progress.");
     }
 }

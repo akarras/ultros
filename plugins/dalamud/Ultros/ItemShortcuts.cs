@@ -11,11 +11,12 @@ internal sealed class ItemShortcuts : IDisposable
     private readonly MainWindow window;
     private readonly UltrosEndpoint endpoint;
     private readonly Configuration config;
+    private readonly GameRecipeCatalog recipeCatalog;
     private uint currentWorld,homeWorld;
     private DateTimeOffset retryWorld;
-    internal ItemShortcuts(ClientWorker worker,MainWindow window,UltrosEndpoint endpoint,Configuration config)
+    internal ItemShortcuts(ClientWorker worker,MainWindow window,UltrosEndpoint endpoint,Configuration config,GameRecipeCatalog recipeCatalog)
     {
-        this.worker=worker;this.window=window;this.endpoint=endpoint;this.config=config;
+        this.worker=worker;this.window=window;this.endpoint=endpoint;this.config=config;this.recipeCatalog=recipeCatalog;
         Plugin.ContextMenu.OnMenuOpened+=OnMenuOpened;
         Plugin.Framework.Update+=Update;
     }
@@ -47,6 +48,8 @@ internal sealed class ItemShortcuts : IDisposable
         var listName=view.Cart?.Name??"active list";
         if(listName.Length>32)listName=listName[..32]+"…";
         args.AddMenuItem(new MenuItem{Name=destination is null?"Add to Ultros list…":$"Add to {listName}",PrefixChar='U',OnClicked=_=>{if(config.ItemContextMenuEnabled)window.AddToList((int)id,destination);}});
+        if(recipeCatalog.GetDefaultRecipeForItem((int)id) is { } defaultRecipe)
+            args.AddMenuItem(new MenuItem{Name=destination is null?"Add recipe to Ultros list…":$"Add recipe to {listName}",PrefixChar='U',OnClicked=_=>{if(config.ItemContextMenuEnabled)window.AddRecipeToList(defaultRecipe.RecipeId,destination);}});
         if(row.ItemSearchCategory.RowId!=0)
             args.AddMenuItem(new MenuItem{Name="Search Ultros",PrefixChar='U',OnClicked=_=>{if(config.ItemContextMenuEnabled)window.ShowItem((int)id);}});
         args.AddMenuItem(new MenuItem{Name="Open Ultros website",PrefixChar='U',OnClicked=_=>
