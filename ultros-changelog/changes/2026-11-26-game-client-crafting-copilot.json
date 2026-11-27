@@ -1,0 +1,8 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Follow crafting projects in the game client",
+  "blurb": "The game plugin now shows your list's crafting targets and sub-crafts in step order or by job. It counts finished synths and gathered materials as you craft, syncs on-hand stock from your bags in one click, and lets you add recipes from item context menus.",
+  "link": "/plugin",
+  "labs": true
+}
